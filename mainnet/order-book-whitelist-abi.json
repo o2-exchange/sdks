@@ -1,0 +1,325 @@
+{
+  "programType": "contract",
+  "specVersion": "1.2",
+  "encodingVersion": "1",
+  "concreteTypes": [
+    {
+      "type": "()",
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+    },
+    {
+      "type": "enum contract_schema::whitelist::WhitelistError",
+      "concreteTypeId": "4a361b557f6e90f2c2abb6387930980b94dea5601f926623270df0c182de6cee",
+      "metadataTypeId": 1
+    },
+    {
+      "type": "enum ownership::errors::InitializationError",
+      "concreteTypeId": "b1fddf488ccb9e63d11888b2750bbd1280a1ae1c49f2d6637fd4cf1e930d1468",
+      "metadataTypeId": 2
+    },
+    {
+      "type": "enum src5::AccessError",
+      "concreteTypeId": "f1247475d0d1466599267010f088190f8664dd31663a40c5d5e525d8e64b995d",
+      "metadataTypeId": 3
+    },
+    {
+      "type": "enum src5::State",
+      "concreteTypeId": "287a382c1e0b1f11d12a422e77a248d27761327cd17515cc6e6369d528cf31ca",
+      "metadataTypeId": 4
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335",
+      "metadataTypeId": 5
+    },
+    {
+      "type": "str",
+      "concreteTypeId": "8c25cb3686462e9a86d2883c5688a22fe738b0bbc85f458d2d2b5f3f667c6d5a"
+    },
+    {
+      "type": "struct contract_schema::whitelist::AddWhitelistEvent",
+      "concreteTypeId": "bc5348f64501108eb7a6c446cffe6432e6ab2a7f741d2d6aa420dc7ec5088d4f",
+      "metadataTypeId": 6
+    },
+    {
+      "type": "struct contract_schema::whitelist::RemoveWhitelistEvent",
+      "concreteTypeId": "9896e049dbfbc676f73629d2f6bc85dc623ce6ddb7806ec764d0e8274b43a9b5",
+      "metadataTypeId": 7
+    },
+    {
+      "type": "struct ownership::events::OwnershipSet",
+      "concreteTypeId": "8c0d2488561c35a28ef795bb8bcc4c43999cdd1e3ecbd10c226e0a68660c54d4",
+      "metadataTypeId": 8
+    },
+    {
+      "type": "struct ownership::events::OwnershipTransferred",
+      "concreteTypeId": "a2a2643e0252b510328c0323a0ea60724fb4cb3309a2322ab31b27566ff9a79d",
+      "metadataTypeId": 9
+    }
+  ],
+  "metadataTypes": [
+    {
+      "type": "b256",
+      "metadataTypeId": 0
+    },
+    {
+      "type": "enum contract_schema::whitelist::WhitelistError",
+      "metadataTypeId": 1,
+      "components": [
+        {
+          "name": "TraderAlreadyWhitelisted",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "TraderNotWhitelisted",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum ownership::errors::InitializationError",
+      "metadataTypeId": 2,
+      "components": [
+        {
+          "name": "CannotReinitialized",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum src5::AccessError",
+      "metadataTypeId": 3,
+      "components": [
+        {
+          "name": "NotOwner",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum src5::State",
+      "metadataTypeId": 4,
+      "components": [
+        {
+          "name": "Uninitialized",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Initialized",
+          "typeId": 5
+        },
+        {
+          "name": "Revoked",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "metadataTypeId": 5,
+      "components": [
+        {
+          "name": "Address",
+          "typeId": 10
+        },
+        {
+          "name": "ContractId",
+          "typeId": 11
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::whitelist::AddWhitelistEvent",
+      "metadataTypeId": 6,
+      "components": [
+        {
+          "name": "trader",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::whitelist::RemoveWhitelistEvent",
+      "metadataTypeId": 7,
+      "components": [
+        {
+          "name": "trader",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct ownership::events::OwnershipSet",
+      "metadataTypeId": 8,
+      "components": [
+        {
+          "name": "new_owner",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct ownership::events::OwnershipTransferred",
+      "metadataTypeId": 9,
+      "components": [
+        {
+          "name": "new_owner",
+          "typeId": 5
+        },
+        {
+          "name": "previous_owner",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct std::address::Address",
+      "metadataTypeId": 10,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    },
+    {
+      "type": "struct std::contract_id::ContractId",
+      "metadataTypeId": 11,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "initialize",
+      "inputs": [],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "remove_whitelist",
+      "inputs": [
+        {
+          "name": "trader",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "transfer_ownership",
+      "inputs": [
+        {
+          "name": "new_owner",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "whitelist",
+      "inputs": [
+        {
+          "name": "trader",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "owner",
+      "inputs": [],
+      "output": "287a382c1e0b1f11d12a422e77a248d27761327cd17515cc6e6369d528cf31ca",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    }
+  ],
+  "loggedTypes": [
+    {
+      "logId": "17376141311665587813",
+      "concreteTypeId": "f1247475d0d1466599267010f088190f8664dd31663a40c5d5e525d8e64b995d"
+    },
+    {
+      "logId": "5347491661573165298",
+      "concreteTypeId": "4a361b557f6e90f2c2abb6387930980b94dea5601f926623270df0c182de6cee"
+    },
+    {
+      "logId": "13570270324754288782",
+      "concreteTypeId": "bc5348f64501108eb7a6c446cffe6432e6ab2a7f741d2d6aa420dc7ec5088d4f"
+    },
+    {
+      "logId": "12825652816513834595",
+      "concreteTypeId": "b1fddf488ccb9e63d11888b2750bbd1280a1ae1c49f2d6637fd4cf1e930d1468"
+    },
+    {
+      "logId": "10091762507985991074",
+      "concreteTypeId": "8c0d2488561c35a28ef795bb8bcc4c43999cdd1e3ecbd10c226e0a68660c54d4"
+    },
+    {
+      "logId": "10098701174489624218",
+      "concreteTypeId": "8c25cb3686462e9a86d2883c5688a22fe738b0bbc85f458d2d2b5f3f667c6d5a"
+    },
+    {
+      "logId": "10995222148099589750",
+      "concreteTypeId": "9896e049dbfbc676f73629d2f6bc85dc623ce6ddb7806ec764d0e8274b43a9b5"
+    },
+    {
+      "logId": "11719039397861176592",
+      "concreteTypeId": "a2a2643e0252b510328c0323a0ea60724fb4cb3309a2322ab31b27566ff9a79d"
+    }
+  ],
+  "messagesTypes": [],
+  "configurables": [
+    {
+      "name": "INITIAL_OWNER",
+      "concreteTypeId": "287a382c1e0b1f11d12a422e77a248d27761327cd17515cc6e6369d528cf31ca",
+      "offset": 7616,
+      "indirect": false
+    }
+  ],
+  "errorCodes": {},
+  "panickingCalls": {}
+}

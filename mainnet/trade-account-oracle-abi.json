@@ -1,0 +1,950 @@
+{
+  "programType": "contract",
+  "specVersion": "1.2",
+  "encodingVersion": "1",
+  "concreteTypes": [
+    {
+      "type": "()",
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+    },
+    {
+      "type": "bool",
+      "concreteTypeId": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
+    },
+    {
+      "type": "enum ownership::errors::InitializationError",
+      "concreteTypeId": "b1fddf488ccb9e63d11888b2750bbd1280a1ae1c49f2d6637fd4cf1e930d1468",
+      "metadataTypeId": 1
+    },
+    {
+      "type": "enum pausable::errors::PauseError",
+      "concreteTypeId": "455b46a49016f5c03c18ce54b969ea3d0d33c9b00263b3dcc36aa8da27558b8a",
+      "metadataTypeId": 2
+    },
+    {
+      "type": "enum src5::AccessError",
+      "concreteTypeId": "f1247475d0d1466599267010f088190f8664dd31663a40c5d5e525d8e64b995d",
+      "metadataTypeId": 3
+    },
+    {
+      "type": "enum src5::State",
+      "concreteTypeId": "287a382c1e0b1f11d12a422e77a248d27761327cd17515cc6e6369d528cf31ca",
+      "metadataTypeId": 4
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335",
+      "metadataTypeId": 5
+    },
+    {
+      "type": "enum std::option::Option<struct std::contract_id::ContractId>",
+      "concreteTypeId": "0d79387ad3bacdc3b7aad9da3a96f4ce60d9a1b6002df254069ad95a3931d5c8",
+      "metadataTypeId": 6,
+      "typeArguments": [
+        "29c10735d33b5159f0c71ee1dbd17b36a3e69e41f00fab0d42e1bd9f428d8a54"
+      ]
+    },
+    {
+      "type": "str",
+      "concreteTypeId": "8c25cb3686462e9a86d2883c5688a22fe738b0bbc85f458d2d2b5f3f667c6d5a"
+    },
+    {
+      "type": "struct ownership::events::OwnershipSet",
+      "concreteTypeId": "8c0d2488561c35a28ef795bb8bcc4c43999cdd1e3ecbd10c226e0a68660c54d4",
+      "metadataTypeId": 8
+    },
+    {
+      "type": "struct ownership::events::OwnershipTransferred",
+      "concreteTypeId": "a2a2643e0252b510328c0323a0ea60724fb4cb3309a2322ab31b27566ff9a79d",
+      "metadataTypeId": 9
+    },
+    {
+      "type": "struct std::contract_id::ContractId",
+      "concreteTypeId": "29c10735d33b5159f0c71ee1dbd17b36a3e69e41f00fab0d42e1bd9f428d8a54",
+      "metadataTypeId": 11
+    }
+  ],
+  "metadataTypes": [
+    {
+      "type": "b256",
+      "metadataTypeId": 0
+    },
+    {
+      "type": "enum ownership::errors::InitializationError",
+      "metadataTypeId": 1,
+      "components": [
+        {
+          "name": "CannotReinitialized",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum pausable::errors::PauseError",
+      "metadataTypeId": 2,
+      "components": [
+        {
+          "name": "Paused",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "NotPaused",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum src5::AccessError",
+      "metadataTypeId": 3,
+      "components": [
+        {
+          "name": "NotOwner",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum src5::State",
+      "metadataTypeId": 4,
+      "components": [
+        {
+          "name": "Uninitialized",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Initialized",
+          "typeId": 5
+        },
+        {
+          "name": "Revoked",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "metadataTypeId": 5,
+      "components": [
+        {
+          "name": "Address",
+          "typeId": 10
+        },
+        {
+          "name": "ContractId",
+          "typeId": 11
+        }
+      ]
+    },
+    {
+      "type": "enum std::option::Option",
+      "metadataTypeId": 6,
+      "components": [
+        {
+          "name": "None",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Some",
+          "typeId": 7
+        }
+      ],
+      "typeParameters": [
+        7
+      ]
+    },
+    {
+      "type": "generic T",
+      "metadataTypeId": 7
+    },
+    {
+      "type": "struct ownership::events::OwnershipSet",
+      "metadataTypeId": 8,
+      "components": [
+        {
+          "name": "new_owner",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct ownership::events::OwnershipTransferred",
+      "metadataTypeId": 9,
+      "components": [
+        {
+          "name": "new_owner",
+          "typeId": 5
+        },
+        {
+          "name": "previous_owner",
+          "typeId": 5
+        }
+      ]
+    },
+    {
+      "type": "struct std::address::Address",
+      "metadataTypeId": 10,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    },
+    {
+      "type": "struct std::contract_id::ContractId",
+      "metadataTypeId": 11,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    }
+  ],
+  "functions": [
+    {
+      "name": "get_trade_account_impl",
+      "inputs": [],
+      "output": "0d79387ad3bacdc3b7aad9da3a96f4ce60d9a1b6002df254069ad95a3931d5c8",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Retrieves the approved implementation for a specific trading account."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Trading accounts query this to check if an upgrade is available."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `contract_id` - The ContractId of the trading account checking for upgrades"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `Option<ContractId>` - The approved implementation if an upgrade exists, None otherwise"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Approved implementation mapping for the given contract"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Usage"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Trading accounts call this method through `check_upgrade()` to determine"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " if they should upgrade to a new implementation."
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "initialize",
+      "inputs": [
+        {
+          "name": "owner",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        },
+        {
+          "name": "trade_account_impl",
+          "concreteTypeId": "29c10735d33b5159f0c71ee1dbd17b36a3e69e41f00fab0d42e1bd9f428d8a54"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Initializes the oracle contract with an owner and initial implementation."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " This method can only be called once during contract deployment."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `owner` - The Identity who will own and control the oracle"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `trade_account_impl` - The initial approved trade account implementation"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Checks if already initialized"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Sets owner and initial implementation"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Can only be called once (initialization check)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Validates that the implementation contract exists"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If oracle is already initialized"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If trade_account_impl doesn't exist as a deployed contract"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If owner is zero address"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "set_trade_account_impl",
+      "inputs": [
+        {
+          "name": "contract_id",
+          "concreteTypeId": "29c10735d33b5159f0c71ee1dbd17b36a3e69e41f00fab0d42e1bd9f428d8a54"
+        }
+      ],
+      "output": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Sets an approved implementation for a trading account upgrade."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Only authorized entities (owner/admin) should be able to call this."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `contract_id` - The new implementation ContractId to approve"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `bool` - True if the implementation was successfully set, false otherwise"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Verifies caller authorization (should check owner/admin status)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Updates the approved implementation registry"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Should verify the caller is the contract owner or authorized admin"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Should validate the new implementation contract exists and is valid"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - May implement additional checks like contract bytecode verification"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Should emit an event when a new implementation is approved"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If caller is not authorized (owner/admin check)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If contract_id is zero or invalid"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If the contract is paused"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "transfer_ownership",
+      "inputs": [
+        {
+          "name": "new_owner",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Transfers ownership of the oracle to a new owner."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Only the current owner can transfer ownership."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `new_owner` - The Identity to transfer ownership to"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Current owner for verification"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Updates owner to new_owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Only callable by current owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - New owner cannot be zero address"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Emits ownership transfer event (from ownership library)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If caller is not the current owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If new_owner is zero address"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "owner",
+      "inputs": [],
+      "output": "287a382c1e0b1f11d12a422e77a248d27761327cd17515cc6e6369d528cf31ca",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "is_paused",
+      "inputs": [],
+      "output": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "pause",
+      "inputs": [],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "unpause",
+      "inputs": [],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "write"
+          ]
+        }
+      ]
+    }
+  ],
+  "loggedTypes": [
+    {
+      "logId": "17376141311665587813",
+      "concreteTypeId": "f1247475d0d1466599267010f088190f8664dd31663a40c5d5e525d8e64b995d"
+    },
+    {
+      "logId": "12825652816513834595",
+      "concreteTypeId": "b1fddf488ccb9e63d11888b2750bbd1280a1ae1c49f2d6637fd4cf1e930d1468"
+    },
+    {
+      "logId": "10091762507985991074",
+      "concreteTypeId": "8c0d2488561c35a28ef795bb8bcc4c43999cdd1e3ecbd10c226e0a68660c54d4"
+    },
+    {
+      "logId": "10098701174489624218",
+      "concreteTypeId": "8c25cb3686462e9a86d2883c5688a22fe738b0bbc85f458d2d2b5f3f667c6d5a"
+    },
+    {
+      "logId": "11719039397861176592",
+      "concreteTypeId": "a2a2643e0252b510328c0323a0ea60724fb4cb3309a2322ab31b27566ff9a79d"
+    },
+    {
+      "logId": "4997665884103701952",
+      "concreteTypeId": "455b46a49016f5c03c18ce54b969ea3d0d33c9b00263b3dcc36aa8da27558b8a"
+    }
+  ],
+  "messagesTypes": [],
+  "configurables": [],
+  "errorCodes": {},
+  "panickingCalls": {}
+}

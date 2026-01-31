@@ -1,0 +1,2663 @@
+{
+  "programType": "contract",
+  "specVersion": "1.2",
+  "encodingVersion": "1",
+  "concreteTypes": [
+    {
+      "type": "()",
+      "concreteTypeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+    },
+    {
+      "type": "b256",
+      "concreteTypeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+    },
+    {
+      "type": "bool",
+      "concreteTypeId": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903"
+    },
+    {
+      "type": "enum contract_schema::src16::Domain",
+      "concreteTypeId": "5f05ed49298866d467640c48af64b5e978f95a74358b7050b09adfa77ea558b2",
+      "metadataTypeId": 1
+    },
+    {
+      "type": "enum contract_schema::src16::Encoding",
+      "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07",
+      "metadataTypeId": 2
+    },
+    {
+      "type": "enum contract_schema::trade_account::CallerError",
+      "concreteTypeId": "0b65ce7c65308b155a42d67dba9a8f5ec826782ec477a1970fe592016e92d527",
+      "metadataTypeId": 3
+    },
+    {
+      "type": "enum contract_schema::trade_account::NonceError",
+      "concreteTypeId": "f88b7359b6a93f09790d042f771eb46a798919cde0d85a95d291dae15d746312",
+      "metadataTypeId": 4
+    },
+    {
+      "type": "enum contract_schema::trade_account::SessionError",
+      "concreteTypeId": "25f7b773d2b66be695d008d06f344b78146367854413f2041eaf21356640e568",
+      "metadataTypeId": 5
+    },
+    {
+      "type": "enum contract_schema::trade_account::SignerError",
+      "concreteTypeId": "9924f5da95b424d9efb5403e33f96557a6fa8e766014c055159e9c3bd457ca83",
+      "metadataTypeId": 6
+    },
+    {
+      "type": "enum contract_schema::trade_account::WithdrawError",
+      "concreteTypeId": "ce9db9ff03aafaa4ef9ebd0dac288345a961aff0262337411b6ef4db9df07039",
+      "metadataTypeId": 7
+    },
+    {
+      "type": "enum std::crypto::signature::Signature",
+      "concreteTypeId": "2a32867dec49ed8ddf6b7d2ed19d53c626d3f593369b5dd82a317d7b300e1c39",
+      "metadataTypeId": 8
+    },
+    {
+      "type": "enum std::crypto::signature_error::SignatureError",
+      "concreteTypeId": "c95b1133ba0fd973819faa015c9a3bf27edbbef753c977f859ba593b89ae22e5",
+      "metadataTypeId": 9
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335",
+      "metadataTypeId": 10
+    },
+    {
+      "type": "enum std::option::Option<enum std::crypto::signature::Signature>",
+      "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40",
+      "metadataTypeId": 11,
+      "typeArguments": [
+        "2a32867dec49ed8ddf6b7d2ed19d53c626d3f593369b5dd82a317d7b300e1c39"
+      ]
+    },
+    {
+      "type": "enum std::option::Option<struct contract_schema::trade_account::Session>",
+      "concreteTypeId": "db4bc0201be00cc6d049122ba4e5eaf2e1a8d67e87ae531c85204a496c41add4",
+      "metadataTypeId": 11,
+      "typeArguments": [
+        "a59f4af5e00bdd0ab9aed213f6b7592136f986fe5f5224aa707f439dbd510aa9"
+      ]
+    },
+    {
+      "type": "str",
+      "concreteTypeId": "8c25cb3686462e9a86d2883c5688a22fe738b0bbc85f458d2d2b5f3f667c6d5a"
+    },
+    {
+      "type": "str[12]",
+      "concreteTypeId": "d41cd041a54363a3d61ab80537895c873f2315f976fc58def6e5035f6b1f0710"
+    },
+    {
+      "type": "str[1]",
+      "concreteTypeId": "6354581bfa62ac188c9f243cc30e1bf38a150773f871be8765351ef8c5db6c1e"
+    },
+    {
+      "type": "struct contract_libs::signature::IncrementNonceEvent",
+      "concreteTypeId": "1f60fe48a54d08956985da0422f2d7d44834b7c4d4687f0376f26dce46fe44bf",
+      "metadataTypeId": 14
+    },
+    {
+      "type": "struct contract_schema::trade_account::CallContractArg",
+      "concreteTypeId": "2e811073316cb5af9b64bcd703b0f5957a35112aa0f1f86782a8fd42b485c3d4",
+      "metadataTypeId": 17
+    },
+    {
+      "type": "struct contract_schema::trade_account::CallContractArgs",
+      "concreteTypeId": "f5137e8860728aa53b731dc6f4be35633f71e6cf3a24439ae80bb38d7ec67d5e",
+      "metadataTypeId": 18
+    },
+    {
+      "type": "struct contract_schema::trade_account::FailedToValidateEvent",
+      "concreteTypeId": "98fa03034b6a5a596d6121040d525eabb78d224d2411b6d5d0151727499bbd09",
+      "metadataTypeId": 19
+    },
+    {
+      "type": "struct contract_schema::trade_account::MultiCallContractArgs",
+      "concreteTypeId": "f4be05417a57a0fa163ebf6c649786e15dc74d541e39b1071bb7cfaa675759ad",
+      "metadataTypeId": 20
+    },
+    {
+      "type": "struct contract_schema::trade_account::RevokeArgs",
+      "concreteTypeId": "fa245643e7467acf010e5f8b65e5c1b8f23a3973dd24fe755acd630ac3fa7557",
+      "metadataTypeId": 21
+    },
+    {
+      "type": "struct contract_schema::trade_account::Session",
+      "concreteTypeId": "a59f4af5e00bdd0ab9aed213f6b7592136f986fe5f5224aa707f439dbd510aa9",
+      "metadataTypeId": 22
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionArgs",
+      "concreteTypeId": "bb7bd7d8bcce22513cea4a375d13aeff84ff17c9aecf40ae825265179de131be",
+      "metadataTypeId": 23
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionContractCallEvent",
+      "concreteTypeId": "55cb585aadd106832bdedaef0a231b5587db28871e2b12e5137ec4cb66b9b829",
+      "metadataTypeId": 24
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionCreatedEvent",
+      "concreteTypeId": "6f9ef4e7a983e700685ab472ed2e625822ad32b8f04de92adc81ed60911e5e77",
+      "metadataTypeId": 25
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionRevokedEvent",
+      "concreteTypeId": "2765c1864fc179c9ee1938cc4a28acedc0b1c76f0a63434b33149f432eb4e8c3",
+      "metadataTypeId": 26
+    },
+    {
+      "type": "struct contract_schema::trade_account::WithdrawArgs",
+      "concreteTypeId": "c86b3b5bfe482d7adedfc0fac7d7c73b4fd6e7c97a31a76afa54deeff1d5c49a",
+      "metadataTypeId": 27
+    },
+    {
+      "type": "struct contract_schema::trade_account::WithdrawEvent",
+      "concreteTypeId": "0e9654327e3d67d706825c5e4e2df18533389b6566d8c1c298c7bd5b5e0c6da5",
+      "metadataTypeId": 28
+    },
+    {
+      "type": "struct std::asset_id::AssetId",
+      "concreteTypeId": "c0710b6731b1dd59799cf6bef33eee3b3b04a2e40e80a0724090215bbf2ca974",
+      "metadataTypeId": 30
+    },
+    {
+      "type": "struct std::vec::Vec<struct contract_schema::trade_account::CallContractArg>",
+      "concreteTypeId": "d5d0add462df804d0d75443e00c45391dcc2f0c5c02c439a798cc7549b528449",
+      "metadataTypeId": 41,
+      "typeArguments": [
+        "2e811073316cb5af9b64bcd703b0f5957a35112aa0f1f86782a8fd42b485c3d4"
+      ]
+    },
+    {
+      "type": "u64",
+      "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+    }
+  ],
+  "metadataTypes": [
+    {
+      "type": "[_; 64]",
+      "metadataTypeId": 0,
+      "components": [
+        {
+          "name": "__array_element",
+          "typeId": 43
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::src16::Domain",
+      "metadataTypeId": 1,
+      "components": [
+        {
+          "name": "SRC16Domain",
+          "typeId": 16
+        },
+        {
+          "name": "EIP712Domain",
+          "typeId": 15
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::src16::Encoding",
+      "metadataTypeId": 2,
+      "components": [
+        {
+          "name": "SRC16",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "EIP712",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::trade_account::CallerError",
+      "metadataTypeId": 3,
+      "components": [
+        {
+          "name": "InvalidCaller",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::trade_account::NonceError",
+      "metadataTypeId": 4,
+      "components": [
+        {
+          "name": "InvalidNonce",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::trade_account::SessionError",
+      "metadataTypeId": 5,
+      "components": [
+        {
+          "name": "SessionInThePast",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "NoApprovedContractIdsProvided",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::trade_account::SignerError",
+      "metadataTypeId": 6,
+      "components": [
+        {
+          "name": "InvalidSigner",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "ProxyOwnerIsContract",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum contract_schema::trade_account::WithdrawError",
+      "metadataTypeId": 7,
+      "components": [
+        {
+          "name": "AmountIsZero",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "NotEnoughBalance",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum std::crypto::signature::Signature",
+      "metadataTypeId": 8,
+      "components": [
+        {
+          "name": "Secp256k1",
+          "typeId": 35
+        },
+        {
+          "name": "Secp256r1",
+          "typeId": 36
+        },
+        {
+          "name": "Ed25519",
+          "typeId": 34
+        }
+      ]
+    },
+    {
+      "type": "enum std::crypto::signature_error::SignatureError",
+      "metadataTypeId": 9,
+      "components": [
+        {
+          "name": "UnrecoverablePublicKey",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "InvalidPublicKey",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "InvalidSignature",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "InvalidOperation",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        }
+      ]
+    },
+    {
+      "type": "enum std::identity::Identity",
+      "metadataTypeId": 10,
+      "components": [
+        {
+          "name": "Address",
+          "typeId": 29
+        },
+        {
+          "name": "ContractId",
+          "typeId": 33
+        }
+      ]
+    },
+    {
+      "type": "enum std::option::Option",
+      "metadataTypeId": 11,
+      "components": [
+        {
+          "name": "None",
+          "typeId": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d"
+        },
+        {
+          "name": "Some",
+          "typeId": 12
+        }
+      ],
+      "typeParameters": [
+        12
+      ]
+    },
+    {
+      "type": "generic T",
+      "metadataTypeId": 12
+    },
+    {
+      "type": "raw untyped ptr",
+      "metadataTypeId": 13
+    },
+    {
+      "type": "struct contract_libs::signature::IncrementNonceEvent",
+      "metadataTypeId": 14,
+      "components": [
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::src16::EIP712Domain",
+      "metadataTypeId": 15,
+      "components": [
+        {
+          "name": "name",
+          "typeId": 38
+        },
+        {
+          "name": "version",
+          "typeId": 38
+        },
+        {
+          "name": "chain_id",
+          "typeId": 42
+        },
+        {
+          "name": "verifying_contract",
+          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::src16::SRC16Domain",
+      "metadataTypeId": 16,
+      "components": [
+        {
+          "name": "name",
+          "typeId": 38
+        },
+        {
+          "name": "version",
+          "typeId": 38
+        },
+        {
+          "name": "chain_id",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "verifying_contract",
+          "typeId": 33
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::CallContractArg",
+      "metadataTypeId": 17,
+      "components": [
+        {
+          "name": "contract_id",
+          "typeId": 33
+        },
+        {
+          "name": "function_selector",
+          "typeId": 31
+        },
+        {
+          "name": "call_params",
+          "typeId": 37
+        },
+        {
+          "name": "call_data",
+          "typeId": 11,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 31
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::CallContractArgs",
+      "metadataTypeId": 18,
+      "components": [
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "call_contract_args",
+          "typeId": 17
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::FailedToValidateEvent",
+      "metadataTypeId": 19,
+      "components": [
+        {
+          "name": "account",
+          "typeId": 10
+        },
+        {
+          "name": "reason",
+          "typeId": 38
+        },
+        {
+          "name": "timestamp",
+          "typeId": 39
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::MultiCallContractArgs",
+      "metadataTypeId": 20,
+      "components": [
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "call_contract_args",
+          "typeId": 41,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 17
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::RevokeArgs",
+      "metadataTypeId": 21,
+      "components": [
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::Session",
+      "metadataTypeId": 22,
+      "components": [
+        {
+          "name": "session_id",
+          "typeId": 10
+        },
+        {
+          "name": "expiry",
+          "typeId": 39
+        },
+        {
+          "name": "contract_ids",
+          "typeId": 41,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 33
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionArgs",
+      "metadataTypeId": 23,
+      "components": [
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "session_id",
+          "typeId": 10
+        },
+        {
+          "name": "expiry",
+          "typeId": 39
+        },
+        {
+          "name": "contract_ids",
+          "typeId": 41,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 33
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionContractCallEvent",
+      "metadataTypeId": 24,
+      "components": [
+        {
+          "name": "session_id",
+          "typeId": 10
+        },
+        {
+          "name": "called_contract",
+          "typeId": 33
+        },
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionCreatedEvent",
+      "metadataTypeId": 25,
+      "components": [
+        {
+          "name": "account",
+          "typeId": 10
+        },
+        {
+          "name": "session",
+          "typeId": 22
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::SessionRevokedEvent",
+      "metadataTypeId": 26,
+      "components": [
+        {
+          "name": "account",
+          "typeId": 10
+        },
+        {
+          "name": "session_id",
+          "typeId": 10
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::WithdrawArgs",
+      "metadataTypeId": 27,
+      "components": [
+        {
+          "name": "nonce",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "to",
+          "typeId": 10
+        },
+        {
+          "name": "amount",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "asset_id",
+          "typeId": 30
+        }
+      ]
+    },
+    {
+      "type": "struct contract_schema::trade_account::WithdrawEvent",
+      "metadataTypeId": 28,
+      "components": [
+        {
+          "name": "account",
+          "typeId": 10
+        },
+        {
+          "name": "to",
+          "typeId": 10
+        },
+        {
+          "name": "amount",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "asset_id",
+          "typeId": 30
+        },
+        {
+          "name": "timestamp",
+          "typeId": 39
+        }
+      ]
+    },
+    {
+      "type": "struct std::address::Address",
+      "metadataTypeId": 29,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+        }
+      ]
+    },
+    {
+      "type": "struct std::asset_id::AssetId",
+      "metadataTypeId": 30,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+        }
+      ]
+    },
+    {
+      "type": "struct std::bytes::Bytes",
+      "metadataTypeId": 31,
+      "components": [
+        {
+          "name": "buf",
+          "typeId": 32
+        },
+        {
+          "name": "len",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct std::bytes::RawBytes",
+      "metadataTypeId": 32,
+      "components": [
+        {
+          "name": "ptr",
+          "typeId": 13
+        },
+        {
+          "name": "cap",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct std::contract_id::ContractId",
+      "metadataTypeId": 33,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b"
+        }
+      ]
+    },
+    {
+      "type": "struct std::crypto::ed25519::Ed25519",
+      "metadataTypeId": 34,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    },
+    {
+      "type": "struct std::crypto::secp256k1::Secp256k1",
+      "metadataTypeId": 35,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    },
+    {
+      "type": "struct std::crypto::secp256r1::Secp256r1",
+      "metadataTypeId": 36,
+      "components": [
+        {
+          "name": "bits",
+          "typeId": 0
+        }
+      ]
+    },
+    {
+      "type": "struct std::low_level_call::CallParams",
+      "metadataTypeId": 37,
+      "components": [
+        {
+          "name": "coins",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "asset_id",
+          "typeId": 30
+        },
+        {
+          "name": "gas",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct std::string::String",
+      "metadataTypeId": 38,
+      "components": [
+        {
+          "name": "bytes",
+          "typeId": 31
+        }
+      ]
+    },
+    {
+      "type": "struct std::time::Time",
+      "metadataTypeId": 39,
+      "components": [
+        {
+          "name": "unix",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ]
+    },
+    {
+      "type": "struct std::vec::RawVec",
+      "metadataTypeId": 40,
+      "components": [
+        {
+          "name": "ptr",
+          "typeId": 13
+        },
+        {
+          "name": "cap",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ],
+      "typeParameters": [
+        12
+      ]
+    },
+    {
+      "type": "struct std::vec::Vec",
+      "metadataTypeId": 41,
+      "components": [
+        {
+          "name": "buf",
+          "typeId": 40,
+          "typeArguments": [
+            {
+              "name": "",
+              "typeId": 12
+            }
+          ]
+        },
+        {
+          "name": "len",
+          "typeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        }
+      ],
+      "typeParameters": [
+        12
+      ]
+    },
+    {
+      "type": "u256",
+      "metadataTypeId": 42
+    },
+    {
+      "type": "u8",
+      "metadataTypeId": 43
+    }
+  ],
+  "functions": [
+    {
+      "name": "call_contract",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "call",
+          "concreteTypeId": "2e811073316cb5af9b64bcd703b0f5957a35112aa0f1f86782a8fd42b485c3d4"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Executes a call to another contract on behalf of the trading account."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Allows the account to interact with other contracts (e.g., order books)."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `contract_id` - The contract to call"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `forward` - Optional assets to forward with the call"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `args` - Optional encoded arguments for the call"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `Bytes` - The encoded return value from the called contract"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Verifies caller permissions (owner or valid session)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Only callable by account owner or valid session key holder"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Validates forwarded amounts against account balance"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - May emit `FailedToValidateEvent` if session validation fails"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If caller is not authorized (neither owner nor valid session)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If insufficient balance for forwarded assets"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If external call fails"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "call_contracts",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "calls",
+          "concreteTypeId": "d5d0add462df804d0d75443e00c45391dcc2f0c5c02c439a798cc7549b528449"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Executes multiple calls to other contracts on behalf of the trading account via the trading account owner."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Allows the account to interact with other contracts (e.g., order books)."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `contract_id` - The contract to call"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `call_params` - Optional assets to forward with the call"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `args` - Optional encoded arguments for the call"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `Bytes` - The encoded return value from the called contract"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Verifies caller permissions (owner or valid session)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Only callable by account owner or valid session key holder"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Validates forwarded amounts against account balance"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - May emit `FailedToValidateEvent` if session validation fails"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If caller is not the trading account owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If insufficient balance for forwarded assets"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If external call fails"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "get_current_session",
+      "inputs": [],
+      "output": "db4bc0201be00cc6d049122ba4e5eaf2e1a8d67e87ae531c85204a496c41add4",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Returns information about the current active session."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `Option<Session>` - Session if a session exists, None otherwise"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Current session data"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Note"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Returns the session even if it has expired (caller should check expiry)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Returns None if no session has been set"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "get_nonce",
+      "inputs": [],
+      "output": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Returns the current nonce value for replay protection."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Nonce increments with each session-authorized operation."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `u64` - Current nonce value (starts at 0)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Current nonce from storage"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Note"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Used to prevent replay attacks on session operations"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Increments automatically with each session call"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "session_call_contract",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "2a32867dec49ed8ddf6b7d2ed19d53c626d3f593369b5dd82a317d7b300e1c39"
+        },
+        {
+          "name": "call",
+          "concreteTypeId": "2e811073316cb5af9b64bcd703b0f5957a35112aa0f1f86782a8fd42b485c3d4"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Executes a single contract call using session key authorization."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Allows delegated operations without exposing the owner's private key."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `signature` - Session key signature proving authorization"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `call` - The contract call details including target, selector, and parameters"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Current session for validation, current nonce"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Increments nonce for replay protection"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Validates signature against the session key"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Verifies session is active and not expired"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Uses nonce to prevent replay attacks"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Emits `SessionContractCallEvent` for audit trail"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If signature is invalid"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If session is expired or revoked"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If recovered address doesn't match session_id"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If external call fails"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "session_call_contracts",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "2a32867dec49ed8ddf6b7d2ed19d53c626d3f593369b5dd82a317d7b300e1c39"
+        },
+        {
+          "name": "calls",
+          "concreteTypeId": "d5d0add462df804d0d75443e00c45391dcc2f0c5c02c439a798cc7549b528449"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Executes multiple contract calls using session key authorization."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Enables batch operations for efficiency and atomicity."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `signature` - Session key signature for the batch operation"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `calls` - Vector of contract calls to execute in sequence"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Current session for validation, current nonce"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Increments nonce once for the entire batch"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Single signature validates the entire batch"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - All calls share the same nonce for atomicity"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Session must be valid for all calls to execute"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Emits `SessionContractCallEvent` for each call in the batch"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Note"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Calls are executed sequentially in the order provided"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If any call fails, subsequent calls may not execute"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If signature validation fails"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If session is invalid"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If any individual call fails"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "set_session",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "session",
+          "concreteTypeId": "db4bc0201be00cc6d049122ba4e5eaf2e1a8d67e87ae531c85204a496c41add4"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Sets a new session identity for delegated operations."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Only one session can be active at a time - setting a new session automatically revokes any existing session."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Sessions allow temporary access to trading functions without exposing the owner's keys."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Sessions must specify at least one allowed contract for security."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `session` - The new session to make active (pass None to revoke without replacement)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Verifies caller is the account owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Replaces any existing session with the new one"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Emits `SessionRevokedEvent` if a previous session existed"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Emits `SessionCreatedEvent` if new session is created"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Security"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Automatically revokes any existing session before creating the new one"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Only one session can be active per account at any time"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Sessions must specify at least one allowed contract ID"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Pass None to revoke without setting a new session"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If caller is not the account owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If expiry is in the past (when session is Some)"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If session has no allowed contracts (when session is Some)"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "typed_call_contract",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "call",
+          "concreteTypeId": "f5137e8860728aa53b731dc6f4be35633f71e6cf3a24439ae80bb38d7ec67d5e"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "typed_call_contracts",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "calls",
+          "concreteTypeId": "f4be05417a57a0fa163ebf6c649786e15dc74d541e39b1071bb7cfaa675759ad"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "typed_revoke_session",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "revoke",
+          "concreteTypeId": "fa245643e7467acf010e5f8b65e5c1b8f23a3973dd24fe755acd630ac3fa7557"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "typed_set_session",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "session_args",
+          "concreteTypeId": "bb7bd7d8bcce22513cea4a375d13aeff84ff17c9aecf40ae825265179de131be"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "typed_withdraw",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "withdraw_args",
+          "concreteTypeId": "c86b3b5bfe482d7adedfc0fac7d7c73b4fd6e7c97a31a76afa54deeff1d5c49a"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "validate_session",
+      "inputs": [
+        {
+          "name": "session_id",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        }
+      ],
+      "output": "b760f44fa5965c2474a3b471467a22c43185152129295af588b022ae50b50903",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Validates if a session identity is currently active."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Checks both if this is the current session and if it hasn't expired."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `session_id` - The session Identity to validate"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Returns"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `bool` - True if this is the current session and not expired, false otherwise"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Current session identity and expiry time"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Note"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Returns false if the provided identity doesn't match the current session"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Returns false if the current session has expired"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "withdraw",
+      "inputs": [
+        {
+          "name": "signature",
+          "concreteTypeId": "8c8a9aeea8dc1a1ac1f1fe31c77823653152feda3fa93cd494eedbf84395ca40"
+        },
+        {
+          "name": "to",
+          "concreteTypeId": "ab7cd04e05be58e3fc15d424c2c4a57f824a2a2d97d67252440a3925ebdc1335"
+        },
+        {
+          "name": "amount",
+          "concreteTypeId": "1506e6f44c1d6291cdf46395a8e573276a4fa79e8ace3fc891e092ef32d1b0a0"
+        },
+        {
+          "name": "asset_id",
+          "concreteTypeId": "c0710b6731b1dd59799cf6bef33eee3b3b04a2e40e80a0724090215bbf2ca974"
+        }
+      ],
+      "output": "2e38e77b22c314a449e91fafed92a43826ac6aa403ae6a8acb6cf58239fbaf5d",
+      "attributes": [
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Withdraws assets from the trading account to a specified recipient."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " Only the account owner can withdraw funds."
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Arguments"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `to` - The recipient Identity for the withdrawal"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `amount` - The amount to withdraw"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " * `asset_id` - The asset to withdraw"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Storage Access"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Reads: Verifies caller is owner and checks balance"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Writes: Updates the balance after withdrawal"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Events"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - Emits `WithdrawEvent` with withdrawal details"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " # Reverts"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            ""
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If caller is not the account owner"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If insufficient balance"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If amount is zero"
+          ]
+        },
+        {
+          "name": "doc-comment",
+          "arguments": [
+            " - If transfer fails"
+          ]
+        },
+        {
+          "name": "storage",
+          "arguments": [
+            "read",
+            "write"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "call_contract_arg_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "call_contract_args_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "call_params_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "domain_separator",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "5f05ed49298866d467640c48af64b5e978f95a74358b7050b09adfa77ea558b2",
+      "attributes": null
+    },
+    {
+      "name": "domain_separator_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "multi_call_contract_args_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "revoke_args_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "session_args_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    },
+    {
+      "name": "withdraw_args_type_hash",
+      "inputs": [
+        {
+          "name": "encoding",
+          "concreteTypeId": "5eb19a24b67b9922247392ca34ef7e4726b323401f4d6b3f65d4a8f382632a07"
+        }
+      ],
+      "output": "7c5ee1cecf5f8eacd1284feb5f0bf2bdea533a51e2f0c9aabe9236d335989f3b",
+      "attributes": null
+    }
+  ],
+  "loggedTypes": [
+    {
+      "logId": "2261086600904378517",
+      "concreteTypeId": "1f60fe48a54d08956985da0422f2d7d44834b7c4d4687f0376f26dce46fe44bf"
+    },
+    {
+      "logId": "10098701174489624218",
+      "concreteTypeId": "8c25cb3686462e9a86d2883c5688a22fe738b0bbc85f458d2d2b5f3f667c6d5a"
+    },
+    {
+      "logId": "1051120138880640983",
+      "concreteTypeId": "0e9654327e3d67d706825c5e4e2df18533389b6566d8c1c298c7bd5b5e0c6da5"
+    },
+    {
+      "logId": "8043135260348901120",
+      "concreteTypeId": "6f9ef4e7a983e700685ab472ed2e625822ad32b8f04de92adc81ed60911e5e77"
+    },
+    {
+      "logId": "2838887922734823881",
+      "concreteTypeId": "2765c1864fc179c9ee1938cc4a28acedc0b1c76f0a63434b33149f432eb4e8c3"
+    },
+    {
+      "logId": "17909535172322737929",
+      "concreteTypeId": "f88b7359b6a93f09790d042f771eb46a798919cde0d85a95d291dae15d746312"
+    },
+    {
+      "logId": "11035215306127844569",
+      "concreteTypeId": "9924f5da95b424d9efb5403e33f96557a6fa8e766014c055159e9c3bd457ca83"
+    },
+    {
+      "logId": "14509209538366790003",
+      "concreteTypeId": "c95b1133ba0fd973819faa015c9a3bf27edbbef753c977f859ba593b89ae22e5"
+    },
+    {
+      "logId": "821289540733930261",
+      "concreteTypeId": "0b65ce7c65308b155a42d67dba9a8f5ec826782ec477a1970fe592016e92d527"
+    },
+    {
+      "logId": "14888260448086063780",
+      "concreteTypeId": "ce9db9ff03aafaa4ef9ebd0dac288345a961aff0262337411b6ef4db9df07039"
+    },
+    {
+      "logId": "11023126350627756633",
+      "concreteTypeId": "98fa03034b6a5a596d6121040d525eabb78d224d2411b6d5d0151727499bbd09"
+    },
+    {
+      "logId": "2735857006735158246",
+      "concreteTypeId": "25f7b773d2b66be695d008d06f344b78146367854413f2041eaf21356640e568"
+    },
+    {
+      "logId": "6182132059982595715",
+      "concreteTypeId": "55cb585aadd106832bdedaef0a231b5587db28871e2b12e5137ec4cb66b9b829"
+    }
+  ],
+  "messagesTypes": [],
+  "configurables": [
+    {
+      "name": "DOMAIN",
+      "concreteTypeId": "d41cd041a54363a3d61ab80537895c873f2315f976fc58def6e5035f6b1f0710",
+      "offset": 76256,
+      "indirect": false
+    },
+    {
+      "name": "VERSION",
+      "concreteTypeId": "6354581bfa62ac188c9f243cc30e1bf38a150773f871be8765351ef8c5db6c1e",
+      "offset": 76272,
+      "indirect": false
+    }
+  ],
+  "errorCodes": {},
+  "panickingCalls": {}
+}
