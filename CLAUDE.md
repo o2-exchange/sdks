@@ -61,7 +61,7 @@ cd sdks/typescript && O2_INTEGRATION=1 npx vitest run tests/integration.test.ts
 
 ### Rust SDK
 ```bash
-cd sdks/rust && cargo test -- --ignored --test-threads=1
+cd sdks/rust && cargo test --features integration --test integration_tests -- --test-threads=1
 ```
 
 ## Integration Test Design Patterns

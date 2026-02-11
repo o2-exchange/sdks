@@ -1,7 +1,8 @@
+#![cfg(feature = "integration")]
 /// Integration tests for O2 SDK against testnet.
 ///
 /// These tests require network access and hit the live testnet API.
-/// Run with: cargo test -- --ignored
+/// Run with: cargo test --features integration --test integration_tests -- --test-threads=1
 use futures_util::StreamExt;
 use serial_test::serial;
 use tokio::sync::OnceCell;
@@ -130,7 +131,6 @@ async fn get_shared_setup() -> &'static SharedSetup {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_fetch_markets() {
     let mut client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
@@ -144,7 +144,6 @@ async fn test_fetch_markets() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_get_depth() {
     let mut client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
@@ -157,7 +156,6 @@ async fn test_get_depth() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_get_trades() {
     let mut client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
@@ -174,7 +172,6 @@ async fn test_get_trades() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_create_account_and_whitelist() {
     let client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet().unwrap();
@@ -199,7 +196,6 @@ async fn test_create_account_and_whitelist() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_setup_account_idempotent() {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet().unwrap();
@@ -218,7 +214,6 @@ async fn test_setup_account_idempotent() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_market_resolution_by_pair() {
     let mut client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
@@ -231,7 +226,6 @@ async fn test_market_resolution_by_pair() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_faucet_mint() {
     let shared = get_shared_setup().await;
     let client = O2Client::new(Network::Testnet);
@@ -249,7 +243,6 @@ async fn test_faucet_mint() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_balance_check() {
     let shared = get_shared_setup().await;
     let mut client = O2Client::new(Network::Testnet);
@@ -263,7 +256,6 @@ async fn test_balance_check() {
 }
 
 #[tokio::test]
-#[ignore]
 #[serial]
 async fn test_full_session_creation() {
     let shared = get_shared_setup().await;
@@ -355,7 +347,6 @@ async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f
 }
 
 #[tokio::test]
-#[ignore]
 #[serial]
 async fn test_order_placement_and_cancellation() {
     let shared = get_shared_setup().await;
@@ -436,7 +427,6 @@ async fn test_order_placement_and_cancellation() {
 }
 
 #[tokio::test]
-#[ignore]
 #[serial]
 async fn test_cross_account_fill() {
     let shared = get_shared_setup().await;
@@ -561,7 +551,6 @@ async fn test_cross_account_fill() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_nonce_fetch() {
     let shared = get_shared_setup().await;
     let client = O2Client::new(Network::Testnet);
@@ -575,7 +564,6 @@ async fn test_nonce_fetch() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_aggregated_endpoints() {
     let client = O2Client::new(Network::Testnet);
 
@@ -586,7 +574,6 @@ async fn test_aggregated_endpoints() {
 }
 
 #[tokio::test]
-#[ignore]
 async fn test_websocket_depth() {
     let mut client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();

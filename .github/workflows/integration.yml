@@ -1,6 +1,8 @@
 name: Integration Tests
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
   schedule:
     - cron: "0 6 * * 1" # Monday 6am UTC
@@ -60,5 +62,4 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: sdks/rust -> target
-      - run: cargo build
-      - run: cargo test -- --ignored --test-threads=1
+      - run: cargo test --features integration --test integration_tests -- --test-threads=1

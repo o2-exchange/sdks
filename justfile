@@ -75,4 +75,4 @@ test-rust:
     cd sdks/rust && cargo test
 
 integration-rust:
-    cd sdks/rust && cargo test -- --ignored --test-threads=1
+    cd sdks/rust && cargo test --features integration --test integration_tests -- --test-threads=1

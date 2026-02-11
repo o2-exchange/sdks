@@ -22,6 +22,9 @@ futures-util = "0.3"
 tokio-stream = "0.1"
 url = "2"
 
+[features]
+integration = []
+
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
 serial_test = "3"
