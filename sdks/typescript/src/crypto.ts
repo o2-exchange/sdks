@@ -9,11 +9,11 @@
  * Must configure etc.hmacSha256Sync for synchronous signing.
  */
 
-import * as secp from "@noble/secp256k1";
+import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { hmac } from "@noble/hashes/hmac.js";
-import { concat, bytesToHex, hexToBytes } from "./encoding.js";
+import * as secp from "@noble/secp256k1";
+import { bytesToHex, concat, hexToBytes } from "./encoding.js";
 
 // Configure @noble/secp256k1 v3 for synchronous signing.
 // v3 requires manual hash configuration via secp.hashes.
@@ -52,13 +52,9 @@ export function generateWallet(): Wallet {
 }
 
 /** Load a wallet from a private key (hex string or bytes). */
-export function walletFromPrivateKey(
-  privateKeyInput: Uint8Array | string
-): Wallet {
+export function walletFromPrivateKey(privateKeyInput: Uint8Array | string): Wallet {
   const privateKey =
-    typeof privateKeyInput === "string"
-      ? hexToBytes(privateKeyInput)
-      : privateKeyInput;
+    typeof privateKeyInput === "string" ? hexToBytes(privateKeyInput) : privateKeyInput;
   const publicKey = secp.getPublicKey(privateKey, false); // uncompressed 65 bytes
   const addressBytes = sha256(publicKey.slice(1)); // skip 0x04 prefix
   return {
@@ -79,13 +75,9 @@ export function generateEvmWallet(): EvmWallet {
 }
 
 /** Load an EVM wallet from a private key. */
-export function evmWalletFromPrivateKey(
-  privateKeyInput: Uint8Array | string
-): EvmWallet {
+export function evmWalletFromPrivateKey(privateKeyInput: Uint8Array | string): EvmWallet {
   const privateKey =
-    typeof privateKeyInput === "string"
-      ? hexToBytes(privateKeyInput)
-      : privateKeyInput;
+    typeof privateKeyInput === "string" ? hexToBytes(privateKeyInput) : privateKeyInput;
   const publicKey = secp.getPublicKey(privateKey, false);
   const hash = keccak_256(publicKey.slice(1));
   const evmAddressBytes = hash.slice(12); // last 20 bytes
@@ -117,10 +109,7 @@ export function evmWalletFromPrivateKey(
  *    s[0] = (recovery_id << 7) | (s[0] & 0x7F)
  * 4. Return r(32) + s(32) = 64 bytes
  */
-export function fuelCompactSign(
-  privateKey: Uint8Array,
-  digest: Uint8Array
-): Uint8Array {
+export function fuelCompactSign(privateKey: Uint8Array, digest: Uint8Array): Uint8Array {
   // CRITICAL: prehash must be false — the digest is already SHA-256 hashed.
   // Use format: 'recovered' to get 65-byte output: [recovery_id, r(32), s(32)].
   // Low-s normalization is handled automatically by the library.
@@ -148,10 +137,7 @@ export function fuelCompactSign(
  * prefix = "\x19Fuel Signed Message:\n"
  * digest = sha256(prefix + str(len(message)) + message)
  */
-export function personalSign(
-  privateKey: Uint8Array,
-  message: Uint8Array
-): Uint8Array {
+export function personalSign(privateKey: Uint8Array, message: Uint8Array): Uint8Array {
   const prefix = new TextEncoder().encode("\x19Fuel Signed Message:\n");
   const lengthStr = new TextEncoder().encode(String(message.length));
   const fullMessage = concat([prefix, lengthStr, message]);
@@ -164,10 +150,7 @@ export function personalSign(
  *
  * digest = sha256(message)
  */
-export function rawSign(
-  privateKey: Uint8Array,
-  message: Uint8Array
-): Uint8Array {
+export function rawSign(privateKey: Uint8Array, message: Uint8Array): Uint8Array {
   const digest = sha256(message);
   return fuelCompactSign(privateKey, digest);
 }
@@ -178,13 +161,8 @@ export function rawSign(
  * prefix = "\x19Ethereum Signed Message:\n" + str(len(message))
  * digest = keccak256(prefix + message)
  */
-export function evmPersonalSign(
-  privateKey: Uint8Array,
-  message: Uint8Array
-): Uint8Array {
-  const prefix = new TextEncoder().encode(
-    `\x19Ethereum Signed Message:\n${message.length}`
-  );
+export function evmPersonalSign(privateKey: Uint8Array, message: Uint8Array): Uint8Array {
+  const prefix = new TextEncoder().encode(`\x19Ethereum Signed Message:\n${message.length}`);
   const fullMessage = concat([prefix, message]);
   const digest = keccak_256(fullMessage);
   return fuelCompactSign(privateKey, digest);

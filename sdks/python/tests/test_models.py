@@ -1,31 +1,25 @@
 """Unit tests for model parsing."""
 
+from typing import ClassVar
+
 from o2_sdk.models import (
     AccountInfo,
     ActionsResponse,
     Balance,
-    Bar,
     DepthSnapshot,
     DepthUpdate,
     FaucetResponse,
     Identity,
     Market,
-    MarketAsset,
     MarketsResponse,
-    NonceUpdate,
     Order,
-    OrderBookBalance,
-    OrdersResponse,
-    OrderUpdate,
-    SessionResponse,
     Trade,
-    TradeUpdate,
     WhitelistResponse,
 )
 
 
 class TestMarket:
-    MARKET_JSON = {
+    MARKET_JSON: ClassVar[dict] = {
         "contract_id": "0x9ad52fb8a2be1c4603dfeeb8118a922c8cfafa8f260eeb41d68ade8d442be65b",
         "market_id": "0x09c17f779eb0a7658424e48935b2bef24013766f8b3da757becb2264406f9e96",
         "maker_fee": "0",
@@ -97,6 +91,7 @@ class TestMarket:
     def test_validate_order_min_order_fail(self):
         m = Market.from_dict(self.MARKET_JSON)
         import pytest
+
         with pytest.raises(ValueError, match="min_order"):
             # Too small
             m.validate_order(100000000, 1000000000)

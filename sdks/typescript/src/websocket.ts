@@ -11,12 +11,12 @@
 import WebSocket from "ws";
 import type { NetworkConfig } from "./config.js";
 import type {
+  BalanceUpdate,
   DepthUpdate,
+  Identity,
+  NonceUpdate,
   OrderUpdate,
   TradeUpdate,
-  BalanceUpdate,
-  NonceUpdate,
-  Identity,
 } from "./models.js";
 
 export interface O2WebSocketOptions {
@@ -134,17 +134,14 @@ export class O2WebSocket {
    */
   async *streamDepth(
     marketId: string,
-    precision: string | number = "10"
+    precision: string | number = "10",
   ): AsyncGenerator<DepthUpdate> {
     const sub = {
       action: "subscribe_depth",
       market_id: marketId,
       precision: String(precision),
     };
-    yield* this.subscribe<DepthUpdate>(sub, [
-      "subscribe_depth",
-      "subscribe_depth_update",
-    ]);
+    yield* this.subscribe<DepthUpdate>(sub, ["subscribe_depth", "subscribe_depth_update"]);
   }
 
   /**
@@ -220,7 +217,7 @@ export class O2WebSocket {
 
   private async *subscribe<T>(
     subscription: Record<string, unknown>,
-    actions: string[]
+    actions: string[],
   ): AsyncGenerator<T> {
     // Track for reconnection
     this.pendingSubscriptions.push(subscription);
@@ -231,7 +228,7 @@ export class O2WebSocket {
     // Create a queue-based async generator
     const queue: T[] = [];
     let resolve: (() => void) | null = null;
-    let done = false;
+    const done = false;
 
     const handler = (msg: Record<string, unknown>) => {
       queue.push(msg as T);
@@ -294,10 +291,7 @@ export class O2WebSocket {
       return;
     }
 
-    const delay =
-      this.reconnectDelayMs *
-      Math.pow(2, this.reconnectAttempts) *
-      (0.5 + Math.random());
+    const delay = this.reconnectDelayMs * 2 ** this.reconnectAttempts * (0.5 + Math.random());
     this.reconnectAttempts++;
 
     setTimeout(() => {

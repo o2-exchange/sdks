@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, AsyncIterator, Optional, Union
+from collections.abc import AsyncIterator
+from typing import Any
 
 from .api import O2Api
 from .config import Network, NetworkConfig, get_config
@@ -24,22 +25,19 @@ from .crypto import (
     raw_sign,
 )
 from .encoding import (
-    GAS_MAX,
     action_to_call,
     build_actions_signing_bytes,
     build_session_signing_bytes,
-    encode_identity,
 )
 from .errors import O2Error
 from .models import (
     AccountInfo,
     ActionsResponse,
     Balance,
-    Bar,
     BalanceUpdate,
+    Bar,
     DepthSnapshot,
     DepthUpdate,
-    FaucetResponse,
     Market,
     MarketsResponse,
     NonceUpdate,
@@ -48,7 +46,6 @@ from .models import (
     SessionInfo,
     Trade,
     TradeUpdate,
-    WhitelistResponse,
     WithdrawResponse,
 )
 from .websocket import O2WebSocket
@@ -66,13 +63,13 @@ class O2Client:
     def __init__(
         self,
         network: Network = Network.TESTNET,
-        custom_config: Optional[NetworkConfig] = None,
+        custom_config: NetworkConfig | None = None,
     ):
         self._config = custom_config or get_config(network)
         self._network = network
         self.api = O2Api(self._config)
-        self._ws: Optional[O2WebSocket] = None
-        self._markets_cache: Optional[MarketsResponse] = None
+        self._ws: O2WebSocket | None = None
+        self._markets_cache: MarketsResponse | None = None
         self._nonce_cache: dict[str, int] = {}
 
     async def close(self) -> None:
@@ -109,7 +106,7 @@ class O2Client:
     # Account lifecycle (idempotent)
     # -----------------------------------------------------------------------
 
-    async def setup_account(self, wallet: Union[Wallet, EvmWallet]) -> AccountInfo:
+    async def setup_account(self, wallet: Wallet | EvmWallet) -> AccountInfo:
         """Set up a trading account idempotently.
 
         1. Check if account exists (GET /v1/accounts)
@@ -127,9 +124,7 @@ class O2Client:
             # Step 2: Create account
             logger.info("Creating trading account for %s", wallet.b256_address)
             result = await self.api.create_account(wallet.b256_address)
-            account = await self.api.get_account(
-                trade_account_id=result.trade_account_id
-            )
+            account = await self.api.get_account(trade_account_id=result.trade_account_id)
 
         trade_account_id = account.trade_account_id
 
@@ -163,7 +158,7 @@ class O2Client:
 
     async def create_session(
         self,
-        owner: Union[Wallet, EvmWallet],
+        owner: Wallet | EvmWallet,
         markets: list[str],
         expiry_days: int = 30,
     ) -> SessionInfo:
@@ -227,6 +222,7 @@ class O2Client:
         resp = await self.api.create_session(owner.b256_address, session_request)
 
         # Cache the nonce (session creation increments it)
+        assert account.trade_account_id is not None, "Account must have a trade_account_id"
         self._nonce_cache[account.trade_account_id] = nonce + 1
 
         return SessionInfo(
@@ -251,7 +247,7 @@ class O2Client:
         price: float,
         quantity: float,
         order_type: str = "Spot",
-        order_type_data: Optional[dict] = None,
+        order_type_data: dict | None = None,
         settle_first: bool = True,
         collect_orders: bool = True,
     ) -> ActionsResponse:
@@ -302,19 +298,17 @@ class O2Client:
         # Build actions
         actions_list: list[dict] = []
         if settle_first:
-            actions_list.append({
-                "SettleBalance": {
-                    "to": {"ContractId": session.trade_account_id}
+            actions_list.append({"SettleBalance": {"to": {"ContractId": session.trade_account_id}}})
+        actions_list.append(
+            {
+                "CreateOrder": {
+                    "side": side,
+                    "price": str(scaled_price),
+                    "quantity": str(scaled_quantity),
+                    "order_type": ot,
                 }
-            })
-        actions_list.append({
-            "CreateOrder": {
-                "side": side,
-                "price": str(scaled_price),
-                "quantity": str(scaled_quantity),
-                "order_type": ot,
             }
-        })
+        )
 
         return await self.batch_actions(
             session=session,
@@ -326,8 +320,8 @@ class O2Client:
         self,
         session: SessionInfo,
         order_id: str,
-        market: Optional[str] = None,
-        market_id: Optional[str] = None,
+        market: str | None = None,
+        market_id: str | None = None,
     ) -> ActionsResponse:
         """Cancel an order."""
         if market_id is None:
@@ -337,15 +331,15 @@ class O2Client:
             market_obj = self._resolve_market(markets_resp, market)
             market_id = market_obj.market_id
 
-        actions = [{
-            "market_id": market_id,
-            "actions": [{"CancelOrder": {"order_id": order_id}}],
-        }]
+        actions = [
+            {
+                "market_id": market_id,
+                "actions": [{"CancelOrder": {"order_id": order_id}}],
+            }
+        ]
         return await self.batch_actions(session=session, actions=actions)
 
-    async def cancel_all_orders(
-        self, session: SessionInfo, market: str
-    ) -> ActionsResponse:
+    async def cancel_all_orders(self, session: SessionInfo, market: str) -> ActionsResponse:
         """Cancel all open orders for a market (up to 5 per batch)."""
         markets_resp = await self._get_markets_cached()
         market_obj = self._resolve_market(markets_resp, market)
@@ -361,28 +355,21 @@ class O2Client:
         if not orders_resp.orders:
             return ActionsResponse(tx_id=None, message="No open orders")
 
-        cancel_actions = [
-            {"CancelOrder": {"order_id": o.order_id}}
-            for o in orders_resp.orders
-        ]
+        cancel_actions = [{"CancelOrder": {"order_id": o.order_id}} for o in orders_resp.orders]
         actions = [{"market_id": market_obj.market_id, "actions": cancel_actions}]
         return await self.batch_actions(session=session, actions=actions)
 
-    async def settle_balance(
-        self, session: SessionInfo, market: str
-    ) -> ActionsResponse:
+    async def settle_balance(self, session: SessionInfo, market: str) -> ActionsResponse:
         """Settle balance for a market."""
         markets_resp = await self._get_markets_cached()
         market_obj = self._resolve_market(markets_resp, market)
 
-        actions = [{
-            "market_id": market_obj.market_id,
-            "actions": [{
-                "SettleBalance": {
-                    "to": {"ContractId": session.trade_account_id}
-                }
-            }],
-        }]
+        actions = [
+            {
+                "market_id": market_obj.market_id,
+                "actions": [{"SettleBalance": {"to": {"ContractId": session.trade_account_id}}}],
+            }
+        ]
         return await self.batch_actions(session=session, actions=actions)
 
     async def batch_actions(
@@ -414,6 +401,7 @@ class O2Client:
 
         # Build signing bytes and sign with session key
         signing_bytes = build_actions_signing_bytes(nonce, calls)
+        assert session.session_private_key is not None, "Session must have a private key"
         signature = raw_sign(session.session_private_key, signing_bytes)
 
         # Submit
@@ -426,6 +414,7 @@ class O2Client:
             "collect_orders": collect_orders,
         }
 
+        assert session.owner_address is not None, "Session must have an owner address"
         try:
             result = await self.api.submit_actions(session.owner_address, request)
             # Increment nonce on success
@@ -451,9 +440,7 @@ class O2Client:
         resp = await self._get_markets_cached()
         return self._resolve_market(resp, symbol_pair)
 
-    async def get_depth(
-        self, market: str, precision: int = 10
-    ) -> DepthSnapshot:
+    async def get_depth(self, market: str, precision: int = 10) -> DepthSnapshot:
         """Get order book depth for a market."""
         market_obj = await self._resolve_market_async(market)
         return await self.api.get_depth(market_obj.market_id, precision)
@@ -484,18 +471,13 @@ class O2Client:
     # Account data
     # -----------------------------------------------------------------------
 
-    async def get_balances(
-        self, account: Union[AccountInfo, str]
-    ) -> dict[str, Balance]:
+    async def get_balances(self, account: AccountInfo | str) -> dict[str, Balance]:
         """Get balances keyed by asset symbol.
 
         Args:
             account: AccountInfo or trade_account_id string
         """
-        if isinstance(account, str):
-            trade_account_id = account
-        else:
-            trade_account_id = account.trade_account_id
+        trade_account_id = account if isinstance(account, str) else account.trade_account_id
 
         markets_resp = await self._get_markets_cached()
         result: dict[str, Balance] = {}
@@ -519,15 +501,13 @@ class O2Client:
 
     async def get_orders(
         self,
-        account: Union[AccountInfo, str],
+        account: AccountInfo | str,
         market: str,
-        is_open: Optional[bool] = None,
+        is_open: bool | None = None,
         count: int = 20,
     ) -> list[Order]:
         """Get orders for an account on a market."""
-        trade_account_id = (
-            account if isinstance(account, str) else account.trade_account_id
-        )
+        trade_account_id = account if isinstance(account, str) else account.trade_account_id
         market_obj = await self._resolve_market_async(market)
         resp = await self.api.get_orders(
             market_id=market_obj.market_id,
@@ -553,22 +533,16 @@ class O2Client:
             await self._ws.connect()
         return self._ws
 
-    async def stream_depth(
-        self, market: str, precision: int = 10
-    ) -> AsyncIterator[DepthUpdate]:
+    async def stream_depth(self, market: str, precision: int = 10) -> AsyncIterator[DepthUpdate]:
         """Stream order book depth updates."""
         market_obj = await self._resolve_market_async(market)
         ws = await self._ensure_ws()
         async for update in ws.stream_depth(market_obj.market_id, str(precision)):
             yield update
 
-    async def stream_orders(
-        self, account: Union[AccountInfo, str]
-    ) -> AsyncIterator[OrderUpdate]:
+    async def stream_orders(self, account: AccountInfo | str) -> AsyncIterator[OrderUpdate]:
         """Stream order updates for an account."""
-        trade_account_id = (
-            account if isinstance(account, str) else account.trade_account_id
-        )
+        trade_account_id = account if isinstance(account, str) else account.trade_account_id
         ws = await self._ensure_ws()
         identities = [{"ContractId": trade_account_id}]
         async for update in ws.stream_orders(identities):
@@ -581,25 +555,17 @@ class O2Client:
         async for update in ws.stream_trades(market_obj.market_id):
             yield update
 
-    async def stream_balances(
-        self, account: Union[AccountInfo, str]
-    ) -> AsyncIterator[BalanceUpdate]:
+    async def stream_balances(self, account: AccountInfo | str) -> AsyncIterator[BalanceUpdate]:
         """Stream balance updates for an account."""
-        trade_account_id = (
-            account if isinstance(account, str) else account.trade_account_id
-        )
+        trade_account_id = account if isinstance(account, str) else account.trade_account_id
         ws = await self._ensure_ws()
         identities = [{"ContractId": trade_account_id}]
         async for update in ws.stream_balances(identities):
             yield update
 
-    async def stream_nonce(
-        self, account: Union[AccountInfo, str]
-    ) -> AsyncIterator[NonceUpdate]:
+    async def stream_nonce(self, account: AccountInfo | str) -> AsyncIterator[NonceUpdate]:
         """Stream nonce updates for an account."""
-        trade_account_id = (
-            account if isinstance(account, str) else account.trade_account_id
-        )
+        trade_account_id = account if isinstance(account, str) else account.trade_account_id
         ws = await self._ensure_ws()
         identities = [{"ContractId": trade_account_id}]
         async for update in ws.stream_nonce(identities):
@@ -611,10 +577,10 @@ class O2Client:
 
     async def withdraw(
         self,
-        owner: Union[Wallet, EvmWallet],
+        owner: Wallet | EvmWallet,
         asset: str,
         amount: float,
-        to: Optional[str] = None,
+        to: str | None = None,
     ) -> WithdrawResponse:
         """Withdraw funds from the trading account.
 
@@ -634,7 +600,7 @@ class O2Client:
 
         # Resolve asset
         asset_id, decimals = self._resolve_asset(markets_resp, asset)
-        scaled_amount = int(amount * (10 ** decimals))
+        scaled_amount = int(amount * (10**decimals))
 
         # Build withdraw signing bytes
         # Withdraw uses personalSign like session creation
@@ -682,9 +648,7 @@ class O2Client:
 
     async def refresh_nonce(self, session: SessionInfo) -> int:
         """Re-fetch nonce from the API (manual resync)."""
-        account = await self.api.get_account(
-            trade_account_id=session.trade_account_id
-        )
+        account = await self.api.get_account(trade_account_id=session.trade_account_id)
         nonce = account.nonce
         self._nonce_cache[session.trade_account_id] = nonce
         session.nonce = nonce
@@ -720,9 +684,7 @@ class O2Client:
         markets_resp = await self._get_markets_cached()
         return self._resolve_market(markets_resp, name_or_id)
 
-    def _get_market_info_by_id(
-        self, markets_resp: MarketsResponse, market_id: str
-    ) -> dict:
+    def _get_market_info_by_id(self, markets_resp: MarketsResponse, market_id: str) -> dict:
         """Get market info dict needed by action_to_call."""
         for m in markets_resp.markets:
             if m.market_id == market_id:
@@ -735,9 +697,7 @@ class O2Client:
                 }
         raise O2Error(message=f"Market ID not found: {market_id}")
 
-    def _resolve_asset(
-        self, markets_resp: MarketsResponse, symbol_or_id: str
-    ) -> tuple[str, int]:
+    def _resolve_asset(self, markets_resp: MarketsResponse, symbol_or_id: str) -> tuple[str, int]:
         """Resolve an asset symbol or ID to (asset_id, decimals)."""
         for m in markets_resp.markets:
             if m.base.symbol == symbol_or_id or m.base.asset == symbol_or_id:

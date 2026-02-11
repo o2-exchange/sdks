@@ -1,11 +1,10 @@
+use o2_sdk::crypto::*;
+use o2_sdk::encoding::*;
 /// Market maker bot example for O2 Exchange.
 ///
 /// Places symmetric buy and sell orders around a reference price,
 /// cancelling stale orders and replacing them atomically each cycle.
-
 use o2_sdk::*;
-use o2_sdk::crypto::*;
-use o2_sdk::encoding::*;
 use serde_json::json;
 use std::time::Duration;
 
@@ -21,10 +20,10 @@ struct MakerConfig {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MakerConfig {
         market_pair: "fFUEL/fUSDC".to_string(),
-        spread_pct: 0.02,       // 2% spread
-        order_size: 100.0,      // base quantity
+        spread_pct: 0.02,  // 2% spread
+        order_size: 100.0, // base quantity
         cycle_interval: Duration::from_secs(30),
-        reference_price: 0.05,  // starting reference price
+        reference_price: 0.05, // starting reference price
     };
 
     let mut client = O2Client::new(Network::Testnet);
@@ -94,7 +93,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         // Settle balance
-        calls.push(settle_balance_to_call(&contract_id, 1, &trade_account_bytes));
+        calls.push(settle_balance_to_call(
+            &contract_id,
+            1,
+            &trade_account_bytes,
+        ));
         actions_json.push(json!({
             "SettleBalance": {
                 "to": {"ContractId": session.trade_account_id}

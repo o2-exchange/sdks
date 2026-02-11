@@ -1,22 +1,21 @@
-import { describe, it, expect } from "vitest";
-import {
-  generateWallet,
-  walletFromPrivateKey,
-  generateEvmWallet,
-  evmWalletFromPrivateKey,
-  fuelCompactSign,
-  personalSign,
-  rawSign,
-  evmPersonalSign,
-} from "../src/crypto.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
+import { describe, expect, it } from "vitest";
+import {
+  evmPersonalSign,
+  evmWalletFromPrivateKey,
+  fuelCompactSign,
+  generateEvmWallet,
+  generateWallet,
+  personalSign,
+  rawSign,
+  walletFromPrivateKey,
+} from "../src/crypto.js";
 import { bytesToHex, hexToBytes } from "../src/encoding.js";
 
 describe("Crypto Module", () => {
   // Known test private key
-  const testPrivateKey =
-    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+  const testPrivateKey = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
   const testKeyBytes = hexToBytes(testPrivateKey);
 
   describe("Key generation", () => {
@@ -48,9 +47,7 @@ describe("Crypto Module", () => {
       expect(wallet.evmAddress).toMatch(/^0x[0-9a-f]{40}$/);
       expect(wallet.b256Address).toMatch(/^0x[0-9a-f]{64}$/);
       // First 12 bytes should be zero (24 hex chars after 0x prefix)
-      expect(wallet.b256Address.substring(2, 26)).toBe(
-        "000000000000000000000000"
-      );
+      expect(wallet.b256Address.substring(2, 26)).toBe("000000000000000000000000");
     });
 
     it("derives correct EVM address from known key", () => {
@@ -140,12 +137,8 @@ describe("Crypto Module", () => {
 
       // Manually construct the digest
       const prefix = new TextEncoder().encode("\x19Fuel Signed Message:\n");
-      const lengthStr = new TextEncoder().encode(
-        String(message.length)
-      );
-      const combined = new Uint8Array(
-        prefix.length + lengthStr.length + message.length
-      );
+      const lengthStr = new TextEncoder().encode(String(message.length));
+      const combined = new Uint8Array(prefix.length + lengthStr.length + message.length);
       combined.set(prefix, 0);
       combined.set(lengthStr, prefix.length);
       combined.set(message, prefix.length + lengthStr.length);

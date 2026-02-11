@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional
 
 
 class Network(Enum):
@@ -18,7 +17,7 @@ class NetworkConfig:
     api_base: str
     ws_url: str
     fuel_rpc: str
-    faucet_url: Optional[str]
+    faucet_url: str | None
 
 
 NETWORK_CONFIGS: dict[Network, NetworkConfig] = {

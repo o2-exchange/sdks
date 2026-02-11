@@ -7,9 +7,9 @@
  * Tests are idempotent and safe to run repeatedly.
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
-import { O2Client, Network } from "../src/index.js";
-import type { WalletState, Market } from "../src/models.js";
+import { beforeAll, describe, expect, it } from "vitest";
+import { Network, O2Client } from "../src/index.js";
+import type { Market, WalletState } from "../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
 
@@ -18,8 +18,7 @@ function minQuantityForMinOrder(market: Market, price: number): number {
   const quoteFactor = 10 ** market.quote.decimals;
   const baseFactor = 10 ** market.base.decimals;
   const minQty = minOrder / (price * quoteFactor);
-  const truncateFactor =
-    10 ** (market.base.decimals - market.base.max_precision);
+  const truncateFactor = 10 ** (market.base.decimals - market.base.max_precision);
   const step = truncateFactor / baseFactor;
   const rounded = Math.ceil(minQty / step) * step;
   return rounded * 1.1;
@@ -44,15 +43,14 @@ function safeSellPrice(market: Market, baseBalance: bigint): number {
 async function mintWithRetry(
   api: InstanceType<typeof O2Client>["api"],
   tradeAccountId: string,
-  maxRetries = 4
+  maxRetries = 4,
 ) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       await api.mintToContract(tradeAccountId);
       return;
     } catch {
-      if (attempt < maxRetries - 1)
-        await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
     }
   }
 }
@@ -60,7 +58,7 @@ async function mintWithRetry(
 async function whitelistWithRetry(
   api: InstanceType<typeof O2Client>["api"],
   tradeAccountId: string,
-  maxRetries = 4
+  maxRetries = 4,
 ) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -69,8 +67,7 @@ async function whitelistWithRetry(
       await new Promise((r) => setTimeout(r, 10_000));
       return;
     } catch {
-      if (attempt < maxRetries - 1)
-        await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
     }
   }
 }
@@ -86,7 +83,7 @@ async function createOrderWithWhitelistRetry(
   settleFirst: boolean,
   collectOrders: boolean,
   tradeAccountId: string,
-  maxRetries = 5
+  maxRetries = 5,
 ): Promise<{ response: any; session: any }> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
@@ -98,7 +95,7 @@ async function createOrderWithWhitelistRetry(
         quantity,
         orderType,
         settleFirst,
-        collectOrders
+        collectOrders,
       );
     } catch (e: any) {
       const msg = String(e?.message ?? e);
@@ -117,14 +114,13 @@ async function createOrderWithWhitelistRetry(
 async function setupWithRetry(
   client: O2Client,
   wallet: WalletState,
-  maxRetries = 4
+  maxRetries = 4,
 ): Promise<{ tradeAccountId: string; nonce: bigint }> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await client.setupAccount(wallet);
     } catch {
-      if (attempt < maxRetries - 1)
-        await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
     }
   }
   throw new Error("setupAccount failed after retries");
@@ -210,7 +206,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
     // Use minimum price step — guaranteed below any ask on the book.
     // Buy cost is always ≈ min_order regardless of price, so this is affordable.
-    const priceStep = 10 ** (-market.quote.max_precision);
+    const priceStep = 10 ** -market.quote.max_precision;
     const buyPrice = priceStep;
     const quantity = minQuantityForMinOrder(market, buyPrice);
 
@@ -218,36 +214,28 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const balances = await client.getBalances(makerTradeAccountId);
     const quoteSymbol = market.quote.symbol;
     expect(balances[quoteSymbol]).toBeDefined();
-    expect(
-      BigInt(balances[quoteSymbol].trading_account_balance)
-    ).toBeGreaterThan(0n);
+    expect(BigInt(balances[quoteSymbol].trading_account_balance)).toBeGreaterThan(0n);
 
-    const session = await client.createSession(
-      makerWallet,
-      makerTradeAccountId,
-      [market],
-      30
-    );
+    const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
 
     // Place PostOnly Buy at minimum price — guaranteed to rest on the book
-    const { response, session: updatedSession } =
-      await createOrderWithWhitelistRetry(
-        client,
-        session,
-        market,
-        "Buy",
-        buyPrice,
-        quantity,
-        "PostOnly",
-        true,
-        true,
-        makerTradeAccountId
-      );
+    const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+      client,
+      session,
+      market,
+      "Buy",
+      buyPrice,
+      quantity,
+      "PostOnly",
+      true,
+      true,
+      makerTradeAccountId,
+    );
 
     expect(response.tx_id).toBeTruthy();
     expect(response.orders).toBeDefined();
-    expect(response.orders!.length).toBeGreaterThan(0);
-    const order = response.orders![0];
+    expect(response.orders?.length).toBeGreaterThan(0);
+    const order = response.orders?.[0];
     expect(order.order_id).toBeTruthy();
     expect(order.cancel).not.toBe(true);
 
@@ -255,7 +243,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const { response: cancelResponse } = await client.cancelOrder(
       updatedSession,
       order.order_id,
-      market
+      market,
     );
     expect(cancelResponse.tx_id).toBeTruthy();
   });
@@ -282,12 +270,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const quantity = minQuantityForMinOrder(market, sellPrice);
 
     // Maker: PostOnly Sell at high price → guaranteed to rest on the book
-    const makerSession = await client.createSession(
-      makerWallet,
-      makerTradeAccountId,
-      [market],
-      30
-    );
+    const makerSession = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
     const { response: makerResponse } = await createOrderWithWhitelistRetry(
       client,
       makerSession,
@@ -298,13 +281,13 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       "PostOnly",
       true,
       true,
-      makerTradeAccountId
+      makerTradeAccountId,
     );
 
     expect(makerResponse.tx_id).toBeTruthy();
     expect(makerResponse.orders).toBeDefined();
-    expect(makerResponse.orders!.length).toBeGreaterThan(0);
-    const makerOrder = makerResponse.orders![0];
+    expect(makerResponse.orders?.length).toBeGreaterThan(0);
+    const makerOrder = makerResponse.orders?.[0];
     expect(makerOrder.order_id).toBeTruthy();
     expect(makerOrder.cancel).not.toBe(true);
 
@@ -313,12 +296,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     // through many intermediate orders on a busy book.
     const takerQuantity = quantity * 3.0;
 
-    const takerSession = await client.createSession(
-      takerWallet,
-      takerTradeAccountId,
-      [market],
-      30
-    );
+    const takerSession = await client.createSession(takerWallet, takerTradeAccountId, [market], 30);
     const { response: takerResponse } = await createOrderWithWhitelistRetry(
       client,
       takerSession,
@@ -329,7 +307,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       "Spot",
       true,
       true,
-      takerTradeAccountId
+      takerTradeAccountId,
     );
 
     expect(takerResponse.tx_id).toBeTruthy();
@@ -353,24 +331,20 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(balances).not.toBeNull();
   });
 
-  it(
-    "integration: streams depth via WebSocket",
-    async () => {
-      const markets = await client.getMarkets();
-      expect(markets.length).toBeGreaterThan(0);
-      const market = markets[0];
+  it("integration: streams depth via WebSocket", async () => {
+    const markets = await client.getMarkets();
+    expect(markets.length).toBeGreaterThan(0);
+    const market = markets[0];
 
-      const stream = await client.streamDepth(market, 10);
-      let received = false;
-      for await (const update of stream) {
-        expect(update).toBeDefined();
-        received = true;
-        break; // Just need one message
-      }
+    const stream = await client.streamDepth(market, 10);
+    let received = false;
+    for await (const update of stream) {
+      expect(update).toBeDefined();
+      received = true;
+      break; // Just need one message
+    }
 
-      expect(received).toBe(true);
-      client.disconnectWs();
-    },
-    30_000
-  );
+    expect(received).toBe(true);
+    client.disconnectWs();
+  }, 30_000);
 });

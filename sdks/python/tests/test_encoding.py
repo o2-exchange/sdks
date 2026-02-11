@@ -1,6 +1,7 @@
 """Unit tests for the encoding module."""
 
 import struct
+from typing import ClassVar
 
 from o2_sdk.encoding import (
     GAS_MAX,
@@ -81,26 +82,17 @@ class TestFunctionSelector:
 
     def test_known_hex_cancel_order(self):
         result = function_selector("cancel_order")
-        expected = bytes.fromhex(
-            "000000000000000c"
-            "63616e63656c5f6f72646572"
-        )
+        expected = bytes.fromhex("000000000000000c63616e63656c5f6f72646572")
         assert result == expected
 
     def test_known_hex_settle_balance(self):
         result = function_selector("settle_balance")
-        expected = bytes.fromhex(
-            "000000000000000e"
-            "736574746c655f62616c616e6365"
-        )
+        expected = bytes.fromhex("000000000000000e736574746c655f62616c616e6365")
         assert result == expected
 
     def test_known_hex_register_referer(self):
         result = function_selector("register_referer")
-        expected = bytes.fromhex(
-            "0000000000000010"
-            "72656769737465725f72656665726572"
-        )
+        expected = bytes.fromhex("000000000000001072656769737465725f72656665726572")
         assert result == expected
 
 
@@ -161,8 +153,7 @@ class TestEncodeOrderArgs:
 
     def test_limit(self):
         result = encode_order_args(
-            100000000, 5000000000, "Limit",
-            {"price": 100000000, "timestamp": 1734876543}
+            100000000, 5000000000, "Limit", {"price": 100000000, "timestamp": 1734876543}
         )
         # 8 + 8 + (8 + 8 + 8) = 40 bytes
         assert len(result) == 40
@@ -172,8 +163,7 @@ class TestEncodeOrderArgs:
 
     def test_bounded_market(self):
         result = encode_order_args(
-            100000000, 5000000000, "BoundedMarket",
-            {"max_price": 110000000, "min_price": 90000000}
+            100000000, 5000000000, "BoundedMarket", {"max_price": 110000000, "min_price": 90000000}
         )
         assert len(result) == 40
         assert result[16:24] == u64_be(5)  # BoundedMarket variant = 5
@@ -197,40 +187,38 @@ class TestBuildSessionSigningBytes:
         contract_ids = [bytes(32)]
         expiry = 1737504000
 
-        result = build_session_signing_bytes(
-            nonce, chain_id, session_addr, contract_ids, expiry
-        )
+        result = build_session_signing_bytes(nonce, chain_id, session_addr, contract_ids, expiry)
 
         offset = 0
         # nonce
-        assert result[offset:offset + 8] == u64_be(0)
+        assert result[offset : offset + 8] == u64_be(0)
         offset += 8
         # chain_id
-        assert result[offset:offset + 8] == u64_be(0)
+        assert result[offset : offset + 8] == u64_be(0)
         offset += 8
         # function_selector("set_session")
         func_name = b"set_session"
-        assert result[offset:offset + 8] == u64_be(len(func_name))
+        assert result[offset : offset + 8] == u64_be(len(func_name))
         offset += 8
-        assert result[offset:offset + len(func_name)] == func_name
+        assert result[offset : offset + len(func_name)] == func_name
         offset += len(func_name)
         # Option::Some
-        assert result[offset:offset + 8] == u64_be(1)
+        assert result[offset : offset + 8] == u64_be(1)
         offset += 8
         # Identity::Address
-        assert result[offset:offset + 8] == u64_be(0)
+        assert result[offset : offset + 8] == u64_be(0)
         offset += 8
         # session_address
-        assert result[offset:offset + 32] == session_addr
+        assert result[offset : offset + 32] == session_addr
         offset += 32
         # expiry
-        assert result[offset:offset + 8] == u64_be(1737504000)
+        assert result[offset : offset + 8] == u64_be(1737504000)
         offset += 8
         # contract_ids length
-        assert result[offset:offset + 8] == u64_be(1)
+        assert result[offset : offset + 8] == u64_be(1)
         offset += 8
         # contract_id
-        assert result[offset:offset + 32] == bytes(32)
+        assert result[offset : offset + 32] == bytes(32)
         offset += 32
 
         assert offset == len(result)
@@ -239,8 +227,7 @@ class TestBuildSessionSigningBytes:
         cid1 = bytes(range(32))
         cid2 = bytes(range(32, 64))
         result = build_session_signing_bytes(
-            nonce=1, chain_id=0, session_address=bytes(32),
-            contract_ids=[cid1, cid2], expiry=100
+            nonce=1, chain_id=0, session_address=bytes(32), contract_ids=[cid1, cid2], expiry=100
         )
         # The contract IDs should both be present
         assert cid1 in result
@@ -261,44 +248,44 @@ class TestBuildActionsSigningBytes:
 
         offset = 0
         # nonce
-        assert result[offset:offset + 8] == u64_be(0)
+        assert result[offset : offset + 8] == u64_be(0)
         offset += 8
         # num_calls
-        assert result[offset:offset + 8] == u64_be(1)
+        assert result[offset : offset + 8] == u64_be(1)
         offset += 8
         # contract_id
-        assert result[offset:offset + 32] == bytes(32)
+        assert result[offset : offset + 32] == bytes(32)
         offset += 32
         # selector_len
         selector = function_selector("create_order")
-        assert result[offset:offset + 8] == u64_be(len(selector))
+        assert result[offset : offset + 8] == u64_be(len(selector))
         offset += 8
         # selector
-        assert result[offset:offset + len(selector)] == selector
+        assert result[offset : offset + len(selector)] == selector
         offset += len(selector)
         # amount
-        assert result[offset:offset + 8] == u64_be(500000000)
+        assert result[offset : offset + 8] == u64_be(500000000)
         offset += 8
         # asset_id
-        assert result[offset:offset + 32] == bytes(32)
+        assert result[offset : offset + 32] == bytes(32)
         offset += 32
         # gas
-        assert result[offset:offset + 8] == u64_be(GAS_MAX)
+        assert result[offset : offset + 8] == u64_be(GAS_MAX)
         offset += 8
         # option call_data (Some)
-        assert result[offset:offset + 8] == u64_be(1)  # Some
+        assert result[offset : offset + 8] == u64_be(1)  # Some
         offset += 8
         call_data = encode_order_args(100000000, 5000000000, "Spot")
-        assert result[offset:offset + 8] == u64_be(len(call_data))
+        assert result[offset : offset + 8] == u64_be(len(call_data))
         offset += 8
-        assert result[offset:offset + len(call_data)] == call_data
+        assert result[offset : offset + len(call_data)] == call_data
         offset += len(call_data)
 
         assert offset == len(result)
 
 
 class TestActionToCall:
-    MARKET_INFO = {
+    MARKET_INFO: ClassVar[dict] = {
         "contract_id": "0x" + "ab" * 32,
         "market_id": "0x" + "cd" * 32,
         "base": {"asset": "0x" + "11" * 32, "decimals": 9},

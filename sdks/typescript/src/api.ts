@@ -7,39 +7,34 @@
  */
 
 import type { NetworkConfig } from "./config.js";
+import { isActionsSuccess, O2Error, parseApiError, RateLimitExceeded } from "./errors.js";
 import type {
-  MarketsResponse,
-  MarketSummary,
-  MarketTicker,
-  DepthSnapshot,
-  Trade,
-  Bar,
   AccountInfo,
-  CreateAccountResponse,
-  BalanceResponse,
-  OrdersResponse,
-  Order,
-  SessionRequest,
-  SessionResponse,
-  SessionActionsRequest,
-  SessionActionsResponse,
-  WithdrawRequest,
-  WithdrawResponse,
-  WhitelistResponse,
-  ReferralInfo,
-  FaucetResponse,
   AggregatedAsset,
   AggregatedOrderbook,
+  BalanceResponse,
+  Bar,
+  CreateAccountResponse,
+  DepthSnapshot,
+  FaucetResponse,
+  Identity,
+  MarketSummary,
+  MarketsResponse,
+  MarketTicker,
+  Order,
+  OrdersResponse,
   PairSummary,
   PairTicker,
-  Identity,
+  ReferralInfo,
+  SessionActionsRequest,
+  SessionActionsResponse,
+  SessionRequest,
+  SessionResponse,
+  Trade,
+  WhitelistResponse,
+  WithdrawRequest,
+  WithdrawResponse,
 } from "./models.js";
-import {
-  O2Error,
-  RateLimitExceeded,
-  parseApiError,
-  isActionsSuccess,
-} from "./errors.js";
 
 export interface O2ApiOptions {
   config: NetworkConfig;
@@ -69,7 +64,7 @@ export class O2Api {
       body?: unknown;
       headers?: Record<string, string>;
       query?: Record<string, string | number | boolean | undefined>;
-    } = {}
+    } = {},
   ): Promise<T> {
     let url = `${this.baseUrl}${path}`;
     if (options.query) {
@@ -101,8 +96,7 @@ export class O2Api {
         if (!resp.ok) {
           const err = parseApiError(body);
           if (err instanceof RateLimitExceeded && attempt < this.maxRetries) {
-            const delay =
-              this.retryDelayMs * Math.pow(2, attempt) * (0.5 + Math.random());
+            const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
             await sleep(delay);
             lastError = err;
             continue;
@@ -115,10 +109,8 @@ export class O2Api {
         if (error instanceof O2Error) throw error;
         lastError = error as Error;
         if (attempt < this.maxRetries) {
-          const delay =
-            this.retryDelayMs * Math.pow(2, attempt) * (0.5 + Math.random());
+          const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
           await sleep(delay);
-          continue;
         }
       }
     }
@@ -129,24 +121,16 @@ export class O2Api {
   private async get<T>(
     path: string,
     query?: Record<string, string | number | boolean | undefined>,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
   ): Promise<T> {
     return this.request<T>("GET", path, { query, headers });
   }
 
-  private async post<T>(
-    path: string,
-    body: unknown,
-    headers?: Record<string, string>
-  ): Promise<T> {
+  private async post<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
     return this.request<T>("POST", path, { body, headers });
   }
 
-  private async put<T>(
-    path: string,
-    body: unknown,
-    headers?: Record<string, string>
-  ): Promise<T> {
+  private async put<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
     return this.request<T>("PUT", path, { body, headers });
   }
 
@@ -185,7 +169,7 @@ export class O2Api {
     direction: "asc" | "desc" = "desc",
     count = 50,
     startTimestamp?: number,
-    startTradeId?: string
+    startTradeId?: string,
   ): Promise<Trade[]> {
     const data = await this.get<Trade[] | { trades: Trade[] }>("/v1/trades", {
       market_id: marketId,
@@ -203,7 +187,7 @@ export class O2Api {
     direction: "asc" | "desc" = "desc",
     count = 50,
     startTimestamp?: number,
-    startTradeId?: string
+    startTradeId?: string,
   ): Promise<Trade[]> {
     return this.get<Trade[]>("/v1/trades_by_account", {
       market_id: marketId,
@@ -215,12 +199,7 @@ export class O2Api {
     });
   }
 
-  async getBars(
-    marketId: string,
-    from: number,
-    to: number,
-    resolution: string
-  ): Promise<Bar[]> {
+  async getBars(marketId: string, from: number, to: number, resolution: string): Promise<Bar[]> {
     return this.get<Bar[]>("/v1/bars", {
       market_id: marketId,
       from,
@@ -249,7 +228,7 @@ export class O2Api {
 
   async getBalance(
     assetId: string,
-    params: { address?: string; contract?: string }
+    params: { address?: string; contract?: string },
   ): Promise<BalanceResponse> {
     return this.get<BalanceResponse>("/v1/balance", {
       asset_id: assetId,
@@ -267,7 +246,7 @@ export class O2Api {
     count = 20,
     isOpen?: boolean,
     startTimestamp?: number,
-    startOrderId?: string
+    startOrderId?: string,
   ): Promise<OrdersResponse> {
     return this.get<OrdersResponse>("/v1/orders", {
       market_id: marketId,
@@ -291,10 +270,7 @@ export class O2Api {
 
   // ── Session Management ──────────────────────────────────────────
 
-  async createSession(
-    ownerId: string,
-    request: SessionRequest
-  ): Promise<SessionResponse> {
+  async createSession(ownerId: string, request: SessionRequest): Promise<SessionResponse> {
     return this.put<SessionResponse>("/v1/session", request, {
       "O2-Owner-Id": ownerId,
     });
@@ -302,16 +278,12 @@ export class O2Api {
 
   async submitActions(
     ownerId: string,
-    request: SessionActionsRequest
+    request: SessionActionsRequest,
   ): Promise<SessionActionsResponse> {
-    const body = await this.request<Record<string, unknown>>(
-      "POST",
-      "/v1/session/actions",
-      {
-        body: request,
-        headers: { "O2-Owner-Id": ownerId },
-      }
-    );
+    const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+    });
 
     if (isActionsSuccess(body)) {
       return body as unknown as SessionActionsResponse;
@@ -322,10 +294,7 @@ export class O2Api {
 
   // ── Account Operations ──────────────────────────────────────────
 
-  async withdraw(
-    ownerId: string,
-    request: WithdrawRequest
-  ): Promise<WithdrawResponse> {
+  async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
       "O2-Owner-Id": ownerId,
     });
@@ -352,7 +321,7 @@ export class O2Api {
   async getAggregatedOrderbook(
     marketPair: string,
     depth = 500,
-    level = 2
+    level = 2,
   ): Promise<AggregatedOrderbook> {
     return this.get<AggregatedOrderbook>("/v1/aggregated/orderbook", {
       market_pair: marketPair,

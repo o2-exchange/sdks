@@ -1,8 +1,7 @@
+use o2_sdk::crypto::*;
 /// Taker bot example: monitors depth via WebSocket and executes when price
 /// crosses a configurable threshold.
-
 use o2_sdk::*;
-use o2_sdk::crypto::*;
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -30,9 +29,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let market = &markets[0];
     println!("Monitoring: {market_pair}");
 
-    let mut session = client
-        .create_session(&wallet, &[&market_pair], 30)
-        .await?;
+    let mut session = client.create_session(&wallet, &[&market_pair], 30).await?;
     println!("Session created");
 
     // Connect to WebSocket for real-time depth
@@ -72,10 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match result {
                         Ok(resp) if resp.is_success() => {
-                            println!(
-                                "Order placed! tx: {}",
-                                resp.tx_id.as_deref().unwrap_or("?")
-                            );
+                            println!("Order placed! tx: {}", resp.tx_id.as_deref().unwrap_or("?"));
                         }
                         Ok(resp) => {
                             eprintln!("Order failed: {:?}", resp.message);

@@ -21,6 +21,7 @@ from Crypto.Hash import keccak
 @dataclass
 class Wallet:
     """A Fuel-native wallet."""
+
     private_key: bytes
     public_key: bytes
     b256_address: str
@@ -33,6 +34,7 @@ class Wallet:
 @dataclass
 class EvmWallet:
     """An EVM-compatible wallet with B256 zero-padded address."""
+
     private_key: bytes
     public_key: bytes
     evm_address: str
@@ -182,7 +184,7 @@ def evm_personal_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     prefix = "\\x19Ethereum Signed Message:\\n" + str(len(message))
     digest = keccak256(prefix_bytes + message)
     """
-    prefix = f"\x19Ethereum Signed Message:\n{len(message_bytes)}".encode("utf-8")
+    prefix = f"\x19Ethereum Signed Message:\n{len(message_bytes)}".encode()
     k = keccak.new(digest_bits=256)
     k.update(prefix + message_bytes)
     digest = k.digest()

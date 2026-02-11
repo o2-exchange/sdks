@@ -2,7 +2,6 @@
 ///
 /// This is the primary entry point for SDK users. It handles wallet management,
 /// account lifecycle, session management, order placement, and WebSocket streaming.
-
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,13 +10,12 @@ use serde_json::json;
 use crate::api::O2Api;
 use crate::config::{Network, NetworkConfig};
 use crate::crypto::{
-    EvmWallet, Wallet, evm_personal_sign, generate_evm_keypair, generate_keypair,
-    load_evm_wallet, load_wallet, parse_hex_32, personal_sign, raw_sign, to_hex_string,
+    evm_personal_sign, generate_evm_keypair, generate_keypair, load_evm_wallet, load_wallet,
+    parse_hex_32, personal_sign, raw_sign, to_hex_string, EvmWallet, Wallet,
 };
 use crate::encoding::{
-    CallArg, OrderTypeEncoding, build_actions_signing_bytes,
-    build_session_signing_bytes, cancel_order_to_call, create_order_to_call,
-    settle_balance_to_call,
+    build_actions_signing_bytes, build_session_signing_bytes, cancel_order_to_call,
+    create_order_to_call, settle_balance_to_call, CallArg, OrderTypeEncoding,
 };
 use crate::errors::O2Error;
 use crate::models::*;
@@ -131,10 +129,7 @@ impl O2Client {
     /// Get the chain_id from cached markets.
     async fn get_chain_id(&mut self) -> Result<u64, O2Error> {
         let resp = self.ensure_markets().await?;
-        let chain_id_hex = resp
-            .chain_id
-            .as_deref()
-            .unwrap_or("0x0000000000000000");
+        let chain_id_hex = resp.chain_id.as_deref().unwrap_or("0x0000000000000000");
         let stripped = chain_id_hex.strip_prefix("0x").unwrap_or(chain_id_hex);
         u64::from_str_radix(stripped, 16)
             .map_err(|e| O2Error::Other(format!("Failed to parse chain_id: {e}")))
@@ -146,10 +141,7 @@ impl O2Client {
 
     /// Idempotent account setup: creates account, funds via faucet, whitelists.
     /// Safe to call on every bot startup.
-    pub async fn setup_account(
-        &mut self,
-        wallet: &Wallet,
-    ) -> Result<AccountResponse, O2Error> {
+    pub async fn setup_account(&mut self, wallet: &Wallet) -> Result<AccountResponse, O2Error> {
         let owner_hex = to_hex_string(&wallet.b256_address);
 
         // 1. Check if account already exists
@@ -159,9 +151,9 @@ impl O2Client {
         } else {
             // 2. Create account
             let created = self.api.create_account(&owner_hex).await?;
-            created
-                .trade_account_id
-                .ok_or_else(|| O2Error::Other("Account creation returned no trade_account_id".into()))?
+            created.trade_account_id.ok_or_else(|| {
+                O2Error::Other("Account creation returned no trade_account_id".into())
+            })?
         };
 
         // 3. Mint via faucet (testnet/devnet only, non-fatal)
@@ -193,9 +185,9 @@ impl O2Client {
             existing.trade_account_id.clone().unwrap()
         } else {
             let created = self.api.create_account(&owner_hex).await?;
-            created
-                .trade_account_id
-                .ok_or_else(|| O2Error::Other("Account creation returned no trade_account_id".into()))?
+            created.trade_account_id.ok_or_else(|| {
+                O2Error::Other("Account creation returned no trade_account_id".into())
+            })?
         };
 
         if self.config.faucet_url.is_some() {
@@ -374,6 +366,7 @@ impl O2Client {
     /// Place a new order. Handles encoding, signing, and nonce management.
     ///
     /// If `settle_first` is true, a SettleBalance action is prepended.
+    #[allow(clippy::too_many_arguments)]
     pub async fn create_order(
         &mut self,
         session: &mut Session,
@@ -397,7 +390,7 @@ impl O2Client {
         // Validate order constraints
         market
             .validate_order(scaled_price, scaled_quantity)
-            .map_err(|e| O2Error::InvalidOrderParams(e))?;
+            .map_err(O2Error::InvalidOrderParams)?;
 
         let ot_encoding = match order_type {
             "Spot" => OrderTypeEncoding::Spot,
@@ -702,10 +695,7 @@ impl O2Client {
     }
 
     /// Get market ticker.
-    pub async fn get_ticker(
-        &mut self,
-        market_name: &str,
-    ) -> Result<MarketTicker, O2Error> {
+    pub async fn get_ticker(&mut self, market_name: &str) -> Result<MarketTicker, O2Error> {
         let market = self.get_market(market_name).await?;
         self.api.get_market_ticker(&market.market_id).await
     }
@@ -729,15 +719,12 @@ impl O2Client {
                 (&market.quote.symbol, &market.quote.asset),
             ] {
                 if seen_assets.insert(asset_id.clone()) {
-                    match self
+                    if let Ok(bal) = self
                         .api
                         .get_balance(asset_id, Some(trade_account_id), None)
                         .await
                     {
-                        Ok(bal) => {
-                            balances.insert(symbol.clone(), bal);
-                        }
-                        Err(_) => {}
+                        balances.insert(symbol.clone(), bal);
                     }
                 }
             }
@@ -769,11 +756,7 @@ impl O2Client {
     }
 
     /// Get a single order.
-    pub async fn get_order(
-        &mut self,
-        market_name: &str,
-        order_id: &str,
-    ) -> Result<Order, O2Error> {
+    pub async fn get_order(&mut self, market_name: &str, order_id: &str) -> Result<Order, O2Error> {
         let market = self.get_market(market_name).await?;
         self.api.get_order(&market.market_id, order_id).await
     }

@@ -1,24 +1,24 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  u64BE,
-  functionSelector,
+  buildActionsSigningBytes,
+  buildSessionSigningBytes,
+  bytesToHex,
+  type ContractCall,
+  concat,
   encodeIdentity,
+  encodeOptionCallData,
   encodeOptionNone,
   encodeOptionSome,
-  encodeOptionCallData,
   encodeOrderArgs,
-  buildSessionSigningBytes,
-  buildActionsSigningBytes,
+  formatDecimal,
+  functionSelector,
+  GAS_MAX,
+  hexToBytes,
   scalePrice,
   scaleQuantity,
-  formatDecimal,
+  u64BE,
   validateFractionalPrice,
   validateMinOrder,
-  hexToBytes,
-  bytesToHex,
-  concat,
-  GAS_MAX,
-  type ContractCall,
 } from "../src/encoding.js";
 
 describe("Encoding Module", () => {
@@ -44,9 +44,7 @@ describe("Encoding Module", () => {
     });
 
     it("accepts BigInt values", () => {
-      expect(bytesToHex(u64BE(18446744073709551615n))).toBe(
-        "0xffffffffffffffff"
-      );
+      expect(bytesToHex(u64BE(18446744073709551615n))).toBe("0xffffffffffffffff");
     });
   });
 
@@ -54,26 +52,20 @@ describe("Encoding Module", () => {
     it("encodes create_order correctly", () => {
       const result = functionSelector("create_order");
       // u64(12) + "create_order"
-      expect(bytesToHex(result)).toBe(
-        "0x000000000000000c6372656174655f6f72646572"
-      );
+      expect(bytesToHex(result)).toBe("0x000000000000000c6372656174655f6f72646572");
       expect(result.length).toBe(20);
     });
 
     it("encodes cancel_order correctly", () => {
       const result = functionSelector("cancel_order");
-      expect(bytesToHex(result)).toBe(
-        "0x000000000000000c63616e63656c5f6f72646572"
-      );
+      expect(bytesToHex(result)).toBe("0x000000000000000c63616e63656c5f6f72646572");
       expect(result.length).toBe(20);
     });
 
     it("encodes settle_balance correctly", () => {
       const result = functionSelector("settle_balance");
       // u64(14) + "settle_balance"
-      expect(bytesToHex(result)).toBe(
-        "0x000000000000000e736574746c655f62616c616e6365"
-      );
+      expect(bytesToHex(result)).toBe("0x000000000000000e736574746c655f62616c616e6365");
       expect(result.length).toBe(22);
     });
 
@@ -82,10 +74,7 @@ describe("Encoding Module", () => {
       // u64(16) + "register_referer"
       expect(result.length).toBe(24); // 8 + 16
       // Verify against manual construction
-      const expected = concat([
-        u64BE(16),
-        new TextEncoder().encode("register_referer"),
-      ]);
+      const expected = concat([u64BE(16), new TextEncoder().encode("register_referer")]);
       expect(bytesToHex(result)).toBe(bytesToHex(expected));
     });
 
@@ -129,18 +118,14 @@ describe("Encoding Module", () => {
     });
 
     it("encodeOptionCallData encodes null as None", () => {
-      expect(bytesToHex(encodeOptionCallData(null))).toBe(
-        "0x0000000000000000"
-      );
+      expect(bytesToHex(encodeOptionCallData(null))).toBe("0x0000000000000000");
     });
 
     it("encodeOptionCallData encodes data as Some(len + data)", () => {
       const data = new Uint8Array([0xab, 0xcd]);
       const result = encodeOptionCallData(data);
       // u64(1) + u64(2) + data
-      expect(bytesToHex(result)).toBe(
-        "0x00000000000000010000000000000002abcd"
-      );
+      expect(bytesToHex(result)).toBe("0x00000000000000010000000000000002abcd");
     });
   });
 
@@ -211,20 +196,12 @@ describe("Encoding Module", () => {
       const contractId = new Uint8Array(32).fill(0xbb);
       const expiry = 1737504000n;
 
-      const result = buildSessionSigningBytes(
-        nonce,
-        chainId,
-        sessionAddress,
-        [contractId],
-        expiry
-      );
+      const result = buildSessionSigningBytes(nonce, chainId, sessionAddress, [contractId], expiry);
 
       // Verify structure:
       // u64(nonce=0) + u64(chain_id=0) + u64(11) + "set_session"
       // + u64(1) + u64(0) + session_addr(32) + u64(expiry) + u64(1) + contract_id(32)
-      expect(result.length).toBe(
-        8 + 8 + 8 + 11 + 8 + 8 + 32 + 8 + 8 + 32
-      ); // = 131
+      expect(result.length).toBe(8 + 8 + 8 + 11 + 8 + 8 + 32 + 8 + 8 + 32); // = 131
 
       // Check nonce
       expect(bytesToHex(result.slice(0, 8))).toBe("0x0000000000000000");
@@ -252,13 +229,7 @@ describe("Encoding Module", () => {
     it("handles multiple contract IDs", () => {
       const cid1 = new Uint8Array(32).fill(0xaa);
       const cid2 = new Uint8Array(32).fill(0xbb);
-      const result = buildSessionSigningBytes(
-        1n,
-        0n,
-        new Uint8Array(32),
-        [cid1, cid2],
-        1000n
-      );
+      const result = buildSessionSigningBytes(1n, 0n, new Uint8Array(32), [cid1, cid2], 1000n);
       // Same structure but with 2 contract IDs
       expect(result.length).toBe(8 + 8 + 8 + 11 + 8 + 8 + 32 + 8 + 8 + 64); // = 163
     });
@@ -269,7 +240,7 @@ describe("Encoding Module", () => {
         0n, // chain_id is 0 on testnet
         new Uint8Array(32),
         [new Uint8Array(32)],
-        1000n
+        1000n,
       );
       expect(bytesToHex(result.slice(8, 16))).toBe("0x0000000000000000");
     });
@@ -370,26 +341,18 @@ describe("Encoding Module", () => {
 
     it("validateFractionalPrice checks divisibility", () => {
       // (100000000 * 5000000000) % 10^9 = 0 -> valid
-      expect(
-        validateFractionalPrice(100000000n, 5000000000n, 9)
-      ).toBe(true);
+      expect(validateFractionalPrice(100000000n, 5000000000n, 9)).toBe(true);
 
       // (100000001 * 1) % 10^9 != 0 -> invalid
-      expect(
-        validateFractionalPrice(100000001n, 1n, 9)
-      ).toBe(false);
+      expect(validateFractionalPrice(100000001n, 1n, 9)).toBe(false);
     });
 
     it("validateMinOrder checks minimum value", () => {
       // (100000000 * 5000000000) / 10^9 = 500000000 < 1000000000 -> invalid
-      expect(
-        validateMinOrder(100000000n, 5000000000n, 9, 1000000000n)
-      ).toBe(false);
+      expect(validateMinOrder(100000000n, 5000000000n, 9, 1000000000n)).toBe(false);
 
       // (200000000 * 5000000000) / 10^9 = 1000000000 >= 1000000000 -> valid
-      expect(
-        validateMinOrder(200000000n, 5000000000n, 9, 1000000000n)
-      ).toBe(true);
+      expect(validateMinOrder(200000000n, 5000000000n, 9, 1000000000n)).toBe(true);
     });
   });
 

@@ -9,11 +9,11 @@ Implements the market maker skeleton from the O2 integration guide:
 """
 
 import asyncio
+import contextlib
 import logging
 import signal
-import sys
 
-from o2_sdk import O2Client, Network
+from o2_sdk import Network, O2Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("market_maker")
@@ -21,10 +21,10 @@ logger = logging.getLogger("market_maker")
 # Configuration
 PRIVATE_KEY = None  # Set to your owner private key hex, or None to generate
 MARKET_PAIR = "fFUEL/fUSDC"
-SPREAD_PCT = 0.02         # 2% spread
-ORDER_SIZE_USD = 2.0      # USD value per side
-CYCLE_INTERVAL = 15       # seconds between cycles
-REFERENCE_PRICE = 0.025   # Fallback reference price
+SPREAD_PCT = 0.02  # 2% spread
+ORDER_SIZE_USD = 2.0  # USD value per side
+CYCLE_INTERVAL = 15  # seconds between cycles
+REFERENCE_PRICE = 0.025  # Fallback reference price
 
 
 async def main():
@@ -56,9 +56,7 @@ async def main():
     logger.info("Market: %s (contract: %s)", market.pair, market.contract_id)
 
     # Create session
-    session = await client.create_session(
-        owner=owner, markets=[market.pair], expiry_days=7
-    )
+    session = await client.create_session(owner=owner, markets=[market.pair], expiry_days=7)
     logger.info("Session created, expires: %s", session.session_expiry)
 
     # Track active orders
@@ -107,20 +105,14 @@ async def main():
 
                 # Cancel stale orders (skip if filled)
                 if active_buy_id and active_buy_id not in filled_orders:
-                    actions_list.append(
-                        {"CancelOrder": {"order_id": active_buy_id}}
-                    )
+                    actions_list.append({"CancelOrder": {"order_id": active_buy_id}})
                 if active_sell_id and active_sell_id not in filled_orders:
-                    actions_list.append(
-                        {"CancelOrder": {"order_id": active_sell_id}}
-                    )
+                    actions_list.append({"CancelOrder": {"order_id": active_sell_id}})
 
                 # Settle
-                actions_list.append({
-                    "SettleBalance": {
-                        "to": {"ContractId": session.trade_account_id}
-                    }
-                })
+                actions_list.append(
+                    {"SettleBalance": {"to": {"ContractId": session.trade_account_id}}}
+                )
 
                 # Place new orders
                 scaled_buy_price = market.scale_price(buy_price)
@@ -128,24 +120,28 @@ async def main():
                 scaled_quantity = market.scale_quantity(quantity)
                 scaled_quantity = market.adjust_quantity(scaled_buy_price, scaled_quantity)
 
-                actions_list.append({
-                    "CreateOrder": {
-                        "side": "Buy",
-                        "price": str(scaled_buy_price),
-                        "quantity": str(scaled_quantity),
-                        "order_type": "Spot",
+                actions_list.append(
+                    {
+                        "CreateOrder": {
+                            "side": "Buy",
+                            "price": str(scaled_buy_price),
+                            "quantity": str(scaled_quantity),
+                            "order_type": "Spot",
+                        }
                     }
-                })
+                )
 
                 scaled_sell_qty = market.adjust_quantity(scaled_sell_price, scaled_quantity)
-                actions_list.append({
-                    "CreateOrder": {
-                        "side": "Sell",
-                        "price": str(scaled_sell_price),
-                        "quantity": str(scaled_sell_qty),
-                        "order_type": "Spot",
+                actions_list.append(
+                    {
+                        "CreateOrder": {
+                            "side": "Sell",
+                            "price": str(scaled_sell_price),
+                            "quantity": str(scaled_sell_qty),
+                            "order_type": "Spot",
+                        }
                     }
-                })
+                )
 
                 # Limit to 5 actions
                 actions_list = actions_list[:5]
@@ -168,9 +164,7 @@ async def main():
                                 active_buy_id = order.order_id
                             else:
                                 active_sell_id = order.order_id
-                        logger.info(
-                            "Buy: %s, Sell: %s", active_buy_id, active_sell_id
-                        )
+                        logger.info("Buy: %s, Sell: %s", active_buy_id, active_sell_id)
                 else:
                     logger.error("Cycle failed: %s", result.message)
                     # Re-fetch nonce on failure
@@ -189,10 +183,8 @@ async def main():
 
     finally:
         monitor_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await monitor_task
-        except asyncio.CancelledError:
-            pass
         await client.close()
         logger.info("Market maker stopped")
 

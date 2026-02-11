@@ -7,9 +7,10 @@ with auto-reconnect and exponential backoff.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
-from typing import AsyncIterator, Optional
+from collections.abc import AsyncIterator
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -31,10 +32,10 @@ class O2WebSocket:
 
     def __init__(self, config: NetworkConfig):
         self._config = config
-        self._ws: Optional[ClientConnection] = None
+        self._ws: ClientConnection | None = None
         self._subscriptions: list[dict] = []
         self._message_queues: dict[str, asyncio.Queue] = {}
-        self._listener_task: Optional[asyncio.Task] = None
+        self._listener_task: asyncio.Task | None = None
         self._connected = False
         self._reconnect_delay = 1.0
         self._max_reconnect_delay = 60.0
@@ -70,9 +71,7 @@ class O2WebSocket:
         while self._should_run:
             logger.info("Reconnecting in %.1fs...", self._reconnect_delay)
             await asyncio.sleep(self._reconnect_delay)
-            self._reconnect_delay = min(
-                self._reconnect_delay * 2, self._max_reconnect_delay
-            )
+            self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
             try:
                 await self._do_connect()
                 return
@@ -85,10 +84,8 @@ class O2WebSocket:
         self._connected = False
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._listener_task
-            except asyncio.CancelledError:
-                pass
         if self._ws:
             await self._ws.close()
             self._ws = None
@@ -129,7 +126,7 @@ class O2WebSocket:
             except asyncio.QueueFull:
                 logger.warning("Queue full for %s, dropping message", key)
 
-    def _action_to_queue_key(self, action: str) -> Optional[str]:
+    def _action_to_queue_key(self, action: str) -> str | None:
         if action in ("subscribe_depth", "subscribe_depth_update"):
             return "depth"
         elif action == "subscribe_orders":
@@ -170,9 +167,7 @@ class O2WebSocket:
             if msg.get("market_id") == market_id:
                 yield DepthUpdate.from_dict(msg)
 
-    async def stream_orders(
-        self, identities: list[dict]
-    ) -> AsyncIterator[OrderUpdate]:
+    async def stream_orders(self, identities: list[dict]) -> AsyncIterator[OrderUpdate]:
         """Subscribe to order updates for the given identities."""
         sub = {"action": "subscribe_orders", "identities": identities}
         self._subscriptions.append(sub)
@@ -197,9 +192,7 @@ class O2WebSocket:
             if msg.get("market_id") == market_id:
                 yield TradeUpdate.from_dict(msg)
 
-    async def stream_balances(
-        self, identities: list[dict]
-    ) -> AsyncIterator[BalanceUpdate]:
+    async def stream_balances(self, identities: list[dict]) -> AsyncIterator[BalanceUpdate]:
         """Subscribe to balance updates for the given identities."""
         sub = {"action": "subscribe_balances", "identities": identities}
         self._subscriptions.append(sub)
@@ -211,9 +204,7 @@ class O2WebSocket:
                 return
             yield BalanceUpdate.from_dict(msg)
 
-    async def stream_nonce(
-        self, identities: list[dict]
-    ) -> AsyncIterator[NonceUpdate]:
+    async def stream_nonce(self, identities: list[dict]) -> AsyncIterator[NonceUpdate]:
         """Subscribe to nonce updates for the given identities."""
         sub = {"action": "subscribe_nonce", "identities": identities}
         self._subscriptions.append(sub)
@@ -232,34 +223,33 @@ class O2WebSocket:
     async def unsubscribe_depth(self, market_id: str) -> None:
         await self._send({"action": "unsubscribe_depth", "market_id": market_id})
         self._subscriptions = [
-            s for s in self._subscriptions
+            s
+            for s in self._subscriptions
             if not (s.get("action") == "subscribe_depth" and s.get("market_id") == market_id)
         ]
 
     async def unsubscribe_orders(self) -> None:
         await self._send({"action": "unsubscribe_orders"})
         self._subscriptions = [
-            s for s in self._subscriptions
-            if s.get("action") != "subscribe_orders"
+            s for s in self._subscriptions if s.get("action") != "subscribe_orders"
         ]
 
     async def unsubscribe_trades(self, market_id: str) -> None:
         await self._send({"action": "unsubscribe_trades", "market_id": market_id})
         self._subscriptions = [
-            s for s in self._subscriptions
+            s
+            for s in self._subscriptions
             if not (s.get("action") == "subscribe_trades" and s.get("market_id") == market_id)
         ]
 
     async def unsubscribe_balances(self, identities: list[dict]) -> None:
         await self._send({"action": "unsubscribe_balances", "identities": identities})
         self._subscriptions = [
-            s for s in self._subscriptions
-            if s.get("action") != "subscribe_balances"
+            s for s in self._subscriptions if s.get("action") != "subscribe_balances"
         ]
 
     async def unsubscribe_nonce(self, identities: list[dict]) -> None:
         await self._send({"action": "unsubscribe_nonce", "identities": identities})
         self._subscriptions = [
-            s for s in self._subscriptions
-            if s.get("action") != "subscribe_nonce"
+            s for s in self._subscriptions if s.get("action") != "subscribe_nonce"
         ]

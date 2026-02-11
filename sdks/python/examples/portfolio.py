@@ -1,10 +1,11 @@
 """Balance monitoring and order tracking via WebSocket streams."""
 
 import asyncio
+import contextlib
 import logging
 import signal
 
-from o2_sdk import O2Client, Network
+from o2_sdk import Network, O2Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("portfolio")
@@ -63,8 +64,6 @@ async def main():
     # Trade history for P&L
     trades = await client.get_trades(market.pair, count=20)
     logger.info("=== Recent Trades ===")
-    total_bought = 0
-    total_sold = 0
     for trade in trades[:10]:
         logger.info(
             "  %s %s qty=%s @ %s total=%s",
@@ -123,14 +122,10 @@ async def main():
 
     balance_task.cancel()
     orders_task.cancel()
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await balance_task
-    except asyncio.CancelledError:
-        pass
-    try:
+    with contextlib.suppress(asyncio.CancelledError):
         await orders_task
-    except asyncio.CancelledError:
-        pass
 
     await client.close()
     logger.info("Portfolio monitor stopped")

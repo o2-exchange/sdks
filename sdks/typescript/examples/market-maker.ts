@@ -12,13 +12,11 @@
  */
 
 import {
-  O2Client,
-  Network,
-  type Market,
-  type SessionState,
-  type WalletState,
   type ActionPayload,
+  type Market,
   type MarketActions,
+  Network,
+  O2Client,
   O2Error,
 } from "../src/index.js";
 
@@ -54,12 +52,7 @@ async function main() {
   console.log(`Trading: ${market.base.symbol}/${market.quote.symbol}`);
 
   // Create session
-  const session = await client.createSession(
-    wallet,
-    tradeAccountId,
-    [market],
-    30
-  );
+  const session = await client.createSession(wallet, tradeAccountId, [market], 30);
   console.log(`Session: ${session.sessionAddress}`);
 
   // Subscribe to order updates for fill detection
@@ -101,9 +94,7 @@ async function main() {
       const buyPrice = refPrice * (1 - CONFIG.spreadPercent);
       const sellPrice = refPrice * (1 + CONFIG.spreadPercent);
 
-      console.log(
-        `Ref: ${refPrice}, Buy: ${buyPrice.toFixed(6)}, Sell: ${sellPrice.toFixed(6)}`
-      );
+      console.log(`Ref: ${refPrice}, Buy: ${buyPrice.toFixed(6)}, Sell: ${sellPrice.toFixed(6)}`);
 
       // Build actions (max 5 per batch)
       const actions: ActionPayload[] = [];
@@ -125,17 +116,17 @@ async function main() {
       const buyPriceScaled = scalePriceStr(
         buyPrice,
         market.quote.decimals,
-        market.quote.max_precision
+        market.quote.max_precision,
       );
       const sellPriceScaled = scalePriceStr(
         sellPrice,
         market.quote.decimals,
-        market.quote.max_precision
+        market.quote.max_precision,
       );
       const quantityScaled = scaleQuantityStr(
         CONFIG.orderQuantity,
         market.base.decimals,
-        market.base.max_precision
+        market.base.max_precision,
       );
 
       actions.push({
@@ -157,16 +148,14 @@ async function main() {
       });
 
       // Submit batch
-      const marketActions: MarketActions[] = [
-        { market_id: market.market_id, actions },
-      ];
+      const marketActions: MarketActions[] = [{ market_id: market.market_id, actions }];
 
       const result = await client.batchActions(
         currentSession,
         marketActions,
         market,
         (await client.api.getMarkets()).accounts_registry_id,
-        true // collect_orders
+        true, // collect_orders
       );
 
       currentSession = result.session;
@@ -216,11 +205,11 @@ function findMarket(markets: Market[], pair: string): Market {
   const found = markets.find(
     (m) =>
       m.base.symbol.toLowerCase() === base.toLowerCase() &&
-      m.quote.symbol.toLowerCase() === quote.toLowerCase()
+      m.quote.symbol.toLowerCase() === quote.toLowerCase(),
   );
   if (!found) {
     console.log(
-      `Available: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`
+      `Available: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`,
     );
     // Fallback to first market
     return markets[0];
@@ -228,21 +217,13 @@ function findMarket(markets: Market[], pair: string): Market {
   return found;
 }
 
-function scalePriceStr(
-  price: number,
-  decimals: number,
-  maxPrecision: number
-): string {
+function scalePriceStr(price: number, decimals: number, maxPrecision: number): string {
   const scaled = BigInt(Math.floor(price * 10 ** decimals));
   const factor = BigInt(10 ** (decimals - maxPrecision));
   return ((scaled / factor) * factor).toString();
 }
 
-function scaleQuantityStr(
-  qty: number,
-  decimals: number,
-  maxPrecision: number
-): string {
+function scaleQuantityStr(qty: number, decimals: number, maxPrecision: number): string {
   const scaled = BigInt(Math.ceil(qty * 10 ** decimals));
   const factor = BigInt(10 ** (decimals - maxPrecision));
   const remainder = scaled % factor;

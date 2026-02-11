@@ -5,61 +5,54 @@
  * trading, market data, and WebSocket streaming.
  */
 
-import { Network, getNetworkConfig, type NetworkConfig } from "./config.js";
 import { O2Api } from "./api.js";
-import { O2WebSocket } from "./websocket.js";
+import { getNetworkConfig, Network, type NetworkConfig } from "./config.js";
 import {
-  generateWallet,
-  walletFromPrivateKey,
-  generateEvmWallet,
+  bytesToHex,
+  evmPersonalSign,
   evmWalletFromPrivateKey,
+  generateEvmWallet,
+  generateWallet,
+  hexToBytes,
   personalSign,
   rawSign,
-  evmPersonalSign,
-  bytesToHex,
-  hexToBytes,
-  type Wallet,
-  type EvmWallet,
+  walletFromPrivateKey,
 } from "./crypto.js";
 import {
-  buildSessionSigningBytes,
-  buildActionsSigningBytes,
+  type ActionJSON,
   actionToCall,
+  buildActionsSigningBytes,
+  buildSessionSigningBytes,
+  type ContractCall,
+  type MarketInfo,
   scalePrice,
   scaleQuantity,
-  formatDecimal,
   validateFractionalPrice,
   validateMinOrder,
-  GAS_MAX,
-  type ActionJSON,
-  type MarketInfo,
-  type ContractCall,
 } from "./encoding.js";
+import { O2Error } from "./errors.js";
 import type {
-  Market,
-  MarketsResponse,
-  DepthSnapshot,
-  Trade,
-  Bar,
-  Order,
-  OrdersResponse,
-  BalanceResponse,
-  SessionActionsResponse,
-  DepthUpdate,
-  OrderUpdate,
-  TradeUpdate,
-  BalanceUpdate,
-  NonceUpdate,
-  SessionState,
-  WalletState,
-  OrderType,
-  FaucetResponse,
-  Identity,
-  MarketActions,
   ActionPayload,
-  WhitelistResponse,
+  BalanceResponse,
+  BalanceUpdate,
+  Bar,
+  DepthSnapshot,
+  DepthUpdate,
+  Identity,
+  Market,
+  MarketActions,
+  MarketsResponse,
+  NonceUpdate,
+  Order,
+  OrderType,
+  OrderUpdate,
+  SessionActionsResponse,
+  SessionState,
+  Trade,
+  TradeUpdate,
+  WalletState,
 } from "./models.js";
-import { O2Error, AccountNotFound } from "./errors.js";
+import { O2WebSocket } from "./websocket.js";
 
 export interface O2ClientOptions {
   network?: Network;
@@ -121,9 +114,7 @@ export class O2Client {
    * 4. Whitelist account
    * 5. Return trade_account_id
    */
-  async setupAccount(
-    wallet: WalletState
-  ): Promise<{ tradeAccountId: string; nonce: bigint }> {
+  async setupAccount(wallet: WalletState): Promise<{ tradeAccountId: string; nonce: bigint }> {
     // 1. Check if account already exists
     const existing = await this.api.getAccount({ owner: wallet.b256Address });
 
@@ -177,7 +168,7 @@ export class O2Client {
     wallet: WalletState,
     tradeAccountId: string,
     markets: string[] | Market[],
-    expiryDays = 30
+    expiryDays = 30,
   ): Promise<SessionState> {
     // Resolve markets
     const marketsData = await this.fetchMarkets();
@@ -190,8 +181,8 @@ export class O2Client {
     // Parse chain_id
     const chainId = BigInt(
       marketsData.chain_id.startsWith("0x")
-        ? parseInt(marketsData.chain_id, 16)
-        : marketsData.chain_id
+        ? Number.parseInt(marketsData.chain_id, 16)
+        : marketsData.chain_id,
     );
 
     // Generate session keypair
@@ -202,9 +193,7 @@ export class O2Client {
     const nonce = BigInt(info.trade_account?.nonce ?? "0");
 
     // Calculate expiry
-    const expiry = BigInt(
-      Math.floor(Date.now() / 1000) + expiryDays * 24 * 60 * 60
-    );
+    const expiry = BigInt(Math.floor(Date.now() / 1000) + expiryDays * 24 * 60 * 60);
 
     // Build signing bytes
     const contractIdBytes = contractIds.map((id) => hexToBytes(id));
@@ -213,7 +202,7 @@ export class O2Client {
       chainId,
       hexToBytes(sessionWallet.b256Address),
       contractIdBytes,
-      expiry
+      expiry,
     );
 
     // Sign with owner wallet
@@ -222,7 +211,7 @@ export class O2Client {
       : personalSign(wallet.privateKey, signingBytes);
 
     // Submit
-    const resp = await this.api.createSession(wallet.b256Address, {
+    const _resp = await this.api.createSession(wallet.b256Address, {
       contract_id: tradeAccountId,
       session_id: { Address: sessionWallet.b256Address },
       signature: { Secp256k1: bytesToHex(signature) },
@@ -257,34 +246,21 @@ export class O2Client {
     quantity: number,
     orderType: OrderType = "Spot",
     settleFirst = true,
-    collectOrders = true
+    collectOrders = true,
   ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
     const marketsData = await this.fetchMarkets();
-    const resolved =
-      typeof market === "string"
-        ? this.resolveMarket(marketsData, market)
-        : market;
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
     // Scale price and quantity
-    const scaledPrice = scalePrice(
-      price,
-      resolved.quote.decimals,
-      resolved.quote.max_precision
-    );
+    const scaledPrice = scalePrice(price, resolved.quote.decimals, resolved.quote.max_precision);
     const scaledQuantity = scaleQuantity(
       quantity,
       resolved.base.decimals,
-      resolved.base.max_precision
+      resolved.base.max_precision,
     );
 
     // Validate FractionalPrice
-    if (
-      !validateFractionalPrice(
-        scaledPrice,
-        scaledQuantity,
-        resolved.base.decimals
-      )
-    ) {
+    if (!validateFractionalPrice(scaledPrice, scaledQuantity, resolved.base.decimals)) {
       // Adjust quantity to satisfy constraint
       const factor = BigInt(10 ** resolved.base.decimals);
       const product = scaledPrice * scaledQuantity;
@@ -292,7 +268,7 @@ export class O2Client {
       if (remainder !== 0n) {
         throw new O2Error(
           `FractionalPrice: (price * quantity) % 10^${resolved.base.decimals} != 0. ` +
-            `Adjust quantity to satisfy this constraint.`
+            `Adjust quantity to satisfy this constraint.`,
         );
       }
     }
@@ -303,12 +279,12 @@ export class O2Client {
         scaledPrice,
         scaledQuantity,
         resolved.base.decimals,
-        BigInt(resolved.min_order)
+        BigInt(resolved.min_order),
       )
     ) {
       throw new O2Error(
         `Order value below min_order. ` +
-          `(price * quantity) / 10^${resolved.base.decimals} must be >= ${resolved.min_order}`
+          `(price * quantity) / 10^${resolved.base.decimals} must be >= ${resolved.min_order}`,
       );
     }
 
@@ -337,7 +313,7 @@ export class O2Client {
       [{ market_id: resolved.market_id, actions }],
       resolved,
       marketsData.accounts_registry_id,
-      collectOrders
+      collectOrders,
     );
   }
 
@@ -345,13 +321,10 @@ export class O2Client {
   async cancelOrder(
     session: SessionState,
     orderId: string,
-    market: string | Market
+    market: string | Market,
   ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
     const marketsData = await this.fetchMarkets();
-    const resolved =
-      typeof market === "string"
-        ? this.resolveMarket(marketsData, market)
-        : market;
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
     return this.batchActions(
       session,
@@ -362,56 +335,48 @@ export class O2Client {
         },
       ],
       resolved,
-      marketsData.accounts_registry_id
+      marketsData.accounts_registry_id,
     );
   }
 
   /** Cancel all open orders for a market. */
   async cancelAllOrders(
     session: SessionState,
-    market: string | Market
+    market: string | Market,
   ): Promise<{ response: SessionActionsResponse; session: SessionState } | null> {
     const marketsData = await this.fetchMarkets();
-    const resolved =
-      typeof market === "string"
-        ? this.resolveMarket(marketsData, market)
-        : market;
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
     const orders = await this.api.getOrders(
       resolved.market_id,
       session.tradeAccountId,
       "desc",
       200,
-      true
+      true,
     );
 
     if (orders.orders.length === 0) return null;
 
     // Max 5 actions per batch
-    const cancelActions: ActionPayload[] = orders.orders
-      .slice(0, 5)
-      .map((o) => ({
-        CancelOrder: { order_id: o.order_id },
-      }));
+    const cancelActions: ActionPayload[] = orders.orders.slice(0, 5).map((o) => ({
+      CancelOrder: { order_id: o.order_id },
+    }));
 
     return this.batchActions(
       session,
       [{ market_id: resolved.market_id, actions: cancelActions }],
       resolved,
-      marketsData.accounts_registry_id
+      marketsData.accounts_registry_id,
     );
   }
 
   /** Settle balance for a market. */
   async settleBalance(
     session: SessionState,
-    market: string | Market
+    market: string | Market,
   ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
     const marketsData = await this.fetchMarkets();
-    const resolved =
-      typeof market === "string"
-        ? this.resolveMarket(marketsData, market)
-        : market;
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
     return this.batchActions(
       session,
@@ -428,7 +393,7 @@ export class O2Client {
         },
       ],
       resolved,
-      marketsData.accounts_registry_id
+      marketsData.accounts_registry_id,
     );
   }
 
@@ -441,7 +406,7 @@ export class O2Client {
     marketActions: MarketActions[],
     market: Market,
     accountsRegistryId: string,
-    collectOrders = false
+    collectOrders = false,
   ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
     const marketInfo: MarketInfo = {
       contractId: market.contract_id,
@@ -464,9 +429,7 @@ export class O2Client {
     const calls: ContractCall[] = [];
     for (const group of marketActions) {
       for (const action of group.actions) {
-        calls.push(
-          actionToCall(action as ActionJSON, marketInfo, accountsRegistryId)
-        );
+        calls.push(actionToCall(action as ActionJSON, marketInfo, accountsRegistryId));
       }
     }
 
@@ -517,22 +480,15 @@ export class O2Client {
     return this.resolveMarket(data, symbolPair);
   }
 
-  async getDepth(
-    market: string | Market,
-    precision = 10
-  ): Promise<DepthSnapshot> {
+  async getDepth(market: string | Market, precision = 10): Promise<DepthSnapshot> {
     const marketId =
-      typeof market === "string"
-        ? (await this.getMarket(market)).market_id
-        : market.market_id;
+      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getDepth(marketId, precision);
   }
 
   async getTrades(market: string | Market, count = 50): Promise<Trade[]> {
     const marketId =
-      typeof market === "string"
-        ? (await this.getMarket(market)).market_id
-        : market.market_id;
+      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getTrades(marketId, "desc", count);
   }
 
@@ -540,20 +496,16 @@ export class O2Client {
     market: string | Market,
     resolution: string,
     from: number,
-    to: number
+    to: number,
   ): Promise<Bar[]> {
     const marketId =
-      typeof market === "string"
-        ? (await this.getMarket(market)).market_id
-        : market.market_id;
+      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getBars(marketId, from, to, resolution);
   }
 
   async getTicker(market: string | Market) {
     const marketId =
-      typeof market === "string"
-        ? (await this.getMarket(market)).market_id
-        : market.market_id;
+      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getMarketTicker(marketId);
   }
 
@@ -562,9 +514,7 @@ export class O2Client {
   /**
    * Get balances for a trade account, keyed by symbol.
    */
-  async getBalances(
-    tradeAccountId: string
-  ): Promise<Record<string, BalanceResponse>> {
+  async getBalances(tradeAccountId: string): Promise<Record<string, BalanceResponse>> {
     const marketsData = await this.fetchMarkets();
     const result: Record<string, BalanceResponse> = {};
 
@@ -593,23 +543,21 @@ export class O2Client {
     tradeAccountId: string,
     market: string | Market,
     isOpen?: boolean,
-    count = 20
+    count = 20,
   ): Promise<Order[]> {
-    const resolved =
-      typeof market === "string" ? await this.getMarket(market) : market;
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
     const resp = await this.api.getOrders(
       resolved.market_id,
       tradeAccountId,
       "desc",
       count,
-      isOpen
+      isOpen,
     );
     return resp.orders;
   }
 
   async getOrder(market: string | Market, orderId: string): Promise<Order> {
-    const resolved =
-      typeof market === "string" ? await this.getMarket(market) : market;
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
     return this.api.getOrder(resolved.market_id, orderId);
   }
 
@@ -623,46 +571,31 @@ export class O2Client {
     return this.wsClient;
   }
 
-  async streamDepth(
-    market: string | Market,
-    precision = 10
-  ): Promise<AsyncGenerator<DepthUpdate>> {
+  async streamDepth(market: string | Market, precision = 10): Promise<AsyncGenerator<DepthUpdate>> {
     const ws = await this.ensureWs();
     const marketId =
-      typeof market === "string"
-        ? (await this.getMarket(market)).market_id
-        : market.market_id;
+      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return ws.streamDepth(marketId, precision);
   }
 
-  async streamOrders(
-    tradeAccountId: string
-  ): Promise<AsyncGenerator<OrderUpdate>> {
+  async streamOrders(tradeAccountId: string): Promise<AsyncGenerator<OrderUpdate>> {
     const ws = await this.ensureWs();
     return ws.streamOrders([{ ContractId: tradeAccountId }]);
   }
 
-  async streamTrades(
-    market: string | Market
-  ): Promise<AsyncGenerator<TradeUpdate>> {
+  async streamTrades(market: string | Market): Promise<AsyncGenerator<TradeUpdate>> {
     const ws = await this.ensureWs();
     const marketId =
-      typeof market === "string"
-        ? (await this.getMarket(market)).market_id
-        : market.market_id;
+      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return ws.streamTrades(marketId);
   }
 
-  async streamBalances(
-    tradeAccountId: string
-  ): Promise<AsyncGenerator<BalanceUpdate>> {
+  async streamBalances(tradeAccountId: string): Promise<AsyncGenerator<BalanceUpdate>> {
     const ws = await this.ensureWs();
     return ws.streamBalances([{ ContractId: tradeAccountId }]);
   }
 
-  async streamNonce(
-    tradeAccountId: string
-  ): Promise<AsyncGenerator<NonceUpdate>> {
+  async streamNonce(tradeAccountId: string): Promise<AsyncGenerator<NonceUpdate>> {
     const ws = await this.ensureWs();
     return ws.streamNonce([{ ContractId: tradeAccountId }]);
   }
@@ -686,7 +619,7 @@ export class O2Client {
     tradeAccountId: string,
     assetId: string,
     amount: string,
-    to?: Identity
+    to?: Identity,
   ) {
     // Get current nonce
     const info = await this.api.getAccount({ tradeAccountId });
@@ -704,7 +637,7 @@ export class O2Client {
         to: destination,
         asset_id: assetId,
         amount,
-      })
+      }),
     );
 
     const signature = wallet.isEvm
@@ -760,7 +693,7 @@ export class O2Client {
     const found = data.markets.find(
       (m) =>
         m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() &&
-        m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase()
+        m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase(),
     );
 
     if (!found) {
@@ -770,11 +703,11 @@ export class O2Client {
           (m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() ||
             m.base.symbol.toLowerCase() === `f${baseSymbol.toLowerCase()}`) &&
           (m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase() ||
-            m.quote.symbol.toLowerCase() === `f${quoteSymbol.toLowerCase()}`)
+            m.quote.symbol.toLowerCase() === `f${quoteSymbol.toLowerCase()}`),
       );
       if (altFound) return altFound;
       throw new O2Error(
-        `Market not found: ${symbolPair}. Available: ${data.markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`
+        `Market not found: ${symbolPair}. Available: ${data.markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`,
       );
     }
 

@@ -8,7 +8,7 @@ import asyncio
 import logging
 import signal
 
-from o2_sdk import O2Client, Network
+from o2_sdk import Network, O2Client
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("taker_bot")
@@ -16,9 +16,9 @@ logger = logging.getLogger("taker_bot")
 # Configuration
 PRIVATE_KEY = None  # Set to your owner private key hex, or None to generate
 MARKET_PAIR = "fFUEL/fUSDC"
-BUY_BELOW_PRICE = 0.020    # Buy when best ask drops below this price
-MAX_QUANTITY = 50.0         # Maximum quantity per trade
-SLIPPAGE_PCT = 0.005        # 0.5% slippage tolerance
+BUY_BELOW_PRICE = 0.020  # Buy when best ask drops below this price
+MAX_QUANTITY = 50.0  # Maximum quantity per trade
+SLIPPAGE_PCT = 0.005  # 0.5% slippage tolerance
 
 
 async def main():
@@ -42,9 +42,7 @@ async def main():
     market = await client.get_market(MARKET_PAIR)
     logger.info("Monitoring: %s", market.pair)
 
-    session = await client.create_session(
-        owner=owner, markets=[market.pair], expiry_days=7
-    )
+    session = await client.create_session(owner=owner, markets=[market.pair], expiry_days=7)
 
     # Wait for funds
     await asyncio.sleep(5)

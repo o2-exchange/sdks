@@ -2,7 +2,6 @@
 ///
 /// Provides async stream-based subscriptions for depth, orders, trades,
 /// balances, and nonce updates via tokio-tungstenite.
-
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::pin::Pin;
@@ -17,16 +16,12 @@ use crate::errors::O2Error;
 use crate::models::*;
 
 type WsSink = futures_util::stream::SplitSink<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
     WsMsg,
 >;
 
 type WsStream = futures_util::stream::SplitStream<
-    tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
 >;
 
 /// A typed stream of WebSocket messages.
@@ -125,10 +120,7 @@ impl O2WebSocket {
                 Err(_) => continue,
             };
 
-            let action = parsed
-                .get("action")
-                .and_then(|a| a.as_str())
-                .unwrap_or("");
+            let action = parsed.get("action").and_then(|a| a.as_str()).unwrap_or("");
 
             match action {
                 "subscribe_depth" | "subscribe_depth_update" => {
@@ -179,7 +171,7 @@ impl O2WebSocket {
     async fn send_json(&self, value: serde_json::Value) -> Result<(), O2Error> {
         let text = serde_json::to_string(&value)?;
         let mut sink = self.sink.lock().await;
-        sink.send(WsMsg::Text(text.into()))
+        sink.send(WsMsg::Text(text))
             .await
             .map_err(|e| O2Error::WebSocketError(e.to_string()))
     }

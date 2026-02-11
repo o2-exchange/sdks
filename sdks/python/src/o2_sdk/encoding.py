@@ -14,7 +14,6 @@ Implements the exact byte layouts from the O2 integration guide:
 from __future__ import annotations
 
 import struct
-from typing import Optional
 
 GAS_MAX = 18446744073709551615  # u64::MAX
 
@@ -52,7 +51,7 @@ def encode_option_some(data: bytes) -> bytes:
     return u64_be(1) + data
 
 
-def encode_option_call_data(data_or_none: Optional[bytes]) -> bytes:
+def encode_option_call_data(data_or_none: bytes | None) -> bytes:
     """Encode Option for call_data in action signing bytes.
 
     None  -> u64(0)
@@ -67,7 +66,7 @@ def encode_order_args(
     price: int,
     quantity: int,
     order_type: str,
-    order_type_data: Optional[dict] = None,
+    order_type_data: dict | None = None,
 ) -> bytes:
     """Encode OrderArgs struct for CreateOrder call_data.
 
@@ -86,6 +85,7 @@ def encode_order_args(
     result += u64_be(quantity)
 
     if order_type == "Limit":
+        assert order_type_data is not None, "Limit order requires order_type_data"
         limit_price = int(order_type_data["price"])
         timestamp = int(order_type_data["timestamp"])
         result += u64_be(0) + u64_be(limit_price) + u64_be(timestamp)
@@ -98,6 +98,7 @@ def encode_order_args(
     elif order_type == "Market":
         result += u64_be(4)
     elif order_type == "BoundedMarket":
+        assert order_type_data is not None, "BoundedMarket order requires order_type_data"
         max_price = int(order_type_data["max_price"])
         min_price = int(order_type_data["min_price"])
         result += u64_be(5) + u64_be(max_price) + u64_be(min_price)
@@ -128,13 +129,13 @@ def build_session_signing_bytes(
     func_name = b"set_session"
 
     encoded_args = bytearray()
-    encoded_args += u64_be(1)                    # Option::Some
-    encoded_args += u64_be(0)                    # Identity::Address
-    encoded_args += session_address              # 32 bytes
-    encoded_args += u64_be(expiry)               # expiry
-    encoded_args += u64_be(len(contract_ids))    # number of contract IDs
+    encoded_args += u64_be(1)  # Option::Some
+    encoded_args += u64_be(0)  # Identity::Address
+    encoded_args += session_address  # 32 bytes
+    encoded_args += u64_be(expiry)  # expiry
+    encoded_args += u64_be(len(contract_ids))  # number of contract IDs
     for cid in contract_ids:
-        encoded_args += cid                      # 32 bytes each
+        encoded_args += cid  # 32 bytes each
 
     signing_bytes = bytearray()
     signing_bytes += u64_be(nonce)
@@ -166,12 +167,12 @@ def build_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
 
     for call in calls:
         selector = call["function_selector"]
-        result += call["contract_id"]                        # 32 bytes
-        result += u64_be(len(selector))                      # 8 bytes
-        result += selector                                   # variable
-        result += u64_be(call["amount"])                     # 8 bytes
-        result += call["asset_id"]                           # 32 bytes
-        result += u64_be(call["gas"])                        # 8 bytes
+        result += call["contract_id"]  # 32 bytes
+        result += u64_be(len(selector))  # 8 bytes
+        result += selector  # variable
+        result += u64_be(call["amount"])  # 8 bytes
+        result += call["asset_id"]  # 32 bytes
+        result += u64_be(call["gas"])  # 8 bytes
         result += encode_option_call_data(call.get("call_data"))
 
     return bytes(result)
@@ -193,7 +194,7 @@ def action_to_call(action: dict, market_info: dict) -> dict:
         base_decimals = market_info["base"]["decimals"]
 
         if side == "Buy":
-            amount = (price * quantity) // (10 ** base_decimals)
+            amount = (price * quantity) // (10**base_decimals)
             asset_id = bytes.fromhex(market_info["quote"]["asset"][2:])
         else:  # Sell
             amount = quantity

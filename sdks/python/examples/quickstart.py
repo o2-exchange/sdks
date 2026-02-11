@@ -2,7 +2,7 @@
 
 import asyncio
 
-from o2_sdk import O2Client, Network
+from o2_sdk import Network, O2Client
 
 
 async def main():
@@ -44,11 +44,7 @@ async def main():
 
     # 6. Place a spot buy order
     depth = await client.get_depth(market.pair, precision=10)
-    if depth.best_ask:
-        # Place below best ask
-        price = market.format_price(int(depth.best_ask.price)) * 0.5
-    else:
-        price = 0.01
+    price = market.format_price(int(depth.best_ask.price)) * 0.5 if depth.best_ask else 0.01
 
     quantity = max(
         int(market.min_order) / market.scale_price(price) * 1.1,
@@ -74,9 +70,7 @@ async def main():
             print(f"Order ID: {order.order_id}")
 
             # 7. Check order status
-            orders = await client.get_orders(
-                account.trade_account_id, market.pair, is_open=True
-            )
+            orders = await client.get_orders(account.trade_account_id, market.pair, is_open=True)
             print(f"Open orders: {len(orders)}")
 
             # 8. Cancel the order

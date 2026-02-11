@@ -16,7 +16,6 @@ from o2_sdk.crypto import (
     raw_sign,
 )
 
-
 # Known test private key for deterministic tests
 TEST_PRIVATE_KEY_HEX = "a" * 64
 TEST_PRIVATE_KEY = bytes.fromhex(TEST_PRIVATE_KEY_HEX)
@@ -162,7 +161,7 @@ class TestEvmPersonalSign:
         from Crypto.Hash import keccak
 
         msg = b"test"
-        prefix = f"\x19Ethereum Signed Message:\n{len(msg)}".encode("utf-8")
+        prefix = f"\x19Ethereum Signed Message:\n{len(msg)}".encode()
         k = keccak.new(digest_bits=256)
         k.update(prefix + msg)
         digest = k.digest()

@@ -2,8 +2,7 @@
 ///
 /// Demonstrates: generate wallet, setup account, create session, place order,
 /// check order status, cancel order.
-
-use o2_sdk::{O2Client, Network, crypto};
+use o2_sdk::{crypto, Network, O2Client};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -11,7 +10,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Generate a wallet
     let wallet = client.generate_wallet()?;
-    println!("Owner address: {}", crypto::to_hex_string(&wallet.b256_address));
+    println!(
+        "Owner address: {}",
+        crypto::to_hex_string(&wallet.b256_address)
+    );
 
     // 2. Setup account (creates account, mints via faucet, whitelists)
     println!("Setting up account...");
@@ -41,18 +43,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut session,
             &market_pair,
             "Buy",
-            0.001,    // price (human-readable)
-            100.0,    // quantity (human-readable)
+            0.001, // price (human-readable)
+            100.0, // quantity (human-readable)
             "Spot",
-            true,     // settle first
-            true,     // collect orders
+            true, // settle first
+            true, // collect orders
         )
         .await;
 
     match result {
         Ok(resp) => {
             if resp.is_success() {
-                println!("Order placed! tx_id: {}", resp.tx_id.as_deref().unwrap_or("?"));
+                println!(
+                    "Order placed! tx_id: {}",
+                    resp.tx_id.as_deref().unwrap_or("?")
+                );
                 if let Some(orders) = &resp.orders {
                     for order in orders {
                         println!("  Order ID: {}", order.order_id.as_deref().unwrap_or("?"));
@@ -63,9 +68,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // 6. Cancel the order
                         if let Some(ref oid) = order.order_id {
                             println!("\nCancelling order {oid}...");
-                            let cancel = client
-                                .cancel_order(&mut session, oid, &market_pair)
-                                .await;
+                            let cancel = client.cancel_order(&mut session, oid, &market_pair).await;
                             match cancel {
                                 Ok(_) => println!("Order cancelled successfully."),
                                 Err(e) => println!("Cancel failed: {e}"),

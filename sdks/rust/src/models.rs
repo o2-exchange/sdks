@@ -2,7 +2,6 @@
 ///
 /// All models use serde for JSON serialization/deserialization.
 /// String fields are used for large numeric values to avoid precision loss.
-
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 

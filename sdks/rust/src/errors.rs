@@ -2,7 +2,6 @@
 ///
 /// Maps all error codes from the O2 API (Section 8) to typed Rust errors.
 /// Also handles the two distinct error formats for POST /v1/session/actions.
-
 use thiserror::Error;
 
 /// The primary error type for the O2 SDK.

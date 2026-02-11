@@ -2,7 +2,6 @@
 ///
 /// These tests require network access and hit the live testnet API.
 /// Run with: cargo test -- --ignored
-
 use futures_util::StreamExt;
 use serial_test::serial;
 use tokio::sync::OnceCell;
@@ -59,19 +58,31 @@ async fn create_order_with_whitelist_retry(
 ) -> Result<o2_sdk::models::SessionActionsResponse, o2_sdk::O2Error> {
     for attempt in 0..max_retries {
         match client
-            .create_order(session, market_pair, side, price, quantity, order_type, settle_first, collect_orders)
+            .create_order(
+                session,
+                market_pair,
+                side,
+                price,
+                quantity,
+                order_type,
+                settle_first,
+                collect_orders,
+            )
             .await
         {
             Ok(resp) => return Ok(resp),
             Err(e) => {
                 let is_whitelist_err = match &e {
-                    o2_sdk::O2Error::OnChainRevert { reason, .. } => reason.contains("TraderNotWhiteListed"),
+                    o2_sdk::O2Error::OnChainRevert { reason, .. } => {
+                        reason.contains("TraderNotWhiteListed")
+                    }
                     other => format!("{other}").contains("TraderNotWhiteListed"),
                 };
                 if is_whitelist_err && attempt < max_retries - 1 {
                     whitelist_with_retry(&client.api, trade_account_id, 2).await;
                     // Additional backoff on top of whitelist propagation delay
-                    tokio::time::sleep(std::time::Duration::from_secs(5 * (attempt as u64 + 1))).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5 * (attempt as u64 + 1)))
+                        .await;
                     continue;
                 }
                 return Err(e);
@@ -106,10 +117,8 @@ async fn get_shared_setup() -> &'static SharedSetup {
     SHARED
         .get_or_init(|| async {
             let mut client = O2Client::new(Network::Testnet);
-            let (maker_wallet, maker_trade_account_id) =
-                setup_funded_account(&mut client).await;
-            let (taker_wallet, taker_trade_account_id) =
-                setup_funded_account(&mut client).await;
+            let (maker_wallet, maker_trade_account_id) = setup_funded_account(&mut client).await;
+            let (taker_wallet, taker_trade_account_id) = setup_funded_account(&mut client).await;
             SharedSetup {
                 maker_wallet,
                 maker_trade_account_id,
@@ -141,11 +150,7 @@ async fn test_get_depth() {
     let markets = client.get_markets().await.unwrap();
     let market = &markets[0];
 
-    let depth = client
-        .api
-        .get_depth(&market.market_id, 10)
-        .await
-        .unwrap();
+    let depth = client.api.get_depth(&market.market_id, 10).await.unwrap();
 
     // Depth should have buys and sells (may be empty on thin testnet)
     assert!(depth.buys.is_some() || depth.sells.is_some());
@@ -249,7 +254,10 @@ async fn test_balance_check() {
     let shared = get_shared_setup().await;
     let mut client = O2Client::new(Network::Testnet);
 
-    let balances = client.get_balances(&shared.maker_trade_account_id).await.unwrap();
+    let balances = client
+        .get_balances(&shared.maker_trade_account_id)
+        .await
+        .unwrap();
     // May be empty if faucet hasn't funded yet, but should parse
     let _ = &balances;
 }
@@ -282,10 +290,11 @@ fn min_quantity_for_min_order(market: &o2_sdk::Market, price: f64) -> f64 {
     let base_factor = 10f64.powi(market.base.decimals as i32);
     let quote_factor = 10f64.powi(market.quote.decimals as i32);
     let min_qty = min_order / (price * quote_factor);
-    let truncate_factor = 10f64.powi(market.base.decimals as i32 - market.base.max_precision as i32);
+    let truncate_factor =
+        10f64.powi(market.base.decimals as i32 - market.base.max_precision as i32);
     let step = truncate_factor / base_factor;
     let rounded = ((min_qty / step).ceil()) * step;
-    rounded * 1.1  // 10% margin
+    rounded * 1.1 // 10% margin
 }
 
 /// Get reference price, best bid, and best ask from market data.
@@ -300,7 +309,9 @@ async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f
                 if let Ok(p) = entry.price.parse::<u64>() {
                     if p > 0 {
                         best_bid = market.format_price(p);
-                        if ref_price == 0.0 { ref_price = best_bid; }
+                        if ref_price == 0.0 {
+                            ref_price = best_bid;
+                        }
                     }
                 }
             }
@@ -310,26 +321,36 @@ async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f
                 if let Ok(p) = entry.price.parse::<u64>() {
                     if p > 0 {
                         best_ask = market.format_price(p);
-                        if ref_price == 0.0 { ref_price = best_ask; }
+                        if ref_price == 0.0 {
+                            ref_price = best_ask;
+                        }
                     }
                 }
             }
         }
     }
 
-    if let Ok(trades) = client.api.get_trades(&market.market_id, "desc", 5, None, None).await {
+    if let Ok(trades) = client
+        .api
+        .get_trades(&market.market_id, "desc", 5, None, None)
+        .await
+    {
         if let Some(trade_list) = &trades.trades {
             if let Some(first) = trade_list.first() {
                 if let Some(price_str) = &first.price {
                     if let Ok(p) = price_str.parse::<u64>() {
-                        if p > 0 { ref_price = market.format_price(p); }
+                        if p > 0 {
+                            ref_price = market.format_price(p);
+                        }
                     }
                 }
             }
         }
     }
 
-    if ref_price == 0.0 { ref_price = 1.0; }
+    if ref_price == 0.0 {
+        ref_price = 1.0;
+    }
     (ref_price, best_bid, best_ask)
 }
 
@@ -397,15 +418,14 @@ async fn test_order_placement_and_cancellation() {
         "Order placement failed: {:?}",
         resp.message
     );
-    let orders = resp.orders.as_ref().expect("Should have orders in response");
+    let orders = resp
+        .orders
+        .as_ref()
+        .expect("Should have orders in response");
     assert!(!orders.is_empty(), "Orders list should not be empty");
     let order = &orders[0];
     let order_id = order.order_id.as_ref().expect("Order should have order_id");
-    assert_ne!(
-        order.cancel,
-        Some(true),
-        "Order was unexpectedly cancelled"
-    );
+    assert_ne!(order.cancel, Some(true), "Order was unexpectedly cancelled");
 
     // Cancel the order
     let cancel_resp = client
@@ -454,7 +474,10 @@ async fn test_cross_account_fill() {
         .unwrap_or("0")
         .parse()
         .unwrap_or(0);
-    assert!(base_val > 0, "Maker base balance should be > 0 after faucet");
+    assert!(
+        base_val > 0,
+        "Maker base balance should be > 0 after faucet"
+    );
 
     // Maker: PostOnly Sell above market → rests on the book
     let mut maker_session = client
@@ -532,7 +555,9 @@ async fn test_cross_account_fill() {
     );
 
     // Cleanup: cancel maker order if still open (may or may not have been filled)
-    let _ = client.cancel_order(&mut maker_session, maker_order_id, &market_pair).await;
+    let _ = client
+        .cancel_order(&mut maker_session, maker_order_id, &market_pair)
+        .await;
 }
 
 #[tokio::test]
@@ -541,7 +566,10 @@ async fn test_nonce_fetch() {
     let shared = get_shared_setup().await;
     let client = O2Client::new(Network::Testnet);
 
-    let nonce = client.get_nonce(&shared.maker_trade_account_id).await.unwrap();
+    let nonce = client
+        .get_nonce(&shared.maker_trade_account_id)
+        .await
+        .unwrap();
     // u64 is always >= 0; just verify the call succeeded
     let _ = nonce;
 }
@@ -565,17 +593,10 @@ async fn test_websocket_depth() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let market = &markets[0];
-    let (ws, mut stream) = client
-        .stream_depth(&market.market_id, "10")
-        .await
-        .unwrap();
+    let (ws, mut stream) = client.stream_depth(&market.market_id, "10").await.unwrap();
 
     // Wait for one depth update with a timeout
-    let update = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        stream.next(),
-    )
-    .await;
+    let update = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await;
 
     match update {
         Ok(Some(depth)) => {

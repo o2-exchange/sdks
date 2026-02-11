@@ -1,5 +1,49 @@
 # O2 SDKs - Development Guide
 
+## Build Orchestration
+
+A `justfile` is provided for common tasks across all SDKs:
+
+```bash
+just check        # Full pre-push check (format + lint)
+just fmt           # Format all SDKs
+just lint          # Lint all SDKs
+just test          # Run all unit tests
+```
+
+Per-SDK targets are also available: `just fmt-python`, `just lint-rust`, etc.
+
+## Linting & Formatting
+
+| SDK | Linter | Formatter | Type Checker |
+|-----|--------|-----------|--------------|
+| Python | ruff | ruff | mypy |
+| TypeScript | biome | biome | tsc |
+| Rust | clippy | rustfmt | — (compiler) |
+
+### Python
+```bash
+cd sdks/python
+ruff format src tests examples        # format
+ruff check src tests examples          # lint
+mypy src/o2_sdk                        # type check
+```
+
+### TypeScript
+```bash
+cd sdks/typescript
+npx @biomejs/biome format --write src tests examples   # format
+npx @biomejs/biome check src tests examples             # lint
+npx tsc --noEmit                                        # type check
+```
+
+### Rust
+```bash
+cd sdks/rust
+cargo fmt              # format
+cargo clippy -- -D warnings   # lint
+```
+
 ## Running Integration Tests
 
 ### Python SDK

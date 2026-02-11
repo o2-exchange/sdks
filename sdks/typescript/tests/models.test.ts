@@ -1,20 +1,20 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
+import { InvalidSignature, OnChainRevertError, parseApiError } from "../src/errors.js";
 import {
+  type BalanceResponse,
+  formatPrice,
+  formatQuantity,
+  type Identity,
+  identityValue,
   isAddress,
   isContractId,
-  identityValue,
-  formatPrice,
-  scalePriceForMarket,
-  formatQuantity,
-  scaleQuantityForMarket,
   type Market,
-  type Identity,
-  type Order,
-  type BalanceResponse,
   type MarketsResponse,
+  type Order,
+  scalePriceForMarket,
+  scaleQuantityForMarket,
   type Trade,
 } from "../src/models.js";
-import { parseApiError, OnChainRevertError, InvalidSignature } from "../src/errors.js";
 
 describe("Models Module", () => {
   describe("Identity helpers", () => {

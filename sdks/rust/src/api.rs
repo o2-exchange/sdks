@@ -2,7 +2,6 @@
 ///
 /// Typed wrappers for every REST endpoint from the O2 API reference.
 /// Uses reqwest for HTTP with JSON support.
-
 use reqwest::Client;
 use serde_json::json;
 
@@ -58,10 +57,7 @@ impl O2Api {
                     });
                 }
             }
-            return Err(O2Error::HttpError(format!(
-                "HTTP {}: {}",
-                status, text
-            )));
+            return Err(O2Error::HttpError(format!("HTTP {}: {}", status, text)));
         }
 
         serde_json::from_str(&text).map_err(|e| {
@@ -120,12 +116,12 @@ impl O2Api {
         let resp = self.client.get(&url).send().await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
         // API wraps depth in "orders" or "view" field; unwrap it
-        let depth = val.get("orders")
+        let depth = val
+            .get("orders")
             .or_else(|| val.get("view"))
             .unwrap_or(&val);
-        serde_json::from_value(depth.clone()).map_err(|e| {
-            O2Error::JsonError(format!("Failed to parse depth: {e}"))
-        })
+        serde_json::from_value(depth.clone())
+            .map_err(|e| O2Error::JsonError(format!("Failed to parse depth: {e}")))
     }
 
     // -----------------------------------------------------------------------
@@ -213,10 +209,7 @@ impl O2Api {
     }
 
     /// GET /v1/accounts - Get account info by owner address.
-    pub async fn get_account_by_owner(
-        &self,
-        owner: &str,
-    ) -> Result<AccountResponse, O2Error> {
+    pub async fn get_account_by_owner(&self, owner: &str) -> Result<AccountResponse, O2Error> {
         let url = format!("{}/v1/accounts?owner={}", self.config.api_base, owner);
         let resp = self.client.get(&url).send().await?;
         self.parse_response(resp).await
@@ -242,10 +235,7 @@ impl O2Api {
         contract: Option<&str>,
         address: Option<&str>,
     ) -> Result<BalanceResponse, O2Error> {
-        let mut url = format!(
-            "{}/v1/balance?asset_id={}",
-            self.config.api_base, asset_id
-        );
+        let mut url = format!("{}/v1/balance?asset_id={}", self.config.api_base, asset_id);
         if let Some(c) = contract {
             url.push_str(&format!("&contract={}", c));
         }
@@ -261,6 +251,7 @@ impl O2Api {
     // -----------------------------------------------------------------------
 
     /// GET /v1/orders - Get order history.
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_orders(
         &self,
         market_id: &str,
@@ -289,11 +280,7 @@ impl O2Api {
     }
 
     /// GET /v1/order - Get a single order.
-    pub async fn get_order(
-        &self,
-        market_id: &str,
-        order_id: &str,
-    ) -> Result<Order, O2Error> {
+    pub async fn get_order(&self, market_id: &str, order_id: &str) -> Result<Order, O2Error> {
         let url = format!(
             "{}/v1/order?market_id={}&order_id={}",
             self.config.api_base, market_id, order_id
@@ -302,9 +289,8 @@ impl O2Api {
         let val: serde_json::Value = self.parse_response(resp).await?;
         // API wraps order in an "order" key
         let order_val = val.get("order").unwrap_or(&val);
-        serde_json::from_value(order_val.clone()).map_err(|e| {
-            O2Error::JsonError(format!("Failed to parse order: {e}"))
-        })
+        serde_json::from_value(order_val.clone())
+            .map_err(|e| O2Error::JsonError(format!("Failed to parse order: {e}")))
     }
 
     // -----------------------------------------------------------------------
@@ -359,12 +345,15 @@ impl O2Api {
 
         let tx_id = val.get("tx_id").and_then(|v| v.as_str()).map(String::from);
         let code = val.get("code").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let message = val.get("message").and_then(|v| v.as_str()).map(String::from);
+        let message = val
+            .get("message")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let reason = val.get("reason").and_then(|v| v.as_str()).map(String::from);
         let receipts = val.get("receipts").cloned();
-        let orders = val.get("orders").and_then(|o| {
-            serde_json::from_value::<Vec<Order>>(o.clone()).ok()
-        });
+        let orders = val
+            .get("orders")
+            .and_then(|o| serde_json::from_value::<Vec<Order>>(o.clone()).ok());
 
         let parsed = SessionActionsResponse {
             tx_id,
@@ -490,10 +479,7 @@ impl O2Api {
     }
 
     /// GET /v1/aggregated/trades - Recent trades for a pair.
-    pub async fn get_aggregated_trades(
-        &self,
-        market_pair: &str,
-    ) -> Result<Vec<Trade>, O2Error> {
+    pub async fn get_aggregated_trades(&self, market_pair: &str) -> Result<Vec<Trade>, O2Error> {
         let url = format!(
             "{}/v1/aggregated/trades?market_pair={}",
             self.config.api_base, market_pair

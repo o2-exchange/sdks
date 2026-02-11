@@ -1,13 +1,13 @@
-/// Fuel ABI encoding primitives for O2 Exchange.
-///
-/// Implements the exact byte layouts from the O2 integration guide:
-/// - u64 big-endian encoding
-/// - Function selectors (NOT hash-based: u64(len) + utf8(name))
-/// - Identity encoding (discriminant + 32-byte address)
-/// - Option encoding (None = u64(0), Some = u64(1) + data)
-/// - OrderArgs struct encoding (tightly packed enum variants)
-/// - Session signing bytes
-/// - Action signing bytes
+//! Fuel ABI encoding primitives for O2 Exchange.
+//!
+//! Implements the exact byte layouts from the O2 integration guide:
+//! - u64 big-endian encoding
+//! - Function selectors (NOT hash-based: u64(len) + utf8(name))
+//! - Identity encoding (discriminant + 32-byte address)
+//! - Option encoding (None = u64(0), Some = u64(1) + data)
+//! - OrderArgs struct encoding (tightly packed enum variants)
+//! - Session signing bytes
+//! - Action signing bytes
 
 /// Encode a u64 value as 8 bytes big-endian.
 pub fn u64_be(value: u64) -> [u8; 8] {
@@ -188,15 +188,14 @@ pub fn build_actions_signing_bytes(nonce: u64, calls: &[CallArg]) -> Vec<u8> {
         result.extend_from_slice(&u64_be(call.amount));
         result.extend_from_slice(&call.asset_id);
         result.extend_from_slice(&u64_be(call.gas));
-        result.extend_from_slice(&encode_option_call_data(
-            call.call_data.as_deref(),
-        ));
+        result.extend_from_slice(&encode_option_call_data(call.call_data.as_deref()));
     }
 
     result
 }
 
 /// Convert a high-level CreateOrder action to a low-level CallArg.
+#[allow(clippy::too_many_arguments)]
 pub fn create_order_to_call(
     contract_id: &[u8; 32],
     side: &str,

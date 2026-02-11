@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 import aiohttp
 
@@ -23,10 +23,9 @@ from .models import (
     Bar,
     DepthSnapshot,
     FaucetResponse,
-    Market,
+    MarketsResponse,
     MarketSummary,
     MarketTicker,
-    MarketsResponse,
     Order,
     OrdersResponse,
     ReferralInfo,
@@ -42,7 +41,7 @@ logger = logging.getLogger("o2_sdk.api")
 class O2Api:
     """Low-level REST API client for the O2 Exchange."""
 
-    def __init__(self, config: NetworkConfig, session: Optional[aiohttp.ClientSession] = None):
+    def __init__(self, config: NetworkConfig, session: aiohttp.ClientSession | None = None):
         self._config = config
         self._session = session
         self._owns_session = session is None
@@ -62,10 +61,10 @@ class O2Api:
         method: str,
         path: str,
         *,
-        json: Optional[dict] = None,
-        params: Optional[dict] = None,
-        headers: Optional[dict] = None,
-        base_url: Optional[str] = None,
+        json: dict | None = None,
+        params: dict | None = None,
+        headers: dict | None = None,
+        base_url: str | None = None,
         max_retries: int = 3,
     ) -> Any:
         session = await self._ensure_session()
@@ -83,9 +82,8 @@ class O2Api:
 
                     # Rate limit: check both code 1003 and HTTP 429
                     is_rate_limited = (
-                        (isinstance(data, dict) and data.get("code") == 1003)
-                        or resp.status == 429
-                    )
+                        isinstance(data, dict) and data.get("code") == 1003
+                    ) or resp.status == 429
                     if is_rate_limited:
                         if attempt < max_retries - 1:
                             wait = 2 ** (attempt + 1)
@@ -93,8 +91,11 @@ class O2Api:
                             await asyncio.sleep(wait)
                             continue
                         raise RateLimitExceeded(
-                            message=(data.get("message", "Rate limit exceeded")
-                                     if isinstance(data, dict) else "Rate limit exceeded"),
+                            message=(
+                                data.get("message", "Rate limit exceeded")
+                                if isinstance(data, dict)
+                                else "Rate limit exceeded"
+                            ),
                             code=1003,
                         )
 
@@ -103,6 +104,7 @@ class O2Api:
                         message = data.get("message", f"HTTP {resp.status}")
                         if code is not None:
                             from .errors import ERROR_CODE_MAP
+
                             error_cls = ERROR_CODE_MAP.get(code, O2Error)
                             raise error_cls(message=message, code=code)
                         if "message" in data and "tx_id" not in data:
@@ -113,9 +115,9 @@ class O2Api:
                     return data
             except aiohttp.ClientError as e:
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
+                    await asyncio.sleep(2**attempt)
                     continue
-                raise O2Error(message=str(e))
+                raise O2Error(message=str(e)) from e
 
     # -----------------------------------------------------------------------
     # Market Data
@@ -126,15 +128,11 @@ class O2Api:
         return MarketsResponse.from_dict(data)
 
     async def get_market_summary(self, market_id: str) -> MarketSummary:
-        data = await self._request(
-            "GET", "/v1/markets/summary", params={"market_id": market_id}
-        )
+        data = await self._request("GET", "/v1/markets/summary", params={"market_id": market_id})
         return MarketSummary.from_dict(data)
 
     async def get_market_ticker(self, market_id: str) -> MarketTicker:
-        data = await self._request(
-            "GET", "/v1/markets/ticker", params={"market_id": market_id}
-        )
+        data = await self._request("GET", "/v1/markets/ticker", params={"market_id": market_id})
         return MarketTicker.from_dict(data)
 
     async def get_depth(self, market_id: str, precision: int = 10) -> DepthSnapshot:
@@ -148,8 +146,8 @@ class O2Api:
         market_id: str,
         direction: str = "desc",
         count: int = 50,
-        start_timestamp: Optional[int] = None,
-        start_trade_id: Optional[str] = None,
+        start_timestamp: int | None = None,
+        start_trade_id: str | None = None,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -215,8 +213,8 @@ class O2Api:
 
     async def get_account(
         self,
-        owner: Optional[str] = None,
-        trade_account_id: Optional[str] = None,
+        owner: str | None = None,
+        trade_account_id: str | None = None,
     ) -> AccountInfo:
         params: dict[str, str] = {}
         if owner:
@@ -229,8 +227,8 @@ class O2Api:
     async def get_balance(
         self,
         asset_id: str,
-        contract: Optional[str] = None,
-        address: Optional[str] = None,
+        contract: str | None = None,
+        address: str | None = None,
     ) -> Balance:
         params: dict[str, str] = {"asset_id": asset_id}
         if contract:
@@ -247,13 +245,13 @@ class O2Api:
     async def get_orders(
         self,
         market_id: str,
-        contract: Optional[str] = None,
-        account: Optional[str] = None,
+        contract: str | None = None,
+        account: str | None = None,
         direction: str = "desc",
         count: int = 20,
-        is_open: Optional[bool] = None,
-        start_timestamp: Optional[int] = None,
-        start_order_id: Optional[str] = None,
+        is_open: bool | None = None,
+        start_timestamp: int | None = None,
+        start_order_id: str | None = None,
     ) -> OrdersResponse:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -285,9 +283,7 @@ class O2Api:
     # Session Management
     # -----------------------------------------------------------------------
 
-    async def create_session(
-        self, owner_id: str, session_request: dict
-    ) -> SessionResponse:
+    async def create_session(self, owner_id: str, session_request: dict) -> SessionResponse:
         data = await self._request(
             "PUT",
             "/v1/session",
@@ -296,9 +292,7 @@ class O2Api:
         )
         return SessionResponse.from_dict(data)
 
-    async def submit_actions(
-        self, owner_id: str, actions_request: dict
-    ) -> ActionsResponse:
+    async def submit_actions(self, owner_id: str, actions_request: dict) -> ActionsResponse:
         data = await self._request(
             "POST",
             "/v1/session/actions",
@@ -336,9 +330,7 @@ class O2Api:
         return WhitelistResponse.from_dict(data)
 
     async def get_referral_info(self, code: str) -> ReferralInfo:
-        data = await self._request(
-            "GET", "/analytics/v1/referral/code-info", params={"code": code}
-        )
+        data = await self._request("GET", "/analytics/v1/referral/code-info", params={"code": code})
         return ReferralInfo.from_dict(data)
 
     # -----------------------------------------------------------------------
@@ -354,10 +346,12 @@ class O2Api:
     async def get_aggregated_orderbook(
         self, market_pair: str, depth: int = 500, level: int = 2
     ) -> dict:
-        return await self._request(
-            "GET",
-            "/v1/aggregated/orderbook",
-            params={"market_pair": market_pair, "depth": depth, "level": level},
+        return dict(
+            await self._request(
+                "GET",
+                "/v1/aggregated/orderbook",
+                params={"market_pair": market_pair, "depth": depth, "level": level},
+            )
         )
 
     async def get_aggregated_summary(self) -> list[dict]:

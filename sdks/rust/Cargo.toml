@@ -27,6 +27,12 @@ tokio = { version = "1", features = ["full", "test-util"] }
 serial_test = "3"
 futures-util = "0.3"
 
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
 [[example]]
 name = "quickstart"
 path = "examples/quickstart.rs"

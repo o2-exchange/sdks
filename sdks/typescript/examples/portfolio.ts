@@ -9,12 +9,7 @@
  * Run: npx tsx examples/portfolio.ts
  */
 
-import {
-  O2Client,
-  Network,
-  type Market,
-  type BalanceResponse,
-} from "../src/index.js";
+import { type BalanceResponse, type Market, Network, O2Client } from "../src/index.js";
 
 // ── Main ──────────────────────────────────────────────────────────
 
@@ -32,9 +27,7 @@ async function main() {
 
   // Fetch markets for symbol mapping
   const markets = await client.getMarkets();
-  console.log(
-    `Markets: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`
-  );
+  console.log(`Markets: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`);
 
   // Display initial balances
   console.log("\n=== Portfolio Balances ===");
@@ -47,25 +40,18 @@ async function main() {
   console.log("\n=== Open Orders ===");
   for (const market of markets) {
     try {
-      const orders = await client.getOrders(
-        tradeAccountId,
-        market,
-        true,
-        50
-      );
+      const orders = await client.getOrders(tradeAccountId, market, true, 50);
       if (orders.length > 0) {
         console.log(`\n${market.base.symbol}/${market.quote.symbol}:`);
         for (const order of orders) {
-          const price =
-            Number(order.price) / 10 ** market.quote.decimals;
-          const qty =
-            Number(order.quantity) / 10 ** market.base.decimals;
+          const price = Number(order.price) / 10 ** market.quote.decimals;
+          const qty = Number(order.quantity) / 10 ** market.base.decimals;
           const filled = order.quantity_fill
             ? Number(order.quantity_fill) / 10 ** market.base.decimals
             : 0;
           console.log(
             `  ${order.side} ${qty.toFixed(3)} @ ${price.toFixed(6)} ` +
-              `(filled: ${filled.toFixed(3)}) [${order.order_id.slice(0, 10)}...]`
+              `(filled: ${filled.toFixed(3)}) [${order.order_id.slice(0, 10)}...]`,
           );
         }
       }
@@ -82,14 +68,13 @@ async function main() {
     console.log(`\n--- Balance Update (${new Date().toISOString()}) ---`);
     for (const entry of update.balance) {
       const symbol = findSymbol(entry.asset_id, markets) ?? entry.asset_id.slice(0, 10);
-      const tradingBalance =
-        Number(entry.trading_account_balance) / 10 ** 9;
+      const tradingBalance = Number(entry.trading_account_balance) / 10 ** 9;
       const locked = Number(entry.total_locked) / 10 ** 9;
       const unlocked = Number(entry.total_unlocked) / 10 ** 9;
 
       console.log(
         `  ${symbol}: available=${tradingBalance.toFixed(3)}, ` +
-          `locked=${locked.toFixed(3)}, unlocked=${unlocked.toFixed(3)}`
+          `locked=${locked.toFixed(3)}, unlocked=${unlocked.toFixed(3)}`,
       );
     }
   }
@@ -97,11 +82,7 @@ async function main() {
 
 // ── Helpers ───────────────────────────────────────────────────────
 
-function displayBalance(
-  symbol: string,
-  balance: BalanceResponse,
-  markets: Market[]
-) {
+function displayBalance(symbol: string, balance: BalanceResponse, markets: Market[]) {
   const decimals = findDecimals(symbol, markets) ?? 9;
   const trading = Number(balance.trading_account_balance) / 10 ** decimals;
   const locked = Number(balance.total_locked) / 10 ** decimals;
@@ -114,7 +95,7 @@ function displayBalance(
         `Available: ${trading.toFixed(3).padStart(12)} | ` +
         `Locked: ${locked.toFixed(3).padStart(12)} | ` +
         `Unlocked: ${unlocked.toFixed(3).padStart(12)} | ` +
-        `Total: ${total.toFixed(3).padStart(12)}`
+        `Total: ${total.toFixed(3).padStart(12)}`,
     );
   }
 }
@@ -127,10 +108,7 @@ function findDecimals(symbol: string, markets: Market[]): number | undefined {
   return undefined;
 }
 
-function findSymbol(
-  assetId: string,
-  markets: Market[]
-): string | undefined {
+function findSymbol(assetId: string, markets: Market[]): string | undefined {
   for (const m of markets) {
     if (m.base.asset === assetId) return m.base.symbol;
     if (m.quote.asset === assetId) return m.quote.symbol;

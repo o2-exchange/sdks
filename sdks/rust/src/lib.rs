@@ -24,7 +24,6 @@
 ///     Ok(())
 /// }
 /// ```
-
 pub mod api;
 pub mod client;
 pub mod config;
@@ -38,7 +37,7 @@ pub mod websocket;
 pub use client::O2Client;
 pub use config::{Network, NetworkConfig};
 pub use crypto::{EvmWallet, Wallet};
-pub use encoding::{CallArg, GAS_MAX, OrderTypeEncoding};
+pub use encoding::{CallArg, OrderTypeEncoding, GAS_MAX};
 pub use errors::O2Error;
 pub use models::*;
 pub use websocket::{O2WebSocket, TypedStream};

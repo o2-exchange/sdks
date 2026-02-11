@@ -5,10 +5,11 @@ These tests require network access and hit the live testnet API.
 """
 
 import asyncio
+import contextlib
 
 import pytest
 
-from o2_sdk import O2Client, Network
+from o2_sdk import Network, O2Client
 from o2_sdk.api import O2Api
 from o2_sdk.config import get_config
 
@@ -252,8 +253,8 @@ def _safe_sell_price(market, base_balance):
     any testnet bid — and the required quantity is trivially small.
     """
     min_order = float(market.min_order) if market.min_order else 1_000_000
-    base_factor = 10 ** market.base.decimals
-    quote_factor = 10 ** market.quote.decimals
+    base_factor = 10**market.base.decimals
+    quote_factor = 10**market.quote.decimals
     # Budget: 0.1% of balance or 100k chain units, whichever is smaller
     budget_chain = min(base_balance * 0.001, 100_000)
     budget = max(budget_chain, 1) / base_factor
@@ -266,8 +267,8 @@ def _min_quantity_for_min_order(market, price):
     import math
 
     min_order = float(market.min_order) if market.min_order else 1_000_000
-    quote_factor = 10 ** market.quote.decimals
-    base_factor = 10 ** market.base.decimals
+    quote_factor = 10**market.quote.decimals
+    base_factor = 10**market.base.decimals
     # min_order <= price * quote_factor * quantity
     min_qty = min_order / (price * quote_factor)
     # Round up to nearest precision step and add margin
@@ -427,14 +428,12 @@ class TestTradingFlow:
         assert taker_result.tx_id is not None, f"Taker order failed: {taker_result.message}"
 
         # Cleanup: cancel maker order if still open (may or may not have been filled)
-        try:
+        with contextlib.suppress(Exception):
             await client.cancel_order(
                 session=maker_session,
                 order_id=maker_order.order_id,
                 market=market.pair,
             )
-        except Exception:
-            pass  # Already filled/closed
 
 
 class TestWebSocket:

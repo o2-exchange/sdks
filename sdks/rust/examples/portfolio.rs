@@ -1,8 +1,7 @@
+use o2_sdk::crypto::*;
 /// Portfolio monitoring example: streams balances and orders via WebSocket,
 /// displays formatted portfolio state and P&L from trade history.
-
 use o2_sdk::*;
-use o2_sdk::crypto::*;
 use tokio_stream::StreamExt;
 
 #[tokio::main]
@@ -22,18 +21,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let markets = client.get_markets().await?;
     println!("\n--- Available Markets ---");
     for m in &markets {
-        println!("  {} | min_order: {} | base_decimals: {} | quote_decimals: {}",
-            m.symbol_pair(), m.min_order, m.base.decimals, m.quote.decimals);
+        println!(
+            "  {} | min_order: {} | base_decimals: {} | quote_decimals: {}",
+            m.symbol_pair(),
+            m.min_order,
+            m.base.decimals,
+            m.quote.decimals
+        );
     }
 
     // Display balances
     println!("\n--- Balances ---");
     let balances = client.get_balances(&trade_account_id).await?;
     for (symbol, bal) in &balances {
-        let available = bal
-            .trading_account_balance
-            .as_deref()
-            .unwrap_or("0");
+        let available = bal.trading_account_balance.as_deref().unwrap_or("0");
         let locked = bal.total_locked.as_deref().unwrap_or("0");
         let unlocked = bal.total_unlocked.as_deref().unwrap_or("0");
         println!("  {symbol}: available={available}, locked={locked}, unlocked={unlocked}");

@@ -33,10 +33,7 @@ export function functionSelector(name: string): Uint8Array {
  * Encode a Fuel Identity enum.
  * discriminant: 0 = Address, 1 = ContractId
  */
-export function encodeIdentity(
-  discriminant: 0 | 1,
-  addressBytes: Uint8Array
-): Uint8Array {
+export function encodeIdentity(discriminant: 0 | 1, addressBytes: Uint8Array): Uint8Array {
   return concat([u64BE(discriminant), addressBytes]);
 }
 
@@ -55,9 +52,7 @@ export function encodeOptionSome(data: Uint8Array): Uint8Array {
  * null/undefined -> u64(0)
  * data           -> u64(1) + u64(len(data)) + data
  */
-export function encodeOptionCallData(
-  data: Uint8Array | null | undefined
-): Uint8Array {
+export function encodeOptionCallData(data: Uint8Array | null | undefined): Uint8Array {
   if (data == null) {
     return u64BE(0);
   }
@@ -89,7 +84,7 @@ export type OrderTypeVariant =
 export function encodeOrderArgs(
   price: bigint,
   quantity: bigint,
-  orderType: OrderTypeVariant
+  orderType: OrderTypeVariant,
 ): Uint8Array {
   const parts: Uint8Array[] = [u64BE(price), u64BE(quantity)];
 
@@ -135,7 +130,7 @@ export function buildSessionSigningBytes(
   chainId: bigint,
   sessionAddress: Uint8Array,
   contractIds: Uint8Array[],
-  expiry: bigint
+  expiry: bigint,
 ): Uint8Array {
   const funcName = new TextEncoder().encode("set_session");
   const parts: Uint8Array[] = [
@@ -182,10 +177,7 @@ export interface ContractCall {
  *     u64(gas)                (8 bytes)
  *     encode_option_call_data (8+ bytes)
  */
-export function buildActionsSigningBytes(
-  nonce: bigint,
-  calls: ContractCall[]
-): Uint8Array {
+export function buildActionsSigningBytes(nonce: bigint, calls: ContractCall[]): Uint8Array {
   const parts: Uint8Array[] = [u64BE(nonce), u64BE(calls.length)];
 
   for (const call of calls) {
@@ -252,7 +244,7 @@ function hexToBytes(hex: string): Uint8Array {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
   const bytes = new Uint8Array(clean.length / 2);
   for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+    bytes[i] = Number.parseInt(clean.substring(i * 2, i * 2 + 2), 16);
   }
   return bytes;
 }
@@ -298,7 +290,7 @@ function parseOrderTypeJSON(ot: OrderTypeJSON): OrderTypeVariant {
 export function actionToCall(
   action: ActionJSON,
   market: MarketInfo,
-  accountsRegistryId?: string
+  accountsRegistryId?: string,
 ): ContractCall {
   const contractIdBytes = hexToBytes(market.contractId);
 
@@ -346,9 +338,7 @@ export function actionToCall(
   if ("SettleBalance" in action) {
     const to = action.SettleBalance.to;
     const disc: 0 | 1 = "ContractId" in to ? 1 : 0;
-    const addr = hexToBytes(
-      (to.ContractId ?? to.Address)!
-    );
+    const addr = hexToBytes((to.ContractId ?? to.Address)!);
     return {
       contractId: contractIdBytes,
       functionSelector: functionSelector("settle_balance"),
@@ -365,9 +355,7 @@ export function actionToCall(
     }
     const to = action.RegisterReferer.to;
     const disc: 0 | 1 = "ContractId" in to ? 1 : 0;
-    const addr = hexToBytes(
-      (to.ContractId ?? to.Address)!
-    );
+    const addr = hexToBytes((to.ContractId ?? to.Address)!);
     return {
       contractId: hexToBytes(accountsRegistryId),
       functionSelector: functionSelector("register_referer"),
@@ -387,11 +375,7 @@ export function actionToCall(
  * Scale a human-readable price to a chain integer, truncated to max_precision.
  * Uses floor truncation for prices.
  */
-export function scalePrice(
-  humanPrice: number,
-  decimals: number,
-  maxPrecision: number
-): bigint {
+export function scalePrice(humanPrice: number, decimals: number, maxPrecision: number): bigint {
   const scaled = BigInt(Math.floor(humanPrice * 10 ** decimals));
   const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
   return (scaled / truncateFactor) * truncateFactor;
@@ -404,7 +388,7 @@ export function scalePrice(
 export function scaleQuantity(
   humanQuantity: number,
   decimals: number,
-  maxPrecision: number
+  maxPrecision: number,
 ): bigint {
   const scaled = BigInt(Math.ceil(humanQuantity * 10 ** decimals));
   const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
@@ -424,7 +408,7 @@ export function formatDecimal(chainValue: bigint, decimals: number): number {
 export function validateFractionalPrice(
   price: bigint,
   quantity: bigint,
-  baseDecimals: number
+  baseDecimals: number,
 ): boolean {
   return (price * quantity) % BigInt(10 ** baseDecimals) === 0n;
 }
@@ -436,7 +420,7 @@ export function validateMinOrder(
   price: bigint,
   quantity: bigint,
   baseDecimals: number,
-  minOrder: bigint
+  minOrder: bigint,
 ): boolean {
   return (price * quantity) / BigInt(10 ** baseDecimals) >= minOrder;
 }

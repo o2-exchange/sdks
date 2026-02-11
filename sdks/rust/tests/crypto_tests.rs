@@ -1,9 +1,8 @@
 /// Unit tests for O2 SDK crypto module.
 ///
 /// Tests key generation, address derivation, signing, and Fuel compact signature encoding.
-
 use o2_sdk::crypto::*;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
 #[test]
 fn test_generate_keypair() {
@@ -105,7 +104,10 @@ fn test_personal_sign_vs_raw_sign_differ() {
     let personal = personal_sign(&private_key, message).unwrap();
     let raw = raw_sign(&private_key, message).unwrap();
 
-    assert_ne!(personal, raw, "personalSign and rawSign should produce different signatures");
+    assert_ne!(
+        personal, raw,
+        "personalSign and rawSign should produce different signatures"
+    );
 }
 
 #[test]
@@ -172,10 +174,9 @@ fn test_low_s_normalization() {
 
     // secp256k1 order / 2
     let order_half: [u8; 32] = [
-        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-        0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D,
-        0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B, 0x20, 0xA0,
+        0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+        0xFF, 0x5D, 0x57, 0x6E, 0x73, 0x57, 0xA4, 0x50, 0x1D, 0xDF, 0xE9, 0x2F, 0x46, 0x68, 0x1B,
+        0x20, 0xA0,
     ];
 
     for i in 0u8..50 {
@@ -198,6 +199,10 @@ fn test_low_s_normalization() {
                 break;
             }
         }
-        assert!(s_is_low, "s should be normalized to low-s for message {}", i);
+        assert!(
+            s_is_low,
+            "s should be normalized to low-s for message {}",
+            i
+        );
     }
 }

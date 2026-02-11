@@ -445,9 +445,7 @@ export function formatPrice(market: Market, chainValue: bigint): number {
 /** Scale a human-readable price to chain integer. */
 export function scalePriceForMarket(market: Market, humanPrice: number): bigint {
   const scaled = BigInt(Math.floor(humanPrice * 10 ** market.quote.decimals));
-  const truncateFactor = BigInt(
-    10 ** (market.quote.decimals - market.quote.max_precision)
-  );
+  const truncateFactor = BigInt(10 ** (market.quote.decimals - market.quote.max_precision));
   return (scaled / truncateFactor) * truncateFactor;
 }
 
@@ -457,14 +455,9 @@ export function formatQuantity(market: Market, chainValue: bigint): number {
 }
 
 /** Scale a human-readable quantity to chain integer. */
-export function scaleQuantityForMarket(
-  market: Market,
-  humanQuantity: number
-): bigint {
+export function scaleQuantityForMarket(market: Market, humanQuantity: number): bigint {
   const scaled = BigInt(Math.ceil(humanQuantity * 10 ** market.base.decimals));
-  const truncateFactor = BigInt(
-    10 ** (market.base.decimals - market.base.max_precision)
-  );
+  const truncateFactor = BigInt(10 ** (market.base.decimals - market.base.max_precision));
   const remainder = scaled % truncateFactor;
   if (remainder === 0n) return scaled;
   return scaled + (truncateFactor - remainder);

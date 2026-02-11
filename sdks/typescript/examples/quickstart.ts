@@ -12,7 +12,7 @@
  * Run: npx tsx examples/quickstart.ts
  */
 
-import { O2Client, Network } from "../src/index.js";
+import { Network, O2Client } from "../src/index.js";
 
 async function main() {
   // Initialize client (default: testnet)
@@ -34,7 +34,7 @@ async function main() {
   // 3. Fetch available markets
   const markets = await client.getMarkets();
   console.log(
-    `Available markets: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`
+    `Available markets: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`,
   );
 
   const market = markets[0];
@@ -46,7 +46,7 @@ async function main() {
     wallet,
     tradeAccountId,
     [market],
-    30 // 30-day expiry
+    30, // 30-day expiry
   );
   console.log(`Session address: ${session.sessionAddress}`);
 
@@ -59,7 +59,7 @@ async function main() {
   const buyQuantity = 10.0;
 
   console.log(
-    `Placing buy order: ${buyQuantity} ${market.base.symbol} @ ${buyPrice} ${market.quote.symbol}`
+    `Placing buy order: ${buyQuantity} ${market.base.symbol} @ ${buyPrice} ${market.quote.symbol}`,
   );
 
   try {
@@ -71,7 +71,7 @@ async function main() {
       buyQuantity,
       "Spot",
       true, // settle first
-      true // collect orders
+      true, // collect orders
     );
 
     console.log(`Transaction: ${response.tx_id}`);
@@ -87,11 +87,7 @@ async function main() {
 
       // 8. Cancel the order
       console.log("Cancelling order...");
-      const cancelResult = await client.cancelOrder(
-        updatedSession,
-        order.order_id,
-        market
-      );
+      const cancelResult = await client.cancelOrder(updatedSession, order.order_id, market);
       console.log(`Cancel tx: ${cancelResult.response.tx_id}`);
     }
   } catch (error) {

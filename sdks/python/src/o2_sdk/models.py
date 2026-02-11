@@ -6,9 +6,8 @@ All API request/response types as dataclasses with JSON parsing helpers.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
-from typing import Any, Optional
-
+from dataclasses import dataclass
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Market models
@@ -64,23 +63,23 @@ class Market:
 
     def format_price(self, chain_value: int) -> float:
         """Convert chain integer price to human-readable float."""
-        return chain_value / (10 ** self.quote.decimals)
+        return float(chain_value / (10**self.quote.decimals))
 
     def scale_price(self, human_value: float) -> int:
         """Convert human-readable price to chain integer, truncated to max_precision."""
-        scaled = int(human_value * (10 ** self.quote.decimals))
+        scaled = int(human_value * (10**self.quote.decimals))
         truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)
-        return (scaled // truncate_factor) * truncate_factor
+        return int((scaled // truncate_factor) * truncate_factor)
 
     def format_quantity(self, chain_value: int) -> float:
         """Convert chain integer quantity to human-readable float."""
-        return chain_value / (10 ** self.base.decimals)
+        return float(chain_value / (10**self.base.decimals))
 
     def scale_quantity(self, human_value: float) -> int:
         """Convert human-readable quantity to chain integer, truncated to max_precision."""
-        scaled = int(human_value * (10 ** self.base.decimals))
+        scaled = int(human_value * (10**self.base.decimals))
         truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
-        return (scaled // truncate_factor) * truncate_factor
+        return int((scaled // truncate_factor) * truncate_factor)
 
     def validate_order(self, price: int, quantity: int) -> None:
         """Validate price/quantity against on-chain constraints.
@@ -93,24 +92,20 @@ class Market:
         # PricePrecision: price must be a multiple of truncate_factor
         price_trunc = 10 ** (self.quote.decimals - self.quote.max_precision)
         if price % price_trunc != 0:
-            raise ValueError(
-                f"PricePrecision: price {price} must be a multiple of {price_trunc}"
-            )
+            raise ValueError(f"PricePrecision: price {price} must be a multiple of {price_trunc}")
 
         # FractionalPrice: (price * quantity) % 10^base_decimals must equal 0
         quote_value = price * quantity
-        if quote_value % (10 ** base_decimals) != 0:
+        if quote_value % (10**base_decimals) != 0:
             raise ValueError(
                 f"FractionalPrice: (price * quantity) = {quote_value} "
                 f"must be divisible by 10^{base_decimals}"
             )
 
         # min_order: (price * quantity) / 10^base_decimals >= min_order
-        forwarded = quote_value // (10 ** base_decimals)
+        forwarded = quote_value // (10**base_decimals)
         if forwarded < min_order:
-            raise ValueError(
-                f"min_order: forwarded amount {forwarded} < min_order {min_order}"
-            )
+            raise ValueError(f"min_order: forwarded amount {forwarded} < min_order {min_order}")
 
     def adjust_quantity(self, price: int, quantity: int) -> int:
         """Adjust quantity to satisfy FractionalPrice constraint.
@@ -118,11 +113,11 @@ class Market:
         Returns the largest quantity <= the input that satisfies
         (price * quantity) % 10^base_decimals == 0.
         """
-        base_factor = 10 ** self.base.decimals
+        base_factor = 10**self.base.decimals
         remainder = (price * quantity) % base_factor
         if remainder == 0:
             return quantity
-        return quantity - math.ceil(remainder / price)
+        return int(quantity - math.ceil(remainder / price))
 
 
 @dataclass
@@ -158,7 +153,7 @@ class MarketsResponse:
 @dataclass
 class Identity:
     variant: str  # "Address" or "ContractId"
-    value: str    # 0x-prefixed hex
+    value: str  # 0x-prefixed hex
 
     def to_dict(self) -> dict:
         return {self.variant: self.value}
@@ -185,7 +180,7 @@ class TradeAccount:
     last_modification: int
     nonce: str
     owner: Identity
-    synced_with_network: Optional[bool] = None
+    synced_with_network: bool | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> TradeAccount:
@@ -199,9 +194,9 @@ class TradeAccount:
 
 @dataclass
 class AccountInfo:
-    trade_account_id: Optional[str]
-    trade_account: Optional[TradeAccount]
-    session: Optional[dict] = None
+    trade_account_id: str | None
+    trade_account: TradeAccount | None
+    session: dict | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> AccountInfo:
@@ -247,8 +242,8 @@ class SessionInfo:
     trade_account_id: str
     contract_ids: list[str]
     session_expiry: str
-    session_private_key: Optional[bytes] = None
-    owner_address: Optional[str] = None
+    session_private_key: bytes | None = None
+    owner_address: str | None = None
     nonce: int = 0
 
     @classmethod
@@ -299,23 +294,23 @@ class Order:
     close: bool
     partially_filled: bool
     cancel: bool
-    account: Optional[Identity] = None
-    desired_quantity: Optional[str] = None
-    fill: Optional[dict] = None
-    order_tx_history: Optional[list] = None
-    base_decimals: Optional[int] = None
-    market_id: Optional[str] = None
-    owner: Optional[Identity] = None
-    history: Optional[list] = None
-    fills: Optional[list] = None
+    account: Identity | None = None
+    desired_quantity: str | None = None
+    fill: dict | None = None
+    order_tx_history: list | None = None
+    base_decimals: int | None = None
+    market_id: str | None = None
+    owner: Identity | None = None
+    history: list | None = None
+    fills: list | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Order:
         account = None
-        if "account" in d and d["account"]:
+        if d.get("account"):
             account = Identity.from_dict(d["account"])
         owner = None
-        if "owner" in d and d["owner"]:
+        if d.get("owner"):
             owner = Identity.from_dict(d["owner"])
         return cls(
             order_id=d["order_id"],
@@ -347,14 +342,14 @@ class Order:
 
 @dataclass
 class OrdersResponse:
-    identity: Optional[Identity]
+    identity: Identity | None
     market_id: str
     orders: list[Order]
 
     @classmethod
     def from_dict(cls, d: dict) -> OrdersResponse:
         identity = None
-        if "identity" in d and d["identity"]:
+        if d.get("identity"):
             identity = Identity.from_dict(d["identity"])
         return cls(
             identity=identity,
@@ -376,14 +371,14 @@ class Trade:
     quantity: str
     price: str
     timestamp: str
-    maker: Optional[Identity] = None
-    taker: Optional[Identity] = None
-    market_id: Optional[str] = None
+    maker: Identity | None = None
+    taker: Identity | None = None
+    market_id: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Trade:
-        maker = Identity.from_dict(d["maker"]) if "maker" in d and d["maker"] else None
-        taker = Identity.from_dict(d["taker"]) if "taker" in d and d["taker"] else None
+        maker = Identity.from_dict(d["maker"]) if d.get("maker") else None
+        taker = Identity.from_dict(d["taker"]) if d.get("taker") else None
         return cls(
             trade_id=str(d.get("trade_id", "")),
             side=d.get("side", ""),
@@ -456,7 +451,7 @@ class DepthLevel:
 class DepthSnapshot:
     buys: list[DepthLevel]
     sells: list[DepthLevel]
-    market_id: Optional[str] = None
+    market_id: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> DepthSnapshot:
@@ -468,11 +463,11 @@ class DepthSnapshot:
         )
 
     @property
-    def best_bid(self) -> Optional[DepthLevel]:
+    def best_bid(self) -> DepthLevel | None:
         return self.buys[0] if self.buys else None
 
     @property
-    def best_ask(self) -> Optional[DepthLevel]:
+    def best_ask(self) -> DepthLevel | None:
         return self.sells[0] if self.sells else None
 
 
@@ -480,8 +475,8 @@ class DepthSnapshot:
 class DepthUpdate:
     changes: DepthSnapshot
     market_id: str
-    onchain_timestamp: Optional[str] = None
-    seen_timestamp: Optional[str] = None
+    onchain_timestamp: str | None = None
+    seen_timestamp: str | None = None
     is_snapshot: bool = False
 
     @classmethod
@@ -538,17 +533,17 @@ class Bar:
 
 @dataclass
 class ActionsResponse:
-    tx_id: Optional[str] = None
-    orders: Optional[list[Order]] = None
-    message: Optional[str] = None
-    reason: Optional[str] = None
-    receipts: Optional[list] = None
-    code: Optional[int] = None
+    tx_id: str | None = None
+    orders: list[Order] | None = None
+    message: str | None = None
+    reason: str | None = None
+    receipts: list | None = None
+    code: int | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> ActionsResponse:
         orders = None
-        if "orders" in d and d["orders"]:
+        if d.get("orders"):
             orders = [Order.from_dict(o) for o in d["orders"]]
         return cls(
             tx_id=d.get("tx_id"),
@@ -612,8 +607,8 @@ class MarketTicker:
 @dataclass
 class OrderUpdate:
     orders: list[Order]
-    onchain_timestamp: Optional[str] = None
-    seen_timestamp: Optional[str] = None
+    onchain_timestamp: str | None = None
+    seen_timestamp: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> OrderUpdate:
@@ -628,8 +623,8 @@ class OrderUpdate:
 class TradeUpdate:
     trades: list[Trade]
     market_id: str
-    onchain_timestamp: Optional[str] = None
-    seen_timestamp: Optional[str] = None
+    onchain_timestamp: str | None = None
+    seen_timestamp: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> TradeUpdate:
@@ -644,8 +639,8 @@ class TradeUpdate:
 @dataclass
 class BalanceUpdate:
     balance: list[dict]
-    onchain_timestamp: Optional[str] = None
-    seen_timestamp: Optional[str] = None
+    onchain_timestamp: str | None = None
+    seen_timestamp: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> BalanceUpdate:
@@ -660,8 +655,8 @@ class BalanceUpdate:
 class NonceUpdate:
     contract_id: str
     nonce: str
-    onchain_timestamp: Optional[str] = None
-    seen_timestamp: Optional[str] = None
+    onchain_timestamp: str | None = None
+    seen_timestamp: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> NonceUpdate:
@@ -680,8 +675,8 @@ class NonceUpdate:
 
 @dataclass
 class WithdrawResponse:
-    tx_id: Optional[str] = None
-    message: Optional[str] = None
+    tx_id: str | None = None
+    message: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> WithdrawResponse:
@@ -715,8 +710,8 @@ class WhitelistResponse:
 @dataclass
 class ReferralInfo:
     valid: bool
-    owner_address: Optional[str] = None
-    is_active: Optional[bool] = None
+    owner_address: str | None = None
+    is_active: bool | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> ReferralInfo:
@@ -729,8 +724,8 @@ class ReferralInfo:
 
 @dataclass
 class FaucetResponse:
-    message: Optional[str] = None
-    error: Optional[str] = None
+    message: str | None = None
+    error: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> FaucetResponse:

@@ -13,12 +13,7 @@ export class O2Error extends Error {
   readonly reason: string | undefined;
   readonly receipts: unknown[] | undefined;
 
-  constructor(
-    message: string,
-    code?: number,
-    reason?: string,
-    receipts?: unknown[]
-  ) {
+  constructor(message: string, code?: number, reason?: string, receipts?: unknown[]) {
     super(message);
     this.name = "O2Error";
     this.code = code;
@@ -301,7 +296,7 @@ export function parseApiError(body: Record<string, unknown>): O2Error {
  * Success: has tx_id. Error: has message but no tx_id.
  */
 export function isActionsSuccess(
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
 ): body is { tx_id: string } & Record<string, unknown> {
   return "tx_id" in body && body.tx_id != null;
 }

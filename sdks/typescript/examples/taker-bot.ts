@@ -9,14 +9,7 @@
  * Run: npx tsx examples/taker-bot.ts
  */
 
-import {
-  O2Client,
-  Network,
-  type Market,
-  type SessionState,
-  type DepthUpdate,
-  O2Error,
-} from "../src/index.js";
+import { Network, O2Client, O2Error } from "../src/index.js";
 
 // ── Configuration ─────────────────────────────────────────────────
 
@@ -47,19 +40,12 @@ async function main() {
   console.log(`Monitoring: ${market.base.symbol}/${market.quote.symbol}`);
 
   // Create session
-  const session = await client.createSession(
-    wallet,
-    tradeAccountId,
-    [market],
-    30
-  );
+  const session = await client.createSession(wallet, tradeAccountId, [market], 30);
 
   let currentSession = session;
 
   // Stream depth
-  console.log(
-    `Watching for asks below ${CONFIG.buyBelowPrice} ${market.quote.symbol}...`
-  );
+  console.log(`Watching for asks below ${CONFIG.buyBelowPrice} ${market.quote.symbol}...`);
   const depthStream = await client.streamDepth(market, 1);
 
   for await (const update of depthStream) {
@@ -67,11 +53,10 @@ async function main() {
     if (!sells || sells.length === 0) continue;
 
     const bestAsk = Number(sells[0].price) / 10 ** market.quote.decimals;
-    const bestAskQty =
-      Number(sells[0].quantity) / 10 ** market.base.decimals;
+    const bestAskQty = Number(sells[0].quantity) / 10 ** market.base.decimals;
 
     console.log(
-      `Best ask: ${bestAsk.toFixed(6)} ${market.quote.symbol} (qty: ${bestAskQty.toFixed(3)})`
+      `Best ask: ${bestAsk.toFixed(6)} ${market.quote.symbol} (qty: ${bestAskQty.toFixed(3)})`,
     );
 
     // Check if price meets our target
@@ -89,16 +74,12 @@ async function main() {
           Math.min(CONFIG.maxQuantity, bestAskQty),
           {
             BoundedMarket: {
-              max_price: scalePriceStr(
-                maxPrice,
-                market.quote.decimals,
-                market.quote.max_precision
-              ),
+              max_price: scalePriceStr(maxPrice, market.quote.decimals, market.quote.max_precision),
               min_price: "0",
             },
           },
           true,
-          true
+          true,
         );
 
         currentSession = updated;
@@ -107,7 +88,7 @@ async function main() {
         if (response.orders) {
           for (const order of response.orders) {
             console.log(
-              `  Order ${order.order_id}: ${order.side} ${order.quantity} @ ${order.price}`
+              `  Order ${order.order_id}: ${order.side} ${order.quantity} @ ${order.price}`,
             );
           }
         }
@@ -123,11 +104,7 @@ async function main() {
   }
 }
 
-function scalePriceStr(
-  price: number,
-  decimals: number,
-  maxPrecision: number
-): string {
+function scalePriceStr(price: number, decimals: number, maxPrecision: number): string {
   const scaled = BigInt(Math.floor(price * 10 ** decimals));
   const factor = BigInt(10 ** (decimals - maxPrecision));
   return ((scaled / factor) * factor).toString();
