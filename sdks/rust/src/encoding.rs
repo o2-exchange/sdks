@@ -254,6 +254,38 @@ pub fn settle_balance_to_call(
     }
 }
 
+/// Build the signing bytes for a withdrawal.
+///
+/// Layout:
+///   u64(nonce) + u64(chain_id) + u64(len("withdraw")) + "withdraw"
+///   + u64(to_discriminant) + to_address(32)
+///   + asset_id(32) + u64(amount)
+pub fn build_withdraw_signing_bytes(
+    nonce: u64,
+    chain_id: u64,
+    to_discriminant: u64,
+    to_address: &[u8; 32],
+    asset_id: &[u8; 32],
+    amount: u64,
+) -> Vec<u8> {
+    let func_name = b"withdraw";
+
+    let mut result = Vec::with_capacity(128);
+    result.extend_from_slice(&u64_be(nonce));
+    result.extend_from_slice(&u64_be(chain_id));
+    result.extend_from_slice(&u64_be(func_name.len() as u64));
+    result.extend_from_slice(func_name);
+    // to identity
+    result.extend_from_slice(&u64_be(to_discriminant));
+    result.extend_from_slice(to_address);
+    // asset_id
+    result.extend_from_slice(asset_id);
+    // amount
+    result.extend_from_slice(&u64_be(amount));
+
+    result
+}
+
 /// Convert a RegisterReferer action to a low-level CallArg.
 pub fn register_referer_to_call(
     accounts_registry_id: &[u8; 32],

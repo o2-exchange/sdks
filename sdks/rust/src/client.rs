@@ -14,8 +14,8 @@ use crate::crypto::{
     parse_hex_32, personal_sign, raw_sign, to_hex_string, EvmWallet, Wallet,
 };
 use crate::encoding::{
-    build_actions_signing_bytes, build_session_signing_bytes, cancel_order_to_call,
-    create_order_to_call, settle_balance_to_call, CallArg, OrderTypeEncoding,
+    build_actions_signing_bytes, build_session_signing_bytes, build_withdraw_signing_bytes,
+    cancel_order_to_call, create_order_to_call, settle_balance_to_call, CallArg, OrderTypeEncoding,
 };
 use crate::errors::O2Error;
 use crate::models::*;
@@ -363,6 +363,20 @@ impl O2Client {
     // Trading
     // -----------------------------------------------------------------------
 
+    /// Check if a session has expired and return an error if so.
+    fn check_session_expiry(session: &Session) -> Result<(), O2Error> {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        if session.expiry > 0 && now >= session.expiry {
+            return Err(O2Error::SessionExpired(
+                "Session has expired. Create a new session before submitting actions.".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Place a new order. Handles encoding, signing, and nonce management.
     ///
     /// If `settle_first` is true, a SettleBalance action is prepended.
@@ -378,6 +392,7 @@ impl O2Client {
         settle_first: bool,
         collect_orders: bool,
     ) -> Result<SessionActionsResponse, O2Error> {
+        Self::check_session_expiry(session)?;
         let market = self.get_market(market_name).await?;
         let contract_id = parse_hex_32(&market.contract_id)?;
         let base_asset = parse_hex_32(&market.base.asset)?;
@@ -479,6 +494,7 @@ impl O2Client {
         order_id: &str,
         market_name: &str,
     ) -> Result<SessionActionsResponse, O2Error> {
+        Self::check_session_expiry(session)?;
         let market = self.get_market(market_name).await?;
         let contract_id = parse_hex_32(&market.contract_id)?;
         let order_id_bytes = parse_hex_32(order_id)?;
@@ -517,6 +533,7 @@ impl O2Client {
         session: &mut Session,
         market_name: &str,
     ) -> Result<Vec<SessionActionsResponse>, O2Error> {
+        Self::check_session_expiry(session)?;
         let market = self.get_market(market_name).await?;
         let orders_resp = self
             .api
@@ -799,17 +816,76 @@ impl O2Client {
         to: Option<&str>,
     ) -> Result<WithdrawResponse, O2Error> {
         let owner_hex = to_hex_string(&owner.b256_address);
-        let to_address = to.unwrap_or(&owner_hex);
+        let to_address_hex = to.unwrap_or(&owner_hex);
+        let to_address_bytes = parse_hex_32(to_address_hex)?;
+        let asset_id_bytes = parse_hex_32(asset_id)?;
+        let amount_u64: u64 = amount
+            .parse()
+            .map_err(|e| O2Error::Other(format!("Invalid amount: {e}")))?;
 
-        // Withdrawal signing uses personalSign with the owner wallet
-        // The exact signing bytes for withdrawal are similar to session creation
         let nonce = self.get_nonce(&session.trade_account_id).await?;
+        let chain_id = self.get_chain_id().await?;
+
+        // Build withdraw signing bytes and sign with owner wallet (personalSign)
+        let signing_bytes = build_withdraw_signing_bytes(
+            nonce,
+            chain_id,
+            0, // Address discriminant
+            &to_address_bytes,
+            &asset_id_bytes,
+            amount_u64,
+        );
+        let signature = personal_sign(&owner.private_key, &signing_bytes)?;
+        let sig_hex = to_hex_string(&signature);
 
         let request = WithdrawRequest {
             trade_account_id: session.trade_account_id.clone(),
-            signature: Signature::Secp256k1("0x".to_string() + &"00".repeat(64)),
+            signature: Signature::Secp256k1(sig_hex),
             nonce: nonce.to_string(),
-            to: Identity::Address(to_address.to_string()),
+            to: Identity::Address(to_address_hex.to_string()),
+            asset_id: asset_id.to_string(),
+            amount: amount.to_string(),
+        };
+
+        self.api.withdraw(&owner_hex, &request).await
+    }
+
+    /// Withdraw assets from the trading account (EVM owner wallet).
+    pub async fn withdraw_evm(
+        &mut self,
+        owner: &EvmWallet,
+        session: &Session,
+        asset_id: &str,
+        amount: &str,
+        to: Option<&str>,
+    ) -> Result<WithdrawResponse, O2Error> {
+        let owner_hex = to_hex_string(&owner.b256_address);
+        let to_address_hex = to.unwrap_or(&owner_hex);
+        let to_address_bytes = parse_hex_32(to_address_hex)?;
+        let asset_id_bytes = parse_hex_32(asset_id)?;
+        let amount_u64: u64 = amount
+            .parse()
+            .map_err(|e| O2Error::Other(format!("Invalid amount: {e}")))?;
+
+        let nonce = self.get_nonce(&session.trade_account_id).await?;
+        let chain_id = self.get_chain_id().await?;
+
+        let signing_bytes = build_withdraw_signing_bytes(
+            nonce,
+            chain_id,
+            0,
+            &to_address_bytes,
+            &asset_id_bytes,
+            amount_u64,
+        );
+        let signature = evm_personal_sign(&owner.private_key, &signing_bytes)?;
+        let sig_hex = to_hex_string(&signature);
+
+        let request = WithdrawRequest {
+            trade_account_id: session.trade_account_id.clone(),
+            signature: Signature::Secp256k1(sig_hex),
+            nonce: nonce.to_string(),
+            to: Identity::Address(to_address_hex.to_string()),
             asset_id: asset_id.to_string(),
             amount: amount.to_string(),
         };

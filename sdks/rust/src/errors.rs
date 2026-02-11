@@ -104,6 +104,10 @@ pub enum O2Error {
         receipts: Option<serde_json::Value>,
     },
 
+    // Client-side errors
+    #[error("Session expired: {0}")]
+    SessionExpired(String),
+
     // Transport errors
     #[error("HTTP error: {0}")]
     HttpError(String),

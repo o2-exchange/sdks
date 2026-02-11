@@ -37,7 +37,8 @@ def encode_identity(discriminant: int, address_bytes: bytes) -> bytes:
 
     discriminant: 0 = Address, 1 = ContractId
     """
-    assert len(address_bytes) == 32, f"Address must be 32 bytes, got {len(address_bytes)}"
+    if len(address_bytes) != 32:
+        raise ValueError(f"Address must be 32 bytes, got {len(address_bytes)}")
     return u64_be(discriminant) + address_bytes
 
 
@@ -85,7 +86,8 @@ def encode_order_args(
     result += u64_be(quantity)
 
     if order_type == "Limit":
-        assert order_type_data is not None, "Limit order requires order_type_data"
+        if order_type_data is None:
+            raise ValueError("Limit order requires order_type_data")
         limit_price = int(order_type_data["price"])
         timestamp = int(order_type_data["timestamp"])
         result += u64_be(0) + u64_be(limit_price) + u64_be(timestamp)
@@ -98,7 +100,8 @@ def encode_order_args(
     elif order_type == "Market":
         result += u64_be(4)
     elif order_type == "BoundedMarket":
-        assert order_type_data is not None, "BoundedMarket order requires order_type_data"
+        if order_type_data is None:
+            raise ValueError("BoundedMarket order requires order_type_data")
         max_price = int(order_type_data["max_price"])
         min_price = int(order_type_data["min_price"])
         result += u64_be(5) + u64_be(max_price) + u64_be(min_price)

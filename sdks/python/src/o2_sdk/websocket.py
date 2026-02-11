@@ -144,6 +144,11 @@ class O2WebSocket:
             self._message_queues[key] = asyncio.Queue(maxsize=1000)
         return self._message_queues[key]
 
+    def _add_subscription(self, sub: dict) -> None:
+        """Add a subscription for reconnect tracking, deduplicating by content."""
+        if sub not in self._subscriptions:
+            self._subscriptions.append(sub)
+
     # -----------------------------------------------------------------------
     # Subscription methods
     # -----------------------------------------------------------------------
@@ -157,7 +162,7 @@ class O2WebSocket:
             "market_id": market_id,
             "precision": precision,
         }
-        self._subscriptions.append(sub)
+        self._add_subscription(sub)
         await self._send(sub)
         queue = self._get_queue("depth")
         while self._should_run:
@@ -170,7 +175,7 @@ class O2WebSocket:
     async def stream_orders(self, identities: list[dict]) -> AsyncIterator[OrderUpdate]:
         """Subscribe to order updates for the given identities."""
         sub = {"action": "subscribe_orders", "identities": identities}
-        self._subscriptions.append(sub)
+        self._add_subscription(sub)
         await self._send(sub)
         queue = self._get_queue("orders")
         while self._should_run:
@@ -182,7 +187,7 @@ class O2WebSocket:
     async def stream_trades(self, market_id: str) -> AsyncIterator[TradeUpdate]:
         """Subscribe to trade updates for the given market."""
         sub = {"action": "subscribe_trades", "market_id": market_id}
-        self._subscriptions.append(sub)
+        self._add_subscription(sub)
         await self._send(sub)
         queue = self._get_queue("trades")
         while self._should_run:
@@ -195,7 +200,7 @@ class O2WebSocket:
     async def stream_balances(self, identities: list[dict]) -> AsyncIterator[BalanceUpdate]:
         """Subscribe to balance updates for the given identities."""
         sub = {"action": "subscribe_balances", "identities": identities}
-        self._subscriptions.append(sub)
+        self._add_subscription(sub)
         await self._send(sub)
         queue = self._get_queue("balances")
         while self._should_run:
@@ -207,7 +212,7 @@ class O2WebSocket:
     async def stream_nonce(self, identities: list[dict]) -> AsyncIterator[NonceUpdate]:
         """Subscribe to nonce updates for the given identities."""
         sub = {"action": "subscribe_nonce", "identities": identities}
-        self._subscriptions.append(sub)
+        self._add_subscription(sub)
         await self._send(sub)
         queue = self._get_queue("nonce")
         while self._should_run:

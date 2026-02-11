@@ -11,7 +11,6 @@ async def main():
     # 1. Generate a wallet
     owner = client.generate_wallet()
     print(f"Owner address: {owner.b256_address}")
-    print(f"Private key: {owner.private_key.hex()}")
 
     # 2. Setup account (creates account, funds via faucet, whitelists)
     account = await client.setup_account(owner)

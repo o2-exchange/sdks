@@ -83,7 +83,7 @@ export class O2WebSocket {
               for (const handler of wildcardHandlers) handler(msg);
             }
           }
-        } catch {
+        } catch (_e: unknown) {
           // Ignore non-JSON messages (pong, etc.)
         }
       });
@@ -113,6 +113,11 @@ export class O2WebSocket {
     this.closing = true;
     this.stopPingInterval();
     this.pendingSubscriptions = [];
+    // Signal all active generators to stop before clearing handlers
+    const closeHandlers = this.handlers.get("__close__");
+    if (closeHandlers) {
+      for (const handler of closeHandlers) handler({});
+    }
     this.handlers.clear();
     if (this.ws) {
       this.ws.close();
@@ -219,8 +224,11 @@ export class O2WebSocket {
     subscription: Record<string, unknown>,
     actions: string[],
   ): AsyncGenerator<T> {
-    // Track for reconnection
-    this.pendingSubscriptions.push(subscription);
+    // Track for reconnection (deduplicate by content)
+    const subKey = JSON.stringify(subscription);
+    if (!this.pendingSubscriptions.some((s) => JSON.stringify(s) === subKey)) {
+      this.pendingSubscriptions.push(subscription);
+    }
 
     // Send subscription message
     this.send(subscription);
@@ -228,10 +236,19 @@ export class O2WebSocket {
     // Create a queue-based async generator
     const queue: T[] = [];
     let resolve: (() => void) | null = null;
-    const done = false;
+    let done = false;
 
     const handler = (msg: Record<string, unknown>) => {
       queue.push(msg as T);
+      if (resolve) {
+        resolve();
+        resolve = null;
+      }
+    };
+
+    // When the WebSocket disconnects or is cleaned up, signal the generator to stop
+    const closeHandler = () => {
+      done = true;
       if (resolve) {
         resolve();
         resolve = null;
@@ -247,6 +264,14 @@ export class O2WebSocket {
       }
       handlers.add(handler);
     }
+
+    // Register a close handler to break the loop on disconnect
+    let closeHandlers = this.handlers.get("__close__");
+    if (!closeHandlers) {
+      closeHandlers = new Set();
+      this.handlers.set("__close__", closeHandlers);
+    }
+    closeHandlers.add(closeHandler);
 
     try {
       while (!done) {
@@ -266,6 +291,11 @@ export class O2WebSocket {
           handlers.delete(handler);
           if (handlers.size === 0) this.handlers.delete(action);
         }
+      }
+      const cHandlers = this.handlers.get("__close__");
+      if (cHandlers) {
+        cHandlers.delete(closeHandler);
+        if (cHandlers.size === 0) this.handlers.delete("__close__");
       }
     }
   }

@@ -227,6 +227,15 @@ export class EventsNotFound extends O2Error {
   }
 }
 
+// ── Client-side errors ──────────────────────────────────────────────
+
+export class SessionExpired extends O2Error {
+  constructor(message = "Session has expired. Create a new session before submitting actions.") {
+    super(message);
+    this.name = "SessionExpired";
+  }
+}
+
 // ── On-chain revert error ───────────────────────────────────────────
 
 export class OnChainRevertError extends O2Error {

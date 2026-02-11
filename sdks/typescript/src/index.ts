@@ -89,6 +89,7 @@ export {
   ParseError,
   parseApiError,
   RateLimitExceeded,
+  SessionExpired,
   SubscriptionError,
   TooManyActions,
   TooManySubscriptions,

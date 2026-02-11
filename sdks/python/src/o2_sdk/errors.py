@@ -198,6 +198,13 @@ class EventsNotFound(O2Error):
     pass
 
 
+# Client-side errors
+class SessionExpired(O2Error):
+    """Client-side: session has expired. Create a new session."""
+
+    pass
+
+
 # On-chain revert error (no code, has message + reason)
 class OnChainRevert(O2Error):
     """On-chain transaction revert (no error code)."""

@@ -29,7 +29,7 @@ from .encoding import (
     build_actions_signing_bytes,
     build_session_signing_bytes,
 )
-from .errors import O2Error
+from .errors import O2Error, SessionExpired
 from .models import (
     AccountInfo,
     ActionsResponse,
@@ -77,6 +77,12 @@ class O2Client:
         await self.api.close()
         if self._ws:
             await self._ws.disconnect()
+
+    async def __aenter__(self) -> O2Client:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
 
     # -----------------------------------------------------------------------
     # Wallet management
@@ -222,7 +228,8 @@ class O2Client:
         resp = await self.api.create_session(owner.b256_address, session_request)
 
         # Cache the nonce (session creation increments it)
-        assert account.trade_account_id is not None, "Account must have a trade_account_id"
+        if account.trade_account_id is None:
+            raise O2Error(message="Account must have a trade_account_id")
         self._nonce_cache[account.trade_account_id] = nonce + 1
 
         return SessionInfo(
@@ -385,6 +392,17 @@ class O2Client:
             actions: List of market-grouped actions
             collect_orders: If True, return created order details
         """
+        # Check session expiry before submitting on-chain
+        if session.session_expiry:
+            try:
+                expiry_ts = int(session.session_expiry)
+                if time.time() >= expiry_ts:
+                    raise SessionExpired(
+                        message="Session has expired. Create a new session before submitting actions."
+                    )
+            except ValueError:
+                pass  # Non-numeric expiry format, skip check
+
         markets_resp = await self._get_markets_cached()
 
         # Get current nonce
@@ -401,7 +419,8 @@ class O2Client:
 
         # Build signing bytes and sign with session key
         signing_bytes = build_actions_signing_bytes(nonce, calls)
-        assert session.session_private_key is not None, "Session must have a private key"
+        if session.session_private_key is None:
+            raise O2Error(message="Session must have a private key")
         signature = raw_sign(session.session_private_key, signing_bytes)
 
         # Submit
@@ -414,7 +433,8 @@ class O2Client:
             "collect_orders": collect_orders,
         }
 
-        assert session.owner_address is not None, "Session must have an owner address"
+        if session.owner_address is None:
+            raise O2Error(message="Session must have an owner address")
         try:
             result = await self.api.submit_actions(session.owner_address, request)
             # Increment nonce on success

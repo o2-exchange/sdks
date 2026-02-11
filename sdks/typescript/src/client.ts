@@ -30,7 +30,7 @@ import {
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
-import { O2Error } from "./errors.js";
+import { O2Error, SessionExpired } from "./errors.js";
 import type {
   ActionPayload,
   BalanceResponse,
@@ -134,15 +134,15 @@ export class O2Client {
     if (this.config.faucetUrl) {
       try {
         await this.api.mintToContract(tradeAccountId);
-      } catch {
-        // Faucet cooldown or error — not fatal
+      } catch (_e: unknown) {
+        // Faucet cooldown or error — not fatal for idempotent setup
       }
     }
 
     // 4. Whitelist (idempotent — returns alreadyWhitelisted:true on repeat)
     try {
       await this.api.whitelistAccount(tradeAccountId);
-    } catch {
+    } catch (_e: unknown) {
       // Whitelist error — not fatal on repeat calls
     }
 
@@ -408,6 +408,11 @@ export class O2Client {
     accountsRegistryId: string,
     collectOrders = false,
   ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+    // Check session expiry before submitting on-chain
+    if (session.expiry > 0 && Math.floor(Date.now() / 1000) >= session.expiry) {
+      throw new SessionExpired();
+    }
+
     const marketInfo: MarketInfo = {
       contractId: market.contract_id,
       marketId: market.market_id,
@@ -461,7 +466,7 @@ export class O2Client {
         if (info.trade_account) {
           session.nonce = BigInt(info.trade_account.nonce);
         }
-      } catch {
+      } catch (_e: unknown) {
         // If re-fetch fails, keep incremented nonce
       }
       throw error;
@@ -531,8 +536,8 @@ export class O2Client {
           contract: tradeAccountId,
         });
         result[symbol] = balance;
-      } catch {
-        // Skip assets that fail
+      } catch (_e: unknown) {
+        // Skip assets that fail (e.g. zero balance returns 404)
       }
     }
 
@@ -606,6 +611,12 @@ export class O2Client {
       this.wsClient.disconnect();
       this.wsClient = null;
     }
+  }
+
+  /** Close all connections and release resources. */
+  close(): void {
+    this.disconnectWs();
+    this.marketsCache = null;
   }
 
   // ── Withdrawals ─────────────────────────────────────────────────

@@ -45,7 +45,6 @@ async def main():
     else:
         owner = client.generate_wallet()
         logger.info("Generated wallet: %s", owner.b256_address)
-        logger.info("Private key: %s", owner.private_key.hex())
 
     # Setup account (idempotent)
     account = await client.setup_account(owner)

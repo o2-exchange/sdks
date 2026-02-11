@@ -40,6 +40,8 @@ export interface O2ApiOptions {
   config: NetworkConfig;
   maxRetries?: number;
   retryDelayMs?: number;
+  /** Request timeout in milliseconds (default: 30000). */
+  timeoutMs?: number;
 }
 
 export class O2Api {
@@ -47,12 +49,14 @@ export class O2Api {
   private readonly faucetUrl: string | null;
   private readonly maxRetries: number;
   private readonly retryDelayMs: number;
+  private readonly timeoutMs: number;
 
   constructor(options: O2ApiOptions) {
     this.baseUrl = options.config.apiBase;
     this.faucetUrl = options.config.faucetUrl;
     this.maxRetries = options.maxRetries ?? 3;
     this.retryDelayMs = options.retryDelayMs ?? 1000;
+    this.timeoutMs = options.timeoutMs ?? 30_000;
   }
 
   // ── Internal HTTP helpers ───────────────────────────────────────
@@ -84,12 +88,16 @@ export class O2Api {
     let lastError: Error | undefined;
 
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
         const resp = await fetch(url, {
           method,
           headers,
           body: options.body ? JSON.stringify(options.body) : undefined,
+          signal: controller.signal,
         });
+        clearTimeout(timeoutId);
 
         const body = (await resp.json()) as Record<string, unknown>;
 
@@ -106,6 +114,7 @@ export class O2Api {
 
         return body as T;
       } catch (error) {
+        clearTimeout(timeoutId);
         if (error instanceof O2Error) throw error;
         lastError = error as Error;
         if (attempt < this.maxRetries) {
@@ -350,24 +359,38 @@ export class O2Api {
     if (!this.faucetUrl) {
       throw new O2Error("Faucet is not available on this network");
     }
-    const resp = await fetch(this.faucetUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ address }),
-    });
-    return (await resp.json()) as FaucetResponse;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const resp = await fetch(this.faucetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+        signal: controller.signal,
+      });
+      return (await resp.json()) as FaucetResponse;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   async mintToContract(contractId: string): Promise<FaucetResponse> {
     if (!this.faucetUrl) {
       throw new O2Error("Faucet is not available on this network");
     }
-    const resp = await fetch(this.faucetUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ contract: contractId }),
-    });
-    return (await resp.json()) as FaucetResponse;
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const resp = await fetch(this.faucetUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contract: contractId }),
+        signal: controller.signal,
+      });
+      return (await resp.json()) as FaucetResponse;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 }
 
