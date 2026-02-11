@@ -281,10 +281,12 @@ export class O2Api {
   }
 
   async getOrder(marketId: string, orderId: string): Promise<Order> {
-    return this.get<Order>("/v1/order", {
+    const data = await this.get<{ order?: Order } & Order>("/v1/order", {
       market_id: marketId,
       order_id: orderId,
     });
+    // API wraps order in an "order" key
+    return (data as any).order ?? data;
   }
 
   // ── Session Management ──────────────────────────────────────────

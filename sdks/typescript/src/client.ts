@@ -1,0 +1,783 @@
+/**
+ * High-level O2Client for the O2 Exchange.
+ *
+ * Orchestrates wallet management, account lifecycle, session management,
+ * trading, market data, and WebSocket streaming.
+ */
+
+import { Network, getNetworkConfig, type NetworkConfig } from "./config.js";
+import { O2Api } from "./api.js";
+import { O2WebSocket } from "./websocket.js";
+import {
+  generateWallet,
+  walletFromPrivateKey,
+  generateEvmWallet,
+  evmWalletFromPrivateKey,
+  personalSign,
+  rawSign,
+  evmPersonalSign,
+  bytesToHex,
+  hexToBytes,
+  type Wallet,
+  type EvmWallet,
+} from "./crypto.js";
+import {
+  buildSessionSigningBytes,
+  buildActionsSigningBytes,
+  actionToCall,
+  scalePrice,
+  scaleQuantity,
+  formatDecimal,
+  validateFractionalPrice,
+  validateMinOrder,
+  GAS_MAX,
+  type ActionJSON,
+  type MarketInfo,
+  type ContractCall,
+} from "./encoding.js";
+import type {
+  Market,
+  MarketsResponse,
+  DepthSnapshot,
+  Trade,
+  Bar,
+  Order,
+  OrdersResponse,
+  BalanceResponse,
+  SessionActionsResponse,
+  DepthUpdate,
+  OrderUpdate,
+  TradeUpdate,
+  BalanceUpdate,
+  NonceUpdate,
+  SessionState,
+  WalletState,
+  OrderType,
+  FaucetResponse,
+  Identity,
+  MarketActions,
+  ActionPayload,
+  WhitelistResponse,
+} from "./models.js";
+import { O2Error, AccountNotFound } from "./errors.js";
+
+export interface O2ClientOptions {
+  network?: Network;
+  config?: NetworkConfig;
+}
+
+export class O2Client {
+  readonly api: O2Api;
+  private wsClient: O2WebSocket | null = null;
+  private readonly config: NetworkConfig;
+  private marketsCache: MarketsResponse | null = null;
+  private marketsCacheTime = 0;
+
+  constructor(options: O2ClientOptions = {}) {
+    this.config = options.config ?? getNetworkConfig(options.network ?? Network.TESTNET);
+    this.api = new O2Api({ config: this.config });
+  }
+
+  // ── Wallet management ───────────────────────────────────────────
+
+  generateWallet(): WalletState {
+    const w = generateWallet();
+    return { privateKey: w.privateKey, b256Address: w.b256Address, isEvm: false };
+  }
+
+  generateEvmWallet(): WalletState {
+    const w = generateEvmWallet();
+    return {
+      privateKey: w.privateKey,
+      b256Address: w.b256Address,
+      isEvm: true,
+      evmAddress: w.evmAddress,
+    };
+  }
+
+  loadWallet(privateKeyHex: string): WalletState {
+    const w = walletFromPrivateKey(privateKeyHex);
+    return { privateKey: w.privateKey, b256Address: w.b256Address, isEvm: false };
+  }
+
+  loadEvmWallet(privateKeyHex: string): WalletState {
+    const w = evmWalletFromPrivateKey(privateKeyHex);
+    return {
+      privateKey: w.privateKey,
+      b256Address: w.b256Address,
+      isEvm: true,
+      evmAddress: w.evmAddress,
+    };
+  }
+
+  // ── Account lifecycle ───────────────────────────────────────────
+
+  /**
+   * Idempotent account setup. Safe to call on every bot startup.
+   *
+   * 1. Check if account exists
+   * 2. Create if needed
+   * 3. Mint via faucet (testnet/devnet) - non-fatal on cooldown
+   * 4. Whitelist account
+   * 5. Return trade_account_id
+   */
+  async setupAccount(
+    wallet: WalletState
+  ): Promise<{ tradeAccountId: string; nonce: bigint }> {
+    // 1. Check if account already exists
+    const existing = await this.api.getAccount({ owner: wallet.b256Address });
+
+    let tradeAccountId: string;
+
+    if (existing.trade_account_id) {
+      tradeAccountId = existing.trade_account_id;
+    } else {
+      // 2. Create account
+      const created = await this.api.createAccount({
+        Address: wallet.b256Address,
+      });
+      tradeAccountId = created.trade_account_id;
+    }
+
+    // 3. Mint via faucet if available (non-fatal)
+    if (this.config.faucetUrl) {
+      try {
+        await this.api.mintToContract(tradeAccountId);
+      } catch {
+        // Faucet cooldown or error — not fatal
+      }
+    }
+
+    // 4. Whitelist (idempotent — returns alreadyWhitelisted:true on repeat)
+    try {
+      await this.api.whitelistAccount(tradeAccountId);
+    } catch {
+      // Whitelist error — not fatal on repeat calls
+    }
+
+    // 5. Get current nonce
+    const info = await this.api.getAccount({ tradeAccountId });
+    const nonce = BigInt(info.trade_account?.nonce ?? "0");
+
+    return { tradeAccountId, nonce };
+  }
+
+  // ── Session management ──────────────────────────────────────────
+
+  /**
+   * Create a trading session.
+   *
+   * 1. Resolve market names to contract_ids
+   * 2. Generate session keypair
+   * 3. Build session signing bytes
+   * 4. Sign with owner wallet
+   * 5. Submit PUT /v1/session
+   */
+  async createSession(
+    wallet: WalletState,
+    tradeAccountId: string,
+    markets: string[] | Market[],
+    expiryDays = 30
+  ): Promise<SessionState> {
+    // Resolve markets
+    const marketsData = await this.fetchMarkets();
+    const resolvedMarkets = markets.map((m) => {
+      if (typeof m === "string") return this.resolveMarket(marketsData, m);
+      return m;
+    });
+    const contractIds = resolvedMarkets.map((m) => m.contract_id);
+
+    // Parse chain_id
+    const chainId = BigInt(
+      marketsData.chain_id.startsWith("0x")
+        ? parseInt(marketsData.chain_id, 16)
+        : marketsData.chain_id
+    );
+
+    // Generate session keypair
+    const sessionWallet = generateWallet();
+
+    // Get current nonce
+    const info = await this.api.getAccount({ tradeAccountId });
+    const nonce = BigInt(info.trade_account?.nonce ?? "0");
+
+    // Calculate expiry
+    const expiry = BigInt(
+      Math.floor(Date.now() / 1000) + expiryDays * 24 * 60 * 60
+    );
+
+    // Build signing bytes
+    const contractIdBytes = contractIds.map((id) => hexToBytes(id));
+    const signingBytes = buildSessionSigningBytes(
+      nonce,
+      chainId,
+      hexToBytes(sessionWallet.b256Address),
+      contractIdBytes,
+      expiry
+    );
+
+    // Sign with owner wallet
+    const signature = wallet.isEvm
+      ? evmPersonalSign(wallet.privateKey, signingBytes)
+      : personalSign(wallet.privateKey, signingBytes);
+
+    // Submit
+    const resp = await this.api.createSession(wallet.b256Address, {
+      contract_id: tradeAccountId,
+      session_id: { Address: sessionWallet.b256Address },
+      signature: { Secp256k1: bytesToHex(signature) },
+      contract_ids: contractIds,
+      nonce: nonce.toString(),
+      expiry: expiry.toString(),
+    });
+
+    return {
+      ownerAddress: wallet.b256Address,
+      tradeAccountId,
+      sessionPrivateKey: sessionWallet.privateKey,
+      sessionAddress: sessionWallet.b256Address,
+      contractIds,
+      expiry: Number(expiry),
+      nonce: nonce + 1n, // Nonce increments after session creation
+      isEvm: wallet.isEvm,
+    };
+  }
+
+  // ── Trading ─────────────────────────────────────────────────────
+
+  /**
+   * Create an order with automatic encoding, signing, and nonce management.
+   * Optionally prepends SettleBalance and appends collect_orders.
+   */
+  async createOrder(
+    session: SessionState,
+    market: string | Market,
+    side: "Buy" | "Sell",
+    price: number,
+    quantity: number,
+    orderType: OrderType = "Spot",
+    settleFirst = true,
+    collectOrders = true
+  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+    const marketsData = await this.fetchMarkets();
+    const resolved =
+      typeof market === "string"
+        ? this.resolveMarket(marketsData, market)
+        : market;
+
+    // Scale price and quantity
+    const scaledPrice = scalePrice(
+      price,
+      resolved.quote.decimals,
+      resolved.quote.max_precision
+    );
+    const scaledQuantity = scaleQuantity(
+      quantity,
+      resolved.base.decimals,
+      resolved.base.max_precision
+    );
+
+    // Validate FractionalPrice
+    if (
+      !validateFractionalPrice(
+        scaledPrice,
+        scaledQuantity,
+        resolved.base.decimals
+      )
+    ) {
+      // Adjust quantity to satisfy constraint
+      const factor = BigInt(10 ** resolved.base.decimals);
+      const product = scaledPrice * scaledQuantity;
+      const remainder = product % factor;
+      if (remainder !== 0n) {
+        throw new O2Error(
+          `FractionalPrice: (price * quantity) % 10^${resolved.base.decimals} != 0. ` +
+            `Adjust quantity to satisfy this constraint.`
+        );
+      }
+    }
+
+    // Validate min_order
+    if (
+      !validateMinOrder(
+        scaledPrice,
+        scaledQuantity,
+        resolved.base.decimals,
+        BigInt(resolved.min_order)
+      )
+    ) {
+      throw new O2Error(
+        `Order value below min_order. ` +
+          `(price * quantity) / 10^${resolved.base.decimals} must be >= ${resolved.min_order}`
+      );
+    }
+
+    // Build actions
+    const actions: ActionPayload[] = [];
+
+    if (settleFirst) {
+      actions.push({
+        SettleBalance: {
+          to: { ContractId: session.tradeAccountId },
+        },
+      });
+    }
+
+    actions.push({
+      CreateOrder: {
+        side,
+        price: scaledPrice.toString(),
+        quantity: scaledQuantity.toString(),
+        order_type: orderType,
+      },
+    });
+
+    return this.batchActions(
+      session,
+      [{ market_id: resolved.market_id, actions }],
+      resolved,
+      marketsData.accounts_registry_id,
+      collectOrders
+    );
+  }
+
+  /** Cancel an order. */
+  async cancelOrder(
+    session: SessionState,
+    orderId: string,
+    market: string | Market
+  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+    const marketsData = await this.fetchMarkets();
+    const resolved =
+      typeof market === "string"
+        ? this.resolveMarket(marketsData, market)
+        : market;
+
+    return this.batchActions(
+      session,
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [{ CancelOrder: { order_id: orderId } }],
+        },
+      ],
+      resolved,
+      marketsData.accounts_registry_id
+    );
+  }
+
+  /** Cancel all open orders for a market. */
+  async cancelAllOrders(
+    session: SessionState,
+    market: string | Market
+  ): Promise<{ response: SessionActionsResponse; session: SessionState } | null> {
+    const marketsData = await this.fetchMarkets();
+    const resolved =
+      typeof market === "string"
+        ? this.resolveMarket(marketsData, market)
+        : market;
+
+    const orders = await this.api.getOrders(
+      resolved.market_id,
+      session.tradeAccountId,
+      "desc",
+      200,
+      true
+    );
+
+    if (orders.orders.length === 0) return null;
+
+    // Max 5 actions per batch
+    const cancelActions: ActionPayload[] = orders.orders
+      .slice(0, 5)
+      .map((o) => ({
+        CancelOrder: { order_id: o.order_id },
+      }));
+
+    return this.batchActions(
+      session,
+      [{ market_id: resolved.market_id, actions: cancelActions }],
+      resolved,
+      marketsData.accounts_registry_id
+    );
+  }
+
+  /** Settle balance for a market. */
+  async settleBalance(
+    session: SessionState,
+    market: string | Market
+  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+    const marketsData = await this.fetchMarkets();
+    const resolved =
+      typeof market === "string"
+        ? this.resolveMarket(marketsData, market)
+        : market;
+
+    return this.batchActions(
+      session,
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            {
+              SettleBalance: {
+                to: { ContractId: session.tradeAccountId },
+              },
+            },
+          ],
+        },
+      ],
+      resolved,
+      marketsData.accounts_registry_id
+    );
+  }
+
+  /**
+   * Submit a batch of raw actions. Advanced interface.
+   * Handles encoding, signing, nonce management.
+   */
+  async batchActions(
+    session: SessionState,
+    marketActions: MarketActions[],
+    market: Market,
+    accountsRegistryId: string,
+    collectOrders = false
+  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+    const marketInfo: MarketInfo = {
+      contractId: market.contract_id,
+      marketId: market.market_id,
+      base: {
+        asset: market.base.asset,
+        decimals: market.base.decimals,
+        maxPrecision: market.base.max_precision,
+        symbol: market.base.symbol,
+      },
+      quote: {
+        asset: market.quote.asset,
+        decimals: market.quote.decimals,
+        maxPrecision: market.quote.max_precision,
+        symbol: market.quote.symbol,
+      },
+    };
+
+    // Convert high-level actions to low-level calls
+    const calls: ContractCall[] = [];
+    for (const group of marketActions) {
+      for (const action of group.actions) {
+        calls.push(
+          actionToCall(action as ActionJSON, marketInfo, accountsRegistryId)
+        );
+      }
+    }
+
+    // Build signing bytes and sign
+    const signingBytes = buildActionsSigningBytes(session.nonce, calls);
+    const signature = rawSign(session.sessionPrivateKey, signingBytes);
+
+    try {
+      const response = await this.api.submitActions(session.ownerAddress, {
+        actions: marketActions,
+        signature: { Secp256k1: bytesToHex(signature) },
+        nonce: session.nonce.toString(),
+        trade_account_id: session.tradeAccountId,
+        session_id: { Address: session.sessionAddress },
+        collect_orders: collectOrders,
+      });
+
+      // Increment nonce on success
+      session.nonce += 1n;
+      return { response, session };
+    } catch (error) {
+      // Nonce increments on-chain even on revert
+      session.nonce += 1n;
+      // Re-fetch nonce on error for resync
+      try {
+        const info = await this.api.getAccount({
+          tradeAccountId: session.tradeAccountId,
+        });
+        if (info.trade_account) {
+          session.nonce = BigInt(info.trade_account.nonce);
+        }
+      } catch {
+        // If re-fetch fails, keep incremented nonce
+      }
+      throw error;
+    }
+  }
+
+  // ── Market data ─────────────────────────────────────────────────
+
+  async getMarkets(): Promise<Market[]> {
+    const data = await this.fetchMarkets();
+    return data.markets;
+  }
+
+  async getMarket(symbolPair: string): Promise<Market> {
+    const data = await this.fetchMarkets();
+    return this.resolveMarket(data, symbolPair);
+  }
+
+  async getDepth(
+    market: string | Market,
+    precision = 10
+  ): Promise<DepthSnapshot> {
+    const marketId =
+      typeof market === "string"
+        ? (await this.getMarket(market)).market_id
+        : market.market_id;
+    return this.api.getDepth(marketId, precision);
+  }
+
+  async getTrades(market: string | Market, count = 50): Promise<Trade[]> {
+    const marketId =
+      typeof market === "string"
+        ? (await this.getMarket(market)).market_id
+        : market.market_id;
+    return this.api.getTrades(marketId, "desc", count);
+  }
+
+  async getBars(
+    market: string | Market,
+    resolution: string,
+    from: number,
+    to: number
+  ): Promise<Bar[]> {
+    const marketId =
+      typeof market === "string"
+        ? (await this.getMarket(market)).market_id
+        : market.market_id;
+    return this.api.getBars(marketId, from, to, resolution);
+  }
+
+  async getTicker(market: string | Market) {
+    const marketId =
+      typeof market === "string"
+        ? (await this.getMarket(market)).market_id
+        : market.market_id;
+    return this.api.getMarketTicker(marketId);
+  }
+
+  // ── Account data ────────────────────────────────────────────────
+
+  /**
+   * Get balances for a trade account, keyed by symbol.
+   */
+  async getBalances(
+    tradeAccountId: string
+  ): Promise<Record<string, BalanceResponse>> {
+    const marketsData = await this.fetchMarkets();
+    const result: Record<string, BalanceResponse> = {};
+
+    // Collect unique assets
+    const assets = new Map<string, string>();
+    for (const m of marketsData.markets) {
+      assets.set(m.base.asset, m.base.symbol);
+      assets.set(m.quote.asset, m.quote.symbol);
+    }
+
+    for (const [assetId, symbol] of assets) {
+      try {
+        const balance = await this.api.getBalance(assetId, {
+          contract: tradeAccountId,
+        });
+        result[symbol] = balance;
+      } catch {
+        // Skip assets that fail
+      }
+    }
+
+    return result;
+  }
+
+  async getOrders(
+    tradeAccountId: string,
+    market: string | Market,
+    isOpen?: boolean,
+    count = 20
+  ): Promise<Order[]> {
+    const resolved =
+      typeof market === "string" ? await this.getMarket(market) : market;
+    const resp = await this.api.getOrders(
+      resolved.market_id,
+      tradeAccountId,
+      "desc",
+      count,
+      isOpen
+    );
+    return resp.orders;
+  }
+
+  async getOrder(market: string | Market, orderId: string): Promise<Order> {
+    const resolved =
+      typeof market === "string" ? await this.getMarket(market) : market;
+    return this.api.getOrder(resolved.market_id, orderId);
+  }
+
+  // ── WebSocket streaming ─────────────────────────────────────────
+
+  private async ensureWs(): Promise<O2WebSocket> {
+    if (!this.wsClient) {
+      this.wsClient = new O2WebSocket({ config: this.config });
+      await this.wsClient.connect();
+    }
+    return this.wsClient;
+  }
+
+  async streamDepth(
+    market: string | Market,
+    precision = 10
+  ): Promise<AsyncGenerator<DepthUpdate>> {
+    const ws = await this.ensureWs();
+    const marketId =
+      typeof market === "string"
+        ? (await this.getMarket(market)).market_id
+        : market.market_id;
+    return ws.streamDepth(marketId, precision);
+  }
+
+  async streamOrders(
+    tradeAccountId: string
+  ): Promise<AsyncGenerator<OrderUpdate>> {
+    const ws = await this.ensureWs();
+    return ws.streamOrders([{ ContractId: tradeAccountId }]);
+  }
+
+  async streamTrades(
+    market: string | Market
+  ): Promise<AsyncGenerator<TradeUpdate>> {
+    const ws = await this.ensureWs();
+    const marketId =
+      typeof market === "string"
+        ? (await this.getMarket(market)).market_id
+        : market.market_id;
+    return ws.streamTrades(marketId);
+  }
+
+  async streamBalances(
+    tradeAccountId: string
+  ): Promise<AsyncGenerator<BalanceUpdate>> {
+    const ws = await this.ensureWs();
+    return ws.streamBalances([{ ContractId: tradeAccountId }]);
+  }
+
+  async streamNonce(
+    tradeAccountId: string
+  ): Promise<AsyncGenerator<NonceUpdate>> {
+    const ws = await this.ensureWs();
+    return ws.streamNonce([{ ContractId: tradeAccountId }]);
+  }
+
+  /** Disconnect WebSocket if connected. */
+  disconnectWs(): void {
+    if (this.wsClient) {
+      this.wsClient.disconnect();
+      this.wsClient = null;
+    }
+  }
+
+  // ── Withdrawals ─────────────────────────────────────────────────
+
+  /**
+   * Withdraw funds from trading account to owner wallet.
+   * Requires the owner wallet (not session).
+   */
+  async withdraw(
+    wallet: WalletState,
+    tradeAccountId: string,
+    assetId: string,
+    amount: string,
+    to?: Identity
+  ) {
+    // Get current nonce
+    const info = await this.api.getAccount({ tradeAccountId });
+    const nonce = BigInt(info.trade_account?.nonce ?? "0");
+
+    // Build withdraw signing bytes (same as set_session pattern)
+    const destination = to ?? { Address: wallet.b256Address };
+
+    // Sign with owner wallet
+    // NOTE: The withdraw signing uses personalSign for Fuel, evmPersonalSign for EVM
+    const signingMessage = new TextEncoder().encode(
+      JSON.stringify({
+        trade_account_id: tradeAccountId,
+        nonce: nonce.toString(),
+        to: destination,
+        asset_id: assetId,
+        amount,
+      })
+    );
+
+    const signature = wallet.isEvm
+      ? evmPersonalSign(wallet.privateKey, signingMessage)
+      : personalSign(wallet.privateKey, signingMessage);
+
+    return this.api.withdraw(wallet.b256Address, {
+      trade_account_id: tradeAccountId,
+      signature: { Secp256k1: bytesToHex(signature) },
+      nonce: nonce.toString(),
+      to: destination,
+      asset_id: assetId,
+      amount,
+    });
+  }
+
+  // ── Nonce management ────────────────────────────────────────────
+
+  async getNonce(tradeAccountId: string): Promise<bigint> {
+    const info = await this.api.getAccount({ tradeAccountId });
+    return BigInt(info.trade_account?.nonce ?? "0");
+  }
+
+  async refreshNonce(session: SessionState): Promise<bigint> {
+    const nonce = await this.getNonce(session.tradeAccountId);
+    session.nonce = nonce;
+    return nonce;
+  }
+
+  // ── Internal helpers ────────────────────────────────────────────
+
+  private async fetchMarkets(): Promise<MarketsResponse> {
+    const now = Date.now();
+    // Cache for 60 seconds
+    if (this.marketsCache && now - this.marketsCacheTime < 60_000) {
+      return this.marketsCache;
+    }
+    this.marketsCache = await this.api.getMarkets();
+    this.marketsCacheTime = now;
+    return this.marketsCache;
+  }
+
+  private resolveMarket(data: MarketsResponse, symbolPair: string): Market {
+    // Accept hex market_id
+    if (symbolPair.startsWith("0x")) {
+      const found = data.markets.find((m) => m.market_id === symbolPair);
+      if (found) return found;
+      throw new O2Error(`Market not found: ${symbolPair}`);
+    }
+
+    // Accept "BASE/QUOTE" format
+    const [baseSymbol, quoteSymbol] = symbolPair.split("/");
+    const found = data.markets.find(
+      (m) =>
+        m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() &&
+        m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase()
+    );
+
+    if (!found) {
+      // Try case-insensitive with f-prefix variants
+      const altFound = data.markets.find(
+        (m) =>
+          (m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() ||
+            m.base.symbol.toLowerCase() === `f${baseSymbol.toLowerCase()}`) &&
+          (m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase() ||
+            m.quote.symbol.toLowerCase() === `f${quoteSymbol.toLowerCase()}`)
+      );
+      if (altFound) return altFound;
+      throw new O2Error(
+        `Market not found: ${symbolPair}. Available: ${data.markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`
+      );
+    }
+
+    return found;
+  }
+}

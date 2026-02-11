@@ -299,7 +299,12 @@ impl O2Api {
             self.config.api_base, market_id, order_id
         );
         let resp = self.client.get(&url).send().await?;
-        self.parse_response(resp).await
+        let val: serde_json::Value = self.parse_response(resp).await?;
+        // API wraps order in an "order" key
+        let order_val = val.get("order").unwrap_or(&val);
+        serde_json::from_value(order_val.clone()).map_err(|e| {
+            O2Error::JsonError(format!("Failed to parse order: {e}"))
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -341,9 +346,34 @@ impl O2Api {
             .await?;
 
         let text = resp.text().await?;
-        let parsed: SessionActionsResponse = serde_json::from_str(&text).map_err(|e| {
-            O2Error::JsonError(format!("Failed to parse actions response: {e}\nBody: {}", &text[..text.len().min(500)]))
+
+        // Parse as Value first for robustness, then extract fields.
+        // The Order struct can have unexpected field types across API versions,
+        // so we parse orders separately with a fallback.
+        let val: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+            O2Error::JsonError(format!(
+                "Failed to parse actions response JSON: {e}\nBody: {}",
+                &text[..text.len().min(500)]
+            ))
         })?;
+
+        let tx_id = val.get("tx_id").and_then(|v| v.as_str()).map(String::from);
+        let code = val.get("code").and_then(|v| v.as_u64()).map(|v| v as u32);
+        let message = val.get("message").and_then(|v| v.as_str()).map(String::from);
+        let reason = val.get("reason").and_then(|v| v.as_str()).map(String::from);
+        let receipts = val.get("receipts").cloned();
+        let orders = val.get("orders").and_then(|o| {
+            serde_json::from_value::<Vec<Order>>(o.clone()).ok()
+        });
+
+        let parsed = SessionActionsResponse {
+            tx_id,
+            orders,
+            code,
+            message,
+            reason,
+            receipts,
+        };
 
         // Check for errors
         if parsed.is_success() {

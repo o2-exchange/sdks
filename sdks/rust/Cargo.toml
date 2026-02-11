@@ -24,6 +24,8 @@ url = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full", "test-util"] }
+serial_test = "3"
+futures-util = "0.3"
 
 [[example]]
 name = "quickstart"

@@ -13,12 +13,10 @@ jobs:
   python-integration:
     name: Python Integration
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: sdks/python
-    env:
-      O2_PRIVATE_KEY: ${{ secrets.O2_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,18 +25,17 @@ jobs:
           cache: pip
           cache-dependency-path: sdks/python/pyproject.toml
       - run: pip install -e ".[dev]"
-      - run: pytest tests/test_integration.py -m integration -v --timeout=120
+      - run: pytest tests/test_integration.py -m integration -v --timeout=600
 
   typescript-integration:
     name: TypeScript Integration
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: sdks/typescript
     env:
       O2_INTEGRATION: "1"
-      O2_PRIVATE_KEY: ${{ secrets.O2_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,12 +50,10 @@ jobs:
   rust-integration:
     name: Rust Integration
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: sdks/rust
-    env:
-      O2_PRIVATE_KEY: ${{ secrets.O2_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

@@ -2,18 +2,98 @@
  * Integration tests for the O2 TypeScript SDK.
  *
  * These tests hit the live testnet API and require network access.
- * Run with: npm test -- --grep integration
+ * Run with: O2_INTEGRATION=1 npx vitest run tests/integration.test.ts
  *
  * Tests are idempotent and safe to run repeatedly.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll } from "vitest";
 import { O2Client, Network } from "../src/index.js";
+import type { WalletState, Market } from "../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
 
+function minQuantityForMinOrder(market: Market, price: number): number {
+  const minOrder = Number(market.min_order) || 1_000_000;
+  const quoteFactor = 10 ** market.quote.decimals;
+  const baseFactor = 10 ** market.base.decimals;
+  const minQty = minOrder / (price * quoteFactor);
+  const truncateFactor =
+    10 ** (market.base.decimals - market.base.max_precision);
+  const step = truncateFactor / baseFactor;
+  const rounded = Math.ceil(minQty / step) * step;
+  return rounded * 1.1;
+}
+
+/**
+ * Calculate a safe sell price from balance constraints alone (no book dependency).
+ * Uses a tiny fraction of base balance so the price is very high — well above
+ * any testnet bid — and the required quantity is trivially small.
+ */
+function safeSellPrice(market: Market, baseBalance: bigint): number {
+  const minOrder = Number(market.min_order) || 1_000_000;
+  const baseFactor = 10 ** market.base.decimals;
+  const quoteFactor = 10 ** market.quote.decimals;
+  // Budget: 0.1% of balance or 100k chain units, whichever is smaller
+  const budgetChain = Math.min(Number(baseBalance) * 0.001, 100_000);
+  const budget = Math.max(budgetChain, 1) / baseFactor;
+  // Price where selling 'budget' meets min_order, with 2x margin
+  return (minOrder / (budget * quoteFactor)) * 2.0;
+}
+
+async function mintWithRetry(
+  api: InstanceType<typeof O2Client>["api"],
+  tradeAccountId: string,
+  maxRetries = 4
+) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await api.mintToContract(tradeAccountId);
+      return;
+    } catch {
+      if (attempt < maxRetries - 1)
+        await new Promise((r) => setTimeout(r, 65_000));
+    }
+  }
+}
+
+async function setupWithRetry(
+  client: O2Client,
+  wallet: WalletState,
+  maxRetries = 4
+): Promise<{ tradeAccountId: string; nonce: bigint }> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await client.setupAccount(wallet);
+    } catch {
+      if (attempt < maxRetries - 1)
+        await new Promise((r) => setTimeout(r, 65_000));
+    }
+  }
+  throw new Error("setupAccount failed after retries");
+}
+
 describe.skipIf(!INTEGRATION)("integration", () => {
   const client = new O2Client({ network: Network.TESTNET });
+
+  let makerWallet: WalletState;
+  let makerTradeAccountId: string;
+  let takerWallet: WalletState;
+  let takerTradeAccountId: string;
+
+  beforeAll(async () => {
+    // Set up maker account (with rate-limit retries)
+    makerWallet = client.generateWallet();
+    const maker = await setupWithRetry(client, makerWallet);
+    makerTradeAccountId = maker.tradeAccountId;
+    await mintWithRetry(client.api, makerTradeAccountId);
+
+    // Set up taker account (with rate-limit retries)
+    takerWallet = client.generateWallet();
+    const taker = await setupWithRetry(client, takerWallet);
+    takerTradeAccountId = taker.tradeAccountId;
+    await mintWithRetry(client.api, takerTradeAccountId);
+  }, 600_000);
 
   it("integration: fetches markets", async () => {
     const markets = await client.getMarkets();
@@ -52,62 +132,178 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(second.tradeAccountId).toBe(tradeAccountId);
   });
 
-  it("integration: full session and order flow", async () => {
-    const wallet = client.generateWallet();
-    let tradeAccountId: string;
-    try {
-      ({ tradeAccountId } = await client.setupAccount(wallet));
-    } catch {
-      console.log("setupAccount rate-limited (expected on testnet)");
-      return;
-    }
+  it("integration: resolves market by pair", async () => {
+    const markets = await client.getMarkets();
+    expect(markets.length).toBeGreaterThan(0);
+    const first = markets[0];
+    const pair = `${first.base.symbol}/${first.quote.symbol}`;
 
-    // Wait for faucet cooldown
-    await new Promise((r) => setTimeout(r, 2000));
+    const resolved = await client.getMarket(pair);
+    expect(resolved.market_id).toBe(first.market_id);
+  });
 
+  it("integration: order placement and cancellation", async () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
+    // Use minimum price step — guaranteed below any ask on the book.
+    // Buy cost is always ≈ min_order regardless of price, so this is affordable.
+    const priceStep = 10 ** (-market.quote.max_precision);
+    const buyPrice = priceStep;
+    const quantity = minQuantityForMinOrder(market, buyPrice);
+
+    // Verify quote balance
+    const balances = await client.getBalances(makerTradeAccountId);
+    const quoteSymbol = market.quote.symbol;
+    expect(balances[quoteSymbol]).toBeDefined();
+    expect(
+      BigInt(balances[quoteSymbol].trading_account_balance)
+    ).toBeGreaterThan(0n);
+
     const session = await client.createSession(
-      wallet,
-      tradeAccountId,
+      makerWallet,
+      makerTradeAccountId,
       [market],
       30
     );
 
-    expect(session.sessionAddress).toMatch(/^0x/);
-    expect(session.contractIds.length).toBeGreaterThan(0);
+    // Place PostOnly Buy at minimum price — guaranteed to rest on the book
+    const { response, session: updatedSession } = await client.createOrder(
+      session,
+      market,
+      "Buy",
+      buyPrice,
+      quantity,
+      "PostOnly",
+      true,
+      true
+    );
 
-    // Place an order (may fail due to insufficient balance, which is expected)
+    expect(response.tx_id).toBeTruthy();
+    expect(response.orders).toBeDefined();
+    expect(response.orders!.length).toBeGreaterThan(0);
+    const order = response.orders![0];
+    expect(order.order_id).toBeTruthy();
+    expect(order.cancel).not.toBe(true);
+
+    // Cancel the order
+    const { response: cancelResponse } = await client.cancelOrder(
+      updatedSession,
+      order.order_id,
+      market
+    );
+    expect(cancelResponse.tx_id).toBeTruthy();
+  });
+
+  it("integration: cross-account fill", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+    const quoteFactor = 10 ** market.quote.decimals;
+
+    // Check maker base balance
+    const balances = await client.getBalances(makerTradeAccountId);
+    const baseSymbol = market.base.symbol;
+    expect(balances[baseSymbol]).toBeDefined();
+    const baseBalance = BigInt(balances[baseSymbol].trading_account_balance);
+    expect(baseBalance).toBeGreaterThan(0n);
+
+    // Calculate sell price from balance alone (no book dependency).
+    // This produces a high price well above any testnet bid, needing
+    // only a tiny amount of base tokens.
+    const sellPrice = safeSellPrice(market, baseBalance);
+    const quantity = minQuantityForMinOrder(market, sellPrice);
+
+    // Maker: PostOnly Sell at high price → guaranteed to rest on the book
+    const makerSession = await client.createSession(
+      makerWallet,
+      makerTradeAccountId,
+      [market],
+      30
+    );
+    const { response: makerResponse } = await client.createOrder(
+      makerSession,
+      market,
+      "Sell",
+      sellPrice,
+      quantity,
+      "PostOnly",
+      true,
+      true
+    );
+
+    expect(makerResponse.tx_id).toBeTruthy();
+    expect(makerResponse.orders).toBeDefined();
+    expect(makerResponse.orders!.length).toBeGreaterThan(0);
+    const makerOrder = makerResponse.orders![0];
+    expect(makerOrder.order_id).toBeTruthy();
+    expect(makerOrder.cancel).not.toBe(true);
+
+    // Taker: Spot Buy at sell_price — will match maker's sell.
+    // Use generous quantity to fill through any cheaper asks on the book.
+    const takerBalances = await client.getBalances(takerTradeAccountId);
+    const quoteSymbol = market.quote.symbol;
+    const takerQuote = Number(
+      BigInt(takerBalances[quoteSymbol].trading_account_balance)
+    );
+    // Use up to 90% of taker quote balance to fill through intermediate orders
+    const takerQuantity = (0.9 * takerQuote) / (quoteFactor * sellPrice);
+
+    const takerSession = await client.createSession(
+      takerWallet,
+      takerTradeAccountId,
+      [market],
+      30
+    );
+    const { response: takerResponse } = await client.createOrder(
+      takerSession,
+      market,
+      "Buy",
+      sellPrice,
+      takerQuantity,
+      "Spot",
+      true,
+      true
+    );
+
+    expect(takerResponse.tx_id).toBeTruthy();
+
+    // Cleanup: cancel maker order if still open
     try {
-      const { response } = await client.createOrder(
-        session,
-        market,
-        "Buy",
-        0.001, // very low price to avoid fills
-        10.0,
-        "Spot",
-        true,
-        true
-      );
-      expect(response.tx_id).toMatch(/^0x/);
-    } catch (error) {
-      // Expected if faucet didn't provide enough funds
-      console.log("Order placement failed (expected if low balance):", error);
+      await client.cancelOrder(makerSession, makerOrder.order_id, market);
+    } catch {
+      // Already filled/closed
     }
   });
 
   it("integration: fetches account info", async () => {
-    const wallet = client.generateWallet();
-    let tradeAccountId: string;
-    try {
-      ({ tradeAccountId } = await client.setupAccount(wallet));
-    } catch {
-      console.log("setupAccount rate-limited (expected on testnet)");
-      return;
-    }
-
-    const nonce = await client.getNonce(tradeAccountId);
+    const nonce = await client.getNonce(makerTradeAccountId);
     expect(typeof nonce).toBe("bigint");
   });
+
+  it("integration: checks balances", async () => {
+    const balances = await client.getBalances(makerTradeAccountId);
+    expect(typeof balances).toBe("object");
+    expect(balances).not.toBeNull();
+  });
+
+  it(
+    "integration: streams depth via WebSocket",
+    async () => {
+      const markets = await client.getMarkets();
+      expect(markets.length).toBeGreaterThan(0);
+      const market = markets[0];
+
+      const stream = await client.streamDepth(market, 10);
+      let received = false;
+      for await (const update of stream) {
+        expect(update).toBeDefined();
+        received = true;
+        break; // Just need one message
+      }
+
+      expect(received).toBe(true);
+      client.disconnectWs();
+    },
+    30_000
+  );
 });

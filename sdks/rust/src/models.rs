@@ -29,6 +29,22 @@ where
     deserializer.deserialize_any(StringOrU64)
 }
 
+/// Deserialize an optional value that may be a JSON number or a string, storing as String.
+fn deserialize_optional_string_or_number<'de, D>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(serde_json::Value::Null) | None => Ok(None),
+        Some(v) => Ok(Some(v.to_string())),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
@@ -249,16 +265,20 @@ pub struct Order {
     pub order_id: Option<String>,
     pub side: Option<String>,
     pub order_type: Option<serde_json::Value>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
     pub quantity: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
     pub quantity_fill: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
     pub price: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
     pub price_fill: Option<String>,
     pub timestamp: Option<serde_json::Value>,
     pub close: Option<bool>,
     pub partially_filled: Option<bool>,
     pub cancel: Option<bool>,
     #[serde(default)]
-    pub desired_quantity: Option<String>,
+    pub desired_quantity: Option<serde_json::Value>,
     #[serde(default)]
     pub base_decimals: Option<u32>,
     #[serde(default)]
