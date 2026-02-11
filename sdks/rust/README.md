@@ -1,0 +1,114 @@
+<p align="center">
+  <img src="https://docs.o2.app/logo.svg" width="80" alt="O2 Exchange">
+</p>
+
+<h1 align="center">O2 SDK for Rust</h1>
+
+<p align="center">
+  <a href="https://github.com/o2-exchange/contracts/actions/workflows/ci.yml"><img src="https://github.com/o2-exchange/contracts/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://rust-lang.org"><img src="https://img.shields.io/badge/rust-1.75+-orange.svg" alt="Rust 1.75+"></a>
+  <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
+</p>
+
+<p align="center">
+  Official Rust SDK for the <a href="https://o2.app">O2 Exchange</a> — a fully on-chain order book DEX on the Fuel Network.
+</p>
+
+---
+
+## Installation
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+o2-sdk = { git = "https://github.com/o2-exchange/contracts", path = "sdks/rust" }
+tokio = { version = "1", features = ["full"] }
+```
+
+**MSRV**: Rust 1.75
+
+## Quick Start
+
+```rust
+use o2_sdk::{O2Client, Network};
+
+#[tokio::main]
+async fn main() -> Result<(), o2_sdk::O2Error> {
+    let mut client = O2Client::new(Network::Testnet);
+    let wallet = client.generate_wallet()?;
+    let account = client.setup_account(&wallet).await?;
+    let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
+    let order = client.create_order(
+        &mut session, "fFUEL/fUSDC", "Buy", 0.05, 100.0, "Spot", true, true,
+    ).await?;
+    println!("tx: {}", order.tx_id.unwrap_or_default());
+    Ok(())
+}
+```
+
+## Features
+
+- **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
+- **Market Data** — Fetch order book depth, recent trades, OHLCV candles, and ticker data
+- **WebSocket Streams** — Real-time depth, order, trade, balance, and nonce updates via `Stream`
+- **Wallet Support** — Fuel-native and EVM wallets with session-based signing
+- **Batch Actions** — Submit up to 5 actions per request (cancel + settle + create in one call)
+- **Async Runtime** — Built on `tokio` with `reqwest` for HTTP and `tokio-tungstenite` for WebSocket
+- **Type Safety** — Strongly typed responses with `serde` deserialization and `thiserror` errors
+
+## API Overview
+
+| Method | Description |
+|--------|-------------|
+| `generate_wallet()` / `load_wallet(hex)` | Create or load a Fuel wallet |
+| `generate_evm_wallet()` / `load_evm_wallet(hex)` | Create or load an EVM wallet |
+| `setup_account(&wallet)` | Idempotent account setup |
+| `create_session(&wallet, markets, days)` | Create a trading session |
+| `create_order(&mut session, market, side, price, qty, ...)` | Place an order |
+| `cancel_order(&mut session, order_id, market)` | Cancel a specific order |
+| `cancel_all_orders(&mut session, market)` | Cancel all open orders |
+| `settle_balance(&mut session, market)` | Settle filled order proceeds |
+| `batch_actions(&mut session, actions, calls, collect)` | Submit raw action batch |
+| `get_markets()` / `get_market(name)` | Fetch market info |
+| `get_depth(market, precision)` / `get_trades(market, count)` | Order book and trade data |
+| `get_balances(trade_account_id)` / `get_orders(id, market, ...)` | Account data |
+| `stream_depth(market_id, precision)` | Real-time order book stream |
+| `stream_orders(identities)` / `stream_trades(market_id)` | Real-time updates |
+
+See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
+
+## Examples
+
+| Example | Description |
+|---------|-------------|
+| [`quickstart.rs`](examples/quickstart.rs) | Connect, create a wallet, place your first order |
+| [`market_maker.rs`](examples/market_maker.rs) | Two-sided quoting loop with cancel/replace |
+| [`taker_bot.rs`](examples/taker_bot.rs) | Monitor depth and take liquidity |
+| [`portfolio.rs`](examples/portfolio.rs) | Multi-market balance tracking and management |
+
+Run an example:
+
+```bash
+cargo run --example quickstart
+```
+
+## Testing
+
+Unit tests (no network required):
+
+```bash
+cargo test
+```
+
+Integration tests (requires `O2_PRIVATE_KEY` env var):
+
+```bash
+O2_PRIVATE_KEY=0x... cargo test -- --ignored --test-threads=1
+```
+
+The `--test-threads=1` flag avoids nonce race conditions during integration tests.
+
+## AI Agent Integration
+
+See [AGENTS.md](AGENTS.md) for an LLM-optimized reference covering all methods, types, error codes, and common patterns.

@@ -1,0 +1,42 @@
+[package]
+name = "o2-sdk"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Rust SDK for the O2 Exchange — a fully on-chain order book DEX on the Fuel Network"
+license = "Apache-2.0"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+secp256k1 = { version = "0.29", features = ["recovery", "rand-std"] }
+sha2 = "0.10"
+sha3 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rand = "0.8"
+hex = "0.4"
+futures-util = "0.3"
+tokio-stream = "0.1"
+url = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "test-util"] }
+
+[[example]]
+name = "quickstart"
+path = "examples/quickstart.rs"
+
+[[example]]
+name = "market_maker"
+path = "examples/market_maker.rs"
+
+[[example]]
+name = "taker_bot"
+path = "examples/taker_bot.rs"
+
+[[example]]
+name = "portfolio"
+path = "examples/portfolio.rs"
