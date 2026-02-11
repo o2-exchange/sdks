@@ -32,14 +32,14 @@ async def _whitelist_with_retry(api, trade_account_id, max_retries=4):
         try:
             await api.whitelist_account(trade_account_id)
             # Allow time for on-chain whitelist propagation
-            await asyncio.sleep(3)
+            await asyncio.sleep(10)
             return
         except Exception:
             if attempt < max_retries - 1:
                 await asyncio.sleep(65)
 
 
-async def _create_order_with_whitelist_retry(client, max_retries=3, **kwargs):
+async def _create_order_with_whitelist_retry(client, max_retries=5, **kwargs):
     """Place an order, re-whitelisting on TraderNotWhiteListed errors."""
     session = kwargs.get("session")
     for attempt in range(max_retries):
@@ -47,10 +47,12 @@ async def _create_order_with_whitelist_retry(client, max_retries=3, **kwargs):
             return await client.create_order(**kwargs)
         except Exception as e:
             if "TraderNotWhiteListed" in str(e) and attempt < max_retries - 1:
-                # Re-whitelist and retry
+                # Re-whitelist and retry with increasing backoff
                 trade_account_id = session.trade_account_id if session else None
                 if trade_account_id:
                     await _whitelist_with_retry(client.api, trade_account_id, max_retries=2)
+                    # Additional backoff on top of whitelist propagation delay
+                    await asyncio.sleep(5 * (attempt + 1))
                 continue
             raise
 
@@ -359,7 +361,6 @@ class TestTradingFlow:
             pytest.skip("No markets available")
 
         market = markets[0]
-        quote_factor = 10 ** market.quote.decimals
 
         # Get reference price from market data
         ref_price, best_bid, best_ask = await _get_market_prices(client, market)
@@ -402,13 +403,10 @@ class TestTradingFlow:
         assert maker_order.order_id is not None
         assert maker_order.cancel is not True, "Maker order was unexpectedly cancelled"
 
-        # Taker: use up to 90% of quote balance to buy at sell_price.
-        # Don't try to estimate intermediate volume — other orders may
-        # consume taker funds first, so we can't guarantee a full fill.
-        taker_balances = await client.get_balances(taker_account.trade_account_id)
-        quote_symbol = market.quote.symbol
-        taker_quote = int(taker_balances[quote_symbol].trading_account_balance)
-        taker_quantity = 0.9 * taker_quote / (quote_factor * sell_price)
+        # Taker: buy a small multiple of the maker quantity to limit gas usage.
+        # Using too much quote balance causes OutOfGas when the taker walks
+        # through many intermediate orders on a busy book.
+        taker_quantity = quantity * 3.0
 
         taker_session = await client.create_session(
             owner=taker_wallet,

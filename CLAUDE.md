@@ -31,42 +31,22 @@ cd sdks/rust && cargo test -- --ignored --test-threads=1
 
 ## Current Status (as of 2026-02-11)
 
-### Remaining Issue: TraderNotWhiteListed
+### All tests passing across all three SDKs
 
-All three SDKs have the same intermittent `TraderNotWhiteListed` failure on trading tests:
-- The whitelist API (`/analytics/v1/whitelist`) returns success
-- But the on-chain state doesn't always reflect it in time for the next transaction
-- This causes `test_order_placement` and `test_cross_account_fill` to fail
+- **Python**: 12/12 tests passing
+- **TypeScript**: 10/10 tests passing
+- **Rust**: 14/14 tests passing
 
-### What's Been Done
+### Anti-fragility patterns implemented
 
-1. **Whitelist retry helpers** added to Python and Rust tests:
-   - `_whitelist_with_retry` / `whitelist_with_retry`: Re-whitelists with 3s propagation delay
-   - `_create_order_with_whitelist_retry` / `create_order_with_whitelist_retry`: Catches `TraderNotWhiteListed`, re-whitelists, retries
-   - Both trading tests call re-whitelist at the start
+1. **Whitelist retry helpers** in all three SDKs:
+   - `whitelist_with_retry`: Re-whitelists with 10s on-chain propagation delay
+   - `create_order_with_whitelist_retry`: Catches `TraderNotWhiteListed`, re-whitelists with backoff, retries up to 5 times
+   - Explicit whitelist call during account setup (before minting)
+   - Re-whitelist at the start of each trading test
 
-2. **TypeScript** does NOT yet have whitelist retry (it was passing before this issue appeared)
+2. **Cross-account fill** designed for busy/empty books:
+   - Taker quantity capped at 3x maker quantity (prevents OutOfGas from too many intermediate fills)
+   - Don't assert maker order is closed/filled (other orders may consume taker funds first)
 
-3. **Cross-account fill tests** simplified across all SDKs:
-   - Use market-data pricing (`best_ask * 1.1`) via `get_market_prices` helper
-   - Use 90% of taker's quote balance for taker quantity (no intermediate volume estimation)
-   - Don't assert maker order is closed/filled (too strict for shared testnet)
-
-### Non-trading tests: All passing across all SDKs
-- Market data (get_markets, get_depth, get_trades, get_market_by_pair)
-- Account flow (create_account, setup_account_idempotent)
-- Session creation
-- Nonce fetch, balance check
-- WebSocket depth streaming
-
-### What Needs to Be Done
-
-1. **Fix the whitelist propagation issue**: The core problem is that re-whitelisting + 3s delay isn't enough. Options:
-   - Increase propagation delay (5s, 10s?)
-   - Query the on-chain whitelist state before placing orders (if API supports it)
-   - Add whitelist retry to TypeScript tests too
-   - Move whitelist into `setup_account` with longer delay in the fixture setup
-
-2. **Run tests ONE SDK at a time** — running all three simultaneously overwhelms the testnet whitelist service
-
-3. **CI workflow** (`.github/workflows/integration.yml`) may need timeout increases
+3. **Run tests ONE SDK at a time** — running all three simultaneously overwhelms the testnet

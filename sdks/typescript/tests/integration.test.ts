@@ -57,6 +57,63 @@ async function mintWithRetry(
   }
 }
 
+async function whitelistWithRetry(
+  api: InstanceType<typeof O2Client>["api"],
+  tradeAccountId: string,
+  maxRetries = 4
+) {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await api.whitelistAccount(tradeAccountId);
+      // Allow time for on-chain whitelist propagation
+      await new Promise((r) => setTimeout(r, 10_000));
+      return;
+    } catch {
+      if (attempt < maxRetries - 1)
+        await new Promise((r) => setTimeout(r, 65_000));
+    }
+  }
+}
+
+async function createOrderWithWhitelistRetry(
+  client: O2Client,
+  session: ReturnType<typeof client.createSession> extends Promise<infer T> ? T : never,
+  market: Market,
+  side: "Buy" | "Sell",
+  price: number,
+  quantity: number,
+  orderType: string,
+  settleFirst: boolean,
+  collectOrders: boolean,
+  tradeAccountId: string,
+  maxRetries = 5
+): Promise<{ response: any; session: any }> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      return await client.createOrder(
+        session,
+        market,
+        side,
+        price,
+        quantity,
+        orderType,
+        settleFirst,
+        collectOrders
+      );
+    } catch (e: any) {
+      const msg = String(e?.message ?? e);
+      if (msg.includes("TraderNotWhiteListed") && attempt < maxRetries - 1) {
+        await whitelistWithRetry(client.api, tradeAccountId, 2);
+        // Additional backoff on top of whitelist propagation delay
+        await new Promise((r) => setTimeout(r, 5_000 * (attempt + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("unreachable");
+}
+
 async function setupWithRetry(
   client: O2Client,
   wallet: WalletState,
@@ -86,12 +143,14 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     makerWallet = client.generateWallet();
     const maker = await setupWithRetry(client, makerWallet);
     makerTradeAccountId = maker.tradeAccountId;
+    await whitelistWithRetry(client.api, makerTradeAccountId);
     await mintWithRetry(client.api, makerTradeAccountId);
 
     // Set up taker account (with rate-limit retries)
     takerWallet = client.generateWallet();
     const taker = await setupWithRetry(client, takerWallet);
     takerTradeAccountId = taker.tradeAccountId;
+    await whitelistWithRetry(client.api, takerTradeAccountId);
     await mintWithRetry(client.api, takerTradeAccountId);
   }, 600_000);
 
@@ -146,6 +205,9 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
+    // Re-whitelist before trading (handles propagation delays)
+    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
+
     // Use minimum price step — guaranteed below any ask on the book.
     // Buy cost is always ≈ min_order regardless of price, so this is affordable.
     const priceStep = 10 ** (-market.quote.max_precision);
@@ -168,16 +230,19 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     );
 
     // Place PostOnly Buy at minimum price — guaranteed to rest on the book
-    const { response, session: updatedSession } = await client.createOrder(
-      session,
-      market,
-      "Buy",
-      buyPrice,
-      quantity,
-      "PostOnly",
-      true,
-      true
-    );
+    const { response, session: updatedSession } =
+      await createOrderWithWhitelistRetry(
+        client,
+        session,
+        market,
+        "Buy",
+        buyPrice,
+        quantity,
+        "PostOnly",
+        true,
+        true,
+        makerTradeAccountId
+      );
 
     expect(response.tx_id).toBeTruthy();
     expect(response.orders).toBeDefined();
@@ -198,7 +263,10 @@ describe.skipIf(!INTEGRATION)("integration", () => {
   it("integration: cross-account fill", async () => {
     const markets = await client.getMarkets();
     const market = markets[0];
-    const quoteFactor = 10 ** market.quote.decimals;
+
+    // Re-whitelist both accounts before trading
+    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
+    await whitelistWithRetry(client.api, takerTradeAccountId, 2);
 
     // Check maker base balance
     const balances = await client.getBalances(makerTradeAccountId);
@@ -220,7 +288,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       [market],
       30
     );
-    const { response: makerResponse } = await client.createOrder(
+    const { response: makerResponse } = await createOrderWithWhitelistRetry(
+      client,
       makerSession,
       market,
       "Sell",
@@ -228,7 +297,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       quantity,
       "PostOnly",
       true,
-      true
+      true,
+      makerTradeAccountId
     );
 
     expect(makerResponse.tx_id).toBeTruthy();
@@ -238,15 +308,10 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(makerOrder.order_id).toBeTruthy();
     expect(makerOrder.cancel).not.toBe(true);
 
-    // Taker: Spot Buy at sell_price — will match maker's sell.
-    // Use generous quantity to fill through any cheaper asks on the book.
-    const takerBalances = await client.getBalances(takerTradeAccountId);
-    const quoteSymbol = market.quote.symbol;
-    const takerQuote = Number(
-      BigInt(takerBalances[quoteSymbol].trading_account_balance)
-    );
-    // Use up to 90% of taker quote balance to fill through intermediate orders
-    const takerQuantity = (0.9 * takerQuote) / (quoteFactor * sellPrice);
+    // Taker: buy a small multiple of the maker quantity to limit gas usage.
+    // Using too much quote balance causes OutOfGas when the taker walks
+    // through many intermediate orders on a busy book.
+    const takerQuantity = quantity * 3.0;
 
     const takerSession = await client.createSession(
       takerWallet,
@@ -254,7 +319,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       [market],
       30
     );
-    const { response: takerResponse } = await client.createOrder(
+    const { response: takerResponse } = await createOrderWithWhitelistRetry(
+      client,
       takerSession,
       market,
       "Buy",
@@ -262,7 +328,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       takerQuantity,
       "Spot",
       true,
-      true
+      true,
+      takerTradeAccountId
     );
 
     expect(takerResponse.tx_id).toBeTruthy();

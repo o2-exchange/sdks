@@ -34,7 +34,7 @@ async fn whitelist_with_retry(api: &O2Api, trade_account_id: &str, max_retries: 
     for attempt in 0..max_retries {
         if api.whitelist_account(trade_account_id).await.is_ok() {
             // Allow time for on-chain whitelist propagation
-            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
             return;
         }
         if attempt < max_retries - 1 {
@@ -70,6 +70,8 @@ async fn create_order_with_whitelist_retry(
                 };
                 if is_whitelist_err && attempt < max_retries - 1 {
                     whitelist_with_retry(&client.api, trade_account_id, 2).await;
+                    // Additional backoff on top of whitelist propagation delay
+                    tokio::time::sleep(std::time::Duration::from_secs(5 * (attempt as u64 + 1))).await;
                     continue;
                 }
                 return Err(e);
@@ -95,6 +97,7 @@ async fn setup_funded_account(client: &mut O2Client) -> (Wallet, String) {
         }
     }
     let trade_account_id = account.unwrap().trade_account_id.clone().unwrap();
+    whitelist_with_retry(&client.api, &trade_account_id, 4).await;
     mint_with_retry(&client.api, &trade_account_id, 4).await;
     (wallet, trade_account_id)
 }
@@ -423,8 +426,6 @@ async fn test_cross_account_fill() {
     let market = &markets[0];
     let market_pair = market.symbol_pair();
 
-    let quote_factor = 10f64.powi(market.quote.decimals as i32);
-
     // Re-whitelist both accounts before trading
     whitelist_with_retry(&client.api, &shared.maker_trade_account_id, 2).await;
     whitelist_with_retry(&client.api, &shared.taker_trade_account_id, 2).await;
@@ -498,21 +499,10 @@ async fn test_cross_account_fill() {
         "Maker order was unexpectedly cancelled"
     );
 
-    // Taker: use up to 90% of quote balance to buy at sell_price.
-    // Don't try to estimate intermediate volume — other orders may
-    // consume taker funds first, so we can't guarantee a full fill.
-    let taker_balances = client
-        .get_balances(&shared.taker_trade_account_id)
-        .await
-        .unwrap();
-    let quote_symbol = &market.quote.symbol;
-    let taker_quote_val: u64 = taker_balances
-        .get(quote_symbol)
-        .and_then(|b| b.trading_account_balance.as_deref())
-        .unwrap_or("0")
-        .parse()
-        .unwrap_or(0);
-    let taker_quantity = 0.9 * (taker_quote_val as f64) / (quote_factor * sell_price);
+    // Taker: buy a small multiple of the maker quantity to limit gas usage.
+    // Using too much quote balance causes OutOfGas when the taker walks
+    // through many intermediate orders on a busy book.
+    let taker_quantity = quantity * 3.0;
 
     let mut taker_session = client
         .create_session(&shared.taker_wallet, &[&market_pair], 30)
