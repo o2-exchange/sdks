@@ -85,6 +85,71 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 }
 ```
 
+## 🛠 Development
+
+### Prerequisites
+
+| Tool | Version | Install |
+|------|---------|---------|
+| Python | 3.10+ | [python.org](https://www.python.org/downloads/) |
+| Node.js | 18+ | [nodejs.org](https://nodejs.org/) |
+| Rust | 1.75+ | [rustup.rs](https://rustup.rs/) |
+| just | latest | See below |
+
+Install [`just`](https://github.com/casey/just) (a command runner used to orchestrate builds, linting, and tests):
+
+```bash
+# macOS
+brew install just
+
+# Linux (prebuilt binary)
+curl --proto '=https' --tlsv1.2 -sSf https://just.systems/install.sh | bash -s -- --to /usr/local/bin
+
+# Cargo (any platform)
+cargo install just
+```
+
+### Setup
+
+Clone the repo and install all SDK dependencies:
+
+```bash
+git clone https://github.com/o2-exchange-org/o2-sdks.git
+cd o2-sdks
+just setup    # Creates Python venv, installs Python + TypeScript deps
+```
+
+The Rust SDK uses Cargo and needs no additional setup beyond having `rustc` installed.
+
+### Common Commands
+
+```bash
+just fmt       # Format all SDKs (ruff, biome, rustfmt)
+just lint      # Lint all SDKs (ruff + mypy, biome + tsc, clippy)
+just check     # Full pre-push check (format check + lint)
+just test      # Run unit tests across all SDKs
+```
+
+Per-SDK targets are also available:
+
+```bash
+just fmt-python          just lint-python          just test-python
+just fmt-typescript      just lint-typescript      just test-typescript
+just fmt-rust            just lint-rust            just test-rust
+```
+
+### Integration Tests
+
+Integration tests run against the O2 testnet. Run **one SDK at a time** to avoid overwhelming the testnet:
+
+```bash
+just integration python
+just integration typescript
+just integration rust
+```
+
+> **Note:** Integration tests require testnet connectivity and may take several minutes due to faucet cooldowns and on-chain confirmation times.
+
 ## 📁 Repository Structure
 
 ```
