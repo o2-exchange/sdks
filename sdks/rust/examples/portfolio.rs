@@ -83,10 +83,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Stream balances in real-time
     println!("\n--- Streaming Balance Updates ---");
     let identity = Identity::ContractId(trade_account_id.to_string());
-    let ws = O2WebSocket::connect(&client.config.ws_url).await?;
-    let mut balance_stream = ws.stream_balances(&[identity]).await?;
+    let mut balance_stream = client.stream_balances(&[identity]).await?;
 
-    while let Some(update) = balance_stream.next().await {
+    while let Some(Ok(update)) = balance_stream.next().await {
         if let Some(entries) = &update.balance {
             for entry in entries {
                 let asset = entry.asset_id.as_deref().unwrap_or("?");

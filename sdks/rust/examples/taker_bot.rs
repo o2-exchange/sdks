@@ -33,12 +33,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Session created");
 
     // Connect to WebSocket for real-time depth
-    let ws = O2WebSocket::connect(&client.config.ws_url).await?;
-    let mut depth_stream = ws.stream_depth(market.market_id.as_str(), "10").await?;
+    let mut depth_stream = client.stream_depth(market.market_id.as_str(), "10").await?;
 
     println!("Listening for depth updates (buy when ask <= {buy_below_price})...");
 
-    while let Some(update) = depth_stream.next().await {
+    while let Some(Ok(update)) = depth_stream.next().await {
         // Get best ask from snapshot or update
         let sells = update
             .view

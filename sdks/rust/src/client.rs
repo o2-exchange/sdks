@@ -18,13 +18,14 @@ use crate::encoding::{
 };
 use crate::errors::O2Error;
 use crate::models::*;
-use crate::websocket::{O2WebSocket, TypedStream};
+use crate::websocket::TypedStream;
 
 /// The high-level O2 Exchange client.
 pub struct O2Client {
     pub api: O2Api,
     pub config: NetworkConfig,
     markets_cache: Option<MarketsResponse>,
+    ws: tokio::sync::Mutex<Option<crate::websocket::O2WebSocket>>,
 }
 
 impl O2Client {
@@ -35,6 +36,7 @@ impl O2Client {
             api: O2Api::new(config.clone()),
             config,
             markets_cache: None,
+            ws: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -44,6 +46,7 @@ impl O2Client {
             api: O2Api::new(config.clone()),
             config,
             markets_cache: None,
+            ws: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -660,57 +663,84 @@ impl O2Client {
     }
 
     // -----------------------------------------------------------------------
-    // WebSocket Streaming
+    // WebSocket Streaming (shared connection)
     // -----------------------------------------------------------------------
 
-    /// Connect to WebSocket and stream depth updates.
+    /// Ensure the shared WebSocket is connected, creating or replacing as needed.
+    async fn ensure_ws(
+        ws_slot: &mut Option<crate::websocket::O2WebSocket>,
+        ws_url: &str,
+    ) -> Result<(), O2Error> {
+        if ws_slot.as_ref().is_some_and(|ws| ws.is_terminated()) {
+            *ws_slot = None;
+        }
+        if ws_slot.is_none() {
+            *ws_slot = Some(crate::websocket::O2WebSocket::connect(ws_url).await?);
+        }
+        Ok(())
+    }
+
+    /// Stream depth updates over a shared WebSocket connection.
     pub async fn stream_depth(
         &self,
         market_id: &str,
         precision: &str,
-    ) -> Result<(O2WebSocket, TypedStream<DepthUpdate>), O2Error> {
-        let ws = O2WebSocket::connect(&self.config.ws_url).await?;
-        let stream = ws.stream_depth(market_id, precision).await?;
-        Ok((ws, stream))
+    ) -> Result<TypedStream<DepthUpdate>, O2Error> {
+        let mut guard = self.ws.lock().await;
+        Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
+        guard
+            .as_ref()
+            .unwrap()
+            .stream_depth(market_id, precision)
+            .await
     }
 
-    /// Connect to WebSocket and stream order updates.
+    /// Stream order updates over a shared WebSocket connection.
     pub async fn stream_orders(
         &self,
         identities: &[Identity],
-    ) -> Result<(O2WebSocket, TypedStream<OrderUpdate>), O2Error> {
-        let ws = O2WebSocket::connect(&self.config.ws_url).await?;
-        let stream = ws.stream_orders(identities).await?;
-        Ok((ws, stream))
+    ) -> Result<TypedStream<OrderUpdate>, O2Error> {
+        let mut guard = self.ws.lock().await;
+        Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
+        guard.as_ref().unwrap().stream_orders(identities).await
     }
 
-    /// Connect to WebSocket and stream trade updates.
+    /// Stream trade updates over a shared WebSocket connection.
     pub async fn stream_trades(
         &self,
         market_id: &str,
-    ) -> Result<(O2WebSocket, TypedStream<TradeUpdate>), O2Error> {
-        let ws = O2WebSocket::connect(&self.config.ws_url).await?;
-        let stream = ws.stream_trades(market_id).await?;
-        Ok((ws, stream))
+    ) -> Result<TypedStream<TradeUpdate>, O2Error> {
+        let mut guard = self.ws.lock().await;
+        Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
+        guard.as_ref().unwrap().stream_trades(market_id).await
     }
 
-    /// Connect to WebSocket and stream balance updates.
+    /// Stream balance updates over a shared WebSocket connection.
     pub async fn stream_balances(
         &self,
         identities: &[Identity],
-    ) -> Result<(O2WebSocket, TypedStream<BalanceUpdate>), O2Error> {
-        let ws = O2WebSocket::connect(&self.config.ws_url).await?;
-        let stream = ws.stream_balances(identities).await?;
-        Ok((ws, stream))
+    ) -> Result<TypedStream<BalanceUpdate>, O2Error> {
+        let mut guard = self.ws.lock().await;
+        Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
+        guard.as_ref().unwrap().stream_balances(identities).await
     }
 
-    /// Connect to WebSocket and stream nonce updates.
+    /// Stream nonce updates over a shared WebSocket connection.
     pub async fn stream_nonce(
         &self,
         identities: &[Identity],
-    ) -> Result<(O2WebSocket, TypedStream<NonceUpdate>), O2Error> {
-        let ws = O2WebSocket::connect(&self.config.ws_url).await?;
-        let stream = ws.stream_nonce(identities).await?;
-        Ok((ws, stream))
+    ) -> Result<TypedStream<NonceUpdate>, O2Error> {
+        let mut guard = self.ws.lock().await;
+        Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
+        guard.as_ref().unwrap().stream_nonce(identities).await
+    }
+
+    /// Disconnect the shared WebSocket connection and release resources.
+    pub async fn disconnect_ws(&self) -> Result<(), O2Error> {
+        let mut guard = self.ws.lock().await;
+        if let Some(ws) = guard.take() {
+            ws.disconnect().await?;
+        }
+        Ok(())
     }
 }

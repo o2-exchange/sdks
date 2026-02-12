@@ -672,18 +672,21 @@ async fn test_websocket_depth() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let market = &markets[0];
-    let (ws, mut stream) = client.stream_depth(&market.market_id, "10").await.unwrap();
+    let mut stream = client.stream_depth(&market.market_id, "10").await.unwrap();
 
     // Wait for one depth update with a timeout
     let update = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await;
 
     match update {
-        Ok(Some(depth)) => {
+        Ok(Some(Ok(depth))) => {
             // Should have either a view (snapshot) or changes (delta)
             assert!(
                 depth.view.is_some() || depth.changes.is_some(),
                 "Depth update should have view or changes"
             );
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
         }
         Ok(None) => {
             panic!("WebSocket stream ended unexpectedly");
@@ -694,7 +697,7 @@ async fn test_websocket_depth() {
         }
     }
 
-    let _ = ws.disconnect().await;
+    let _ = client.disconnect_ws().await;
 }
 
 #[tokio::test]
@@ -716,7 +719,7 @@ async fn test_websocket_trades() {
     cleanup_open_orders(&mut client, &shared.taker_wallet, &market_pair).await;
 
     // Subscribe to trades WebSocket
-    let (ws, mut stream) = client.stream_trades(&market.market_id).await.unwrap();
+    let mut stream = client.stream_trades(&market.market_id).await.unwrap();
 
     // Allow time for subscription to be registered on server
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -812,13 +815,16 @@ async fn test_websocket_trades() {
     let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
 
     match update {
-        Ok(Some(trade)) => {
+        Ok(Some(Ok(trade))) => {
             // Verify the TradeUpdate structure is valid
             assert!(
                 trade.action.is_some() || trade.trades.is_some() || trade.market_id.is_some(),
                 "Trade update should have at least one field populated"
             );
             eprintln!("Received trade update: {:?}", trade.action);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
         }
         Ok(None) => {
             panic!("WebSocket stream ended unexpectedly");
@@ -854,7 +860,7 @@ async fn test_websocket_trades() {
         .settle_balance(&mut taker_session, &market_pair)
         .await;
 
-    let _ = ws.disconnect().await;
+    let _ = client.disconnect_ws().await;
 }
 
 #[tokio::test]
@@ -875,7 +881,7 @@ async fn test_websocket_orders() {
 
     // Connect to WebSocket and subscribe to orders
     let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
-    let (ws, mut stream) = client.stream_orders(&[identity]).await.unwrap();
+    let mut stream = client.stream_orders(&[identity]).await.unwrap();
 
     // Allow time for subscription to be registered on server
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -917,12 +923,15 @@ async fn test_websocket_orders() {
     let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
 
     match update {
-        Ok(Some(order_update)) => {
+        Ok(Some(Ok(order_update))) => {
             assert!(
                 order_update.action.is_some() || order_update.orders.is_some(),
                 "Order update should have action or orders"
             );
             eprintln!("Received order update: {:?}", order_update.action);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
         }
         Ok(None) => {
             panic!("WebSocket stream ended unexpectedly");
@@ -942,7 +951,7 @@ async fn test_websocket_orders() {
         let _ = client.settle_balance(&mut session, &market_pair).await;
     }
 
-    let _ = ws.disconnect().await;
+    let _ = client.disconnect_ws().await;
 }
 
 #[tokio::test]
@@ -963,7 +972,7 @@ async fn test_websocket_balances() {
 
     // Connect to WebSocket and subscribe to balances
     let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
-    let (ws, mut stream) = client.stream_balances(&[identity]).await.unwrap();
+    let mut stream = client.stream_balances(&[identity]).await.unwrap();
 
     // Allow time for subscription to be registered on server
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1004,12 +1013,15 @@ async fn test_websocket_balances() {
     let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
 
     match update {
-        Ok(Some(balance_update)) => {
+        Ok(Some(Ok(balance_update))) => {
             assert!(
                 balance_update.action.is_some() || balance_update.balance.is_some(),
                 "Balance update should have action or balance"
             );
             eprintln!("Received balance update: {:?}", balance_update.action);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
         }
         Ok(None) => {
             panic!("WebSocket stream ended unexpectedly");
@@ -1029,7 +1041,7 @@ async fn test_websocket_balances() {
         let _ = client.settle_balance(&mut session, &market_pair).await;
     }
 
-    let _ = ws.disconnect().await;
+    let _ = client.disconnect_ws().await;
 }
 
 #[tokio::test]
@@ -1050,7 +1062,7 @@ async fn test_websocket_nonce() {
 
     // Connect to WebSocket and subscribe to nonce
     let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
-    let (ws, mut stream) = client.stream_nonce(&[identity]).await.unwrap();
+    let mut stream = client.stream_nonce(&[identity]).await.unwrap();
 
     // Allow time for subscription to be registered on server
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1091,12 +1103,15 @@ async fn test_websocket_nonce() {
     let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
 
     match update {
-        Ok(Some(nonce_update)) => {
+        Ok(Some(Ok(nonce_update))) => {
             assert!(
                 nonce_update.action.is_some() || nonce_update.nonce.is_some(),
                 "Nonce update should have action or nonce"
             );
             eprintln!("Received nonce update: {:?}", nonce_update.nonce);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
         }
         Ok(None) => {
             panic!("WebSocket stream ended unexpectedly");
@@ -1116,5 +1131,5 @@ async fn test_websocket_nonce() {
         let _ = client.settle_balance(&mut session, &market_pair).await;
     }
 
-    let _ = ws.disconnect().await;
+    let _ = client.disconnect_ws().await;
 }

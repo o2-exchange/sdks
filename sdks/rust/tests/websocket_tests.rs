@@ -165,7 +165,7 @@ async fn test_ws_depth_stream_receives_messages() {
             .ok()
             .flatten()
         {
-            received.push(update);
+            received.push(update.unwrap());
         }
     }
 
@@ -204,7 +204,7 @@ async fn test_ws_orders_stream_receives_messages() {
         .flatten();
 
     assert!(update.is_some(), "Should receive order update");
-    let update = update.unwrap();
+    let update = update.unwrap().unwrap();
     assert_eq!(update.action, Some("subscribe_orders".to_string()));
     assert!(update.orders.is_some(), "Should have orders field");
 
@@ -236,7 +236,7 @@ async fn test_ws_trades_stream_receives_messages() {
         .flatten();
 
     assert!(update.is_some(), "Should receive trade update");
-    let update = update.unwrap();
+    let update = update.unwrap().unwrap();
     assert_eq!(update.action, Some("subscribe_trades".to_string()));
     assert_eq!(update.market_id, Some("market1".to_string()));
 
@@ -269,7 +269,7 @@ async fn test_ws_balances_stream_receives_messages() {
         .flatten();
 
     assert!(update.is_some(), "Should receive balance update");
-    let update = update.unwrap();
+    let update = update.unwrap().unwrap();
     assert_eq!(update.action, Some("subscribe_balances".to_string()));
     assert!(update.balance.is_some(), "Should have balance field");
 
@@ -297,7 +297,7 @@ async fn test_ws_nonce_stream_receives_messages() {
         .flatten();
 
     assert!(update.is_some(), "Should receive nonce update");
-    let update = update.unwrap();
+    let update = update.unwrap().unwrap();
     assert_eq!(update.action, Some("subscribe_nonce".to_string()));
     assert_eq!(update.nonce, Some("42".to_string()));
 
@@ -340,12 +340,23 @@ async fn test_ws_reconnect_on_server_disconnect() {
         .flatten();
     assert!(first.is_some(), "Should receive first message");
 
-    // Wait for reconnection and second message
+    // Wait for reconnection and second message (skip reconnect signal)
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let second = tokio::time::timeout(Duration::from_secs(3), stream.next())
-        .await
-        .ok()
-        .flatten();
+    let mut second = None;
+    for _ in 0..5 {
+        match tokio::time::timeout(Duration::from_secs(3), stream.next())
+            .await
+            .ok()
+            .flatten()
+        {
+            Some(Ok(update)) => {
+                second = Some(update);
+                break;
+            }
+            Some(Err(_)) => continue, // skip reconnect signals
+            None => break,
+        }
+    }
     assert!(second.is_some(), "Should receive message after reconnect");
 
     let _ = ws.disconnect().await;
