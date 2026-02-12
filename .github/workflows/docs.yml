@@ -8,6 +8,8 @@ on:
       - "sdks/typescript/src/**"
       - "sdks/typescript/docs/**"
       - "sdks/typescript/typedoc.json"
+      - "sdks/rust/src/**"
+      - "sdks/rust/Cargo.toml"
 
 # Allow only one deployment at a time
 concurrency:
@@ -76,9 +78,32 @@ jobs:
           name: typescript-docs
           path: _site/typescript
 
+  rust-build:
+    name: Build Rust Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sdks/rust
+
+      - name: Build cargo doc
+        run: cargo doc --no-deps --document-private-items
+        working-directory: sdks/rust
+
+      - name: Upload Rust docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-docs
+          path: sdks/rust/target/doc/o2_sdk
+
   deploy:
     name: Deploy Docs to GitHub Pages
-    needs: [python-build, typescript-build]
+    needs: [python-build, typescript-build, rust-build]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -95,6 +120,12 @@ jobs:
         with:
           name: typescript-docs
           path: _site/typescript
+
+      - name: Download Rust docs
+        uses: actions/download-artifact@v4
+        with:
+          name: rust-docs
+          path: _site/rust
 
       - name: Add root index with SDK selector
         run: |
@@ -126,6 +157,10 @@ jobs:
               <a class="card" href="typescript/">
                 <h2>TypeScript SDK</h2>
                 <p>TypeScript client with TypeDoc API reference and guides.</p>
+              </a>
+              <a class="card" href="rust/">
+                <h2>Rust SDK</h2>
+                <p>Rust client with cargo doc API reference.</p>
               </a>
             </div>
           </body>

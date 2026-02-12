@@ -26,7 +26,7 @@ check: fmt-check lint
 test: test-python test-typescript test-rust
 
 # Build documentation for all SDKs
-docs: docs-python docs-typescript
+docs: docs-python docs-typescript docs-rust
 
 # Build Python SDK documentation
 docs-python:
@@ -35,6 +35,10 @@ docs-python:
 # Build TypeScript SDK documentation
 docs-typescript:
     cd sdks/typescript && npx typedoc
+
+# Build Rust SDK documentation
+docs-rust:
+    cd sdks/rust && cargo doc --no-deps --document-private-items
 
 # Run integration tests (one SDK at a time to avoid overwhelming testnet)
 integration sdk:
