@@ -13,7 +13,7 @@ from typing import Any
 # Scalar wrappers
 # ---------------------------------------------------------------------------
 
-
+_ZERO_ID = "0" * 64
 _HEX_CHARS = frozenset("0123456789abcdefABCDEF")
 
 
@@ -169,9 +169,6 @@ class Market:
         if remainder == 0:
             return quantity
         return int(quantity - math.ceil(remainder / price))
-
-
-_ZERO_ID = "0" * 64
 
 
 @dataclass
