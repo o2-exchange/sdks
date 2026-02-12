@@ -99,7 +99,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: rust-docs
-          path: sdks/rust/target/doc/o2_sdk
+          path: sdks/rust/target/doc
 
   deploy:
     name: Deploy Docs to GitHub Pages
@@ -158,7 +158,7 @@ jobs:
                 <h2>TypeScript SDK</h2>
                 <p>TypeScript client with TypeDoc API reference and guides.</p>
               </a>
-              <a class="card" href="rust/">
+              <a class="card" href="rust/o2_sdk/">
                 <h2>Rust SDK</h2>
                 <p>Rust client with cargo doc API reference.</p>
               </a>
