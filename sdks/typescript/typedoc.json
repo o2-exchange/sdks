@@ -18,5 +18,5 @@
   "excludePrivate": true,
   "excludeInternal": true,
   "includeVersion": true,
-  "sourceLinkTemplate": "https://github.com/o2-exchange/sdks/blob/main/sdks/typescript/{path}#L{line}"
+  "sourceLinkTemplate": "https://github.com/o2-exchange/sdks/blob/main/{path}#L{line}"
 }
