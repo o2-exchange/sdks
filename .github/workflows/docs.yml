@@ -95,6 +95,22 @@ jobs:
         run: cargo doc --no-deps --document-private-items
         working-directory: sdks/rust
 
+      - name: Add root redirect
+        run: |
+          cat > sdks/rust/target/doc/index.html << 'HEREDOC'
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta http-equiv="refresh" content="0;url=o2_sdk/">
+            <title>Redirecting to O2 Rust SDK docs</title>
+          </head>
+          <body>
+            <p>Redirecting to <a href="o2_sdk/">o2_sdk</a>…</p>
+          </body>
+          </html>
+          HEREDOC
+
       - name: Upload Rust docs artifact
         uses: actions/upload-artifact@v4
         with:
@@ -158,7 +174,7 @@ jobs:
                 <h2>TypeScript SDK</h2>
                 <p>TypeScript client with TypeDoc API reference and guides.</p>
               </a>
-              <a class="card" href="rust/o2_sdk/">
+              <a class="card" href="rust/">
                 <h2>Rust SDK</h2>
                 <p>Rust client with cargo doc API reference.</p>
               </a>
