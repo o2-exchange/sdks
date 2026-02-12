@@ -83,6 +83,8 @@ asyncio.run(main())
 
 | Function | Params | Returns | Description |
 |----------|--------|---------|-------------|
+| `fuel_personal_sign_digest(msg)` | message bytes | `bytes(32)` | Fuel personalSign digest (prefix + SHA-256) |
+| `evm_personal_sign_digest(msg)` | message bytes | `bytes(32)` | Ethereum personal_sign digest (prefix + keccak256) |
 | `fuel_compact_sign(pk_bytes, digest)` | 32B key, 32B digest | `bytes(64)` | Sign with recovery ID in MSB of s[0] |
 | `personal_sign(pk_bytes, msg)` | 32B key, message | `bytes(64)` | Fuel personalSign (session creation) |
 | `raw_sign(pk_bytes, msg)` | 32B key, message | `bytes(64)` | Raw SHA-256 sign (session actions) |

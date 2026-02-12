@@ -327,6 +327,36 @@ class TestId:
         """Non-string comparisons return NotImplemented."""
         assert Id("0xabc") != 123
 
+    def test_rejects_non_hex_characters(self):
+        """Id must reject values with characters outside 0-9, a-f, A-F."""
+        import pytest
+
+        with pytest.raises(ValueError, match="non-empty hex string"):
+            Id("0xZZZZ")
+        with pytest.raises(ValueError, match="non-empty hex string"):
+            Id("not_hex_at_all")
+        with pytest.raises(ValueError, match="non-empty hex string"):
+            Id("0xg")
+
+    def test_rejects_empty_value(self):
+        """Id must reject empty hex bodies."""
+        import pytest
+
+        with pytest.raises(ValueError, match="non-empty hex string"):
+            Id("")
+        with pytest.raises(ValueError, match="non-empty hex string"):
+            Id("0x")
+
+    def test_accepts_valid_mixed_case_hex(self):
+        """Valid hex characters (any case) should be accepted and lowered."""
+        i = Id("0xAaBbCcDd0099")
+        assert str(i) == "0xaabbccdd0099"
+
+    def test_accepts_all_hex_digits(self):
+        """Every valid hex digit should pass validation."""
+        i = Id("0123456789abcdef")
+        assert str(i) == "0x0123456789abcdef"
+
 
 class TestActionsResponse:
     def test_success(self):

@@ -38,12 +38,20 @@ jobs:
           pip install -e sdks/python
 
       - name: Build Sphinx HTML
-        run: python -m sphinx -W --keep-going -b html sdks/python/docs sdks/python/docs/_build/html
+        run: python -m sphinx -W --keep-going -b html sdks/python/docs _site/python
+
+      - name: Add root redirect
+        run: |
+          cat > _site/index.html << 'EOF'
+          <!DOCTYPE html>
+          <html><head><meta http-equiv="refresh" content="0; url=python/"></head>
+          <body><a href="python/">Redirecting to Python SDK docs…</a></body></html>
+          EOF
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: sdks/python/docs/_build/html
+          path: _site
 
   python-deploy:
     name: Deploy Python Docs to GitHub Pages

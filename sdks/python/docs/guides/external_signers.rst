@@ -11,7 +11,9 @@ etc.) rather than in-process. The O2 SDK supports this via the
 How it works
 ------------
 
-The SDK handles all message framing (prefix bytes, hashing) internally.
+The SDK handles all message framing (prefix bytes, hashing) internally
+via the shared helpers :func:`~o2_sdk.crypto.fuel_personal_sign_digest`
+(Fuel) and :func:`~o2_sdk.crypto.evm_personal_sign_digest` (EVM).
 Your external signing function only needs to:
 
 1. **Receive** a 32-byte digest.
@@ -147,9 +149,12 @@ Custom Signer protocol
 -----------------------
 
 You can also implement the :class:`~o2_sdk.crypto.Signer` protocol
-directly for full control:
+directly for full control.  Use the shared digest helpers to ensure your
+framing matches the SDK:
 
 .. code-block:: python
+
+   from o2_sdk import fuel_personal_sign_digest
 
    class MyCustomSigner:
        @property
@@ -161,8 +166,12 @@ directly for full control:
            return bytes.fromhex(self.b256_address[2:])
 
        def personal_sign(self, message: bytes) -> bytes:
-           # Full control over message framing and signing
-           ...
+           digest = fuel_personal_sign_digest(message)
+           # Sign the 32-byte digest with your own signing backend
+           return my_backend_sign(digest)
 
    signer = MyCustomSigner()
    session = await client.create_session(owner=signer, markets=["FUEL/USDC"])
+
+For EVM accounts, use :func:`~o2_sdk.crypto.evm_personal_sign_digest`
+instead.

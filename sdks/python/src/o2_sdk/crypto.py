@@ -99,10 +99,7 @@ class Wallet:
 
     def personal_sign(self, message: bytes) -> bytes:
         """Sign using Fuel's personalSign format (prefix + SHA-256 + secp256k1)."""
-        prefix = b"\x19Fuel Signed Message:\n"
-        length_str = str(len(message)).encode("utf-8")
-        full_message = prefix + length_str + message
-        digest = hashlib.sha256(full_message).digest()
+        digest = fuel_personal_sign_digest(message)
         logger.debug(
             "Wallet.personal_sign: payload=%d bytes, digest=%s", len(message), digest.hex()
         )
@@ -127,10 +124,7 @@ class EvmWallet:
 
     def personal_sign(self, message: bytes) -> bytes:
         """Sign using Ethereum's personal_sign prefix + keccak256."""
-        prefix = f"\x19Ethereum Signed Message:\n{len(message)}".encode()
-        k = keccak.new(digest_bits=256)
-        k.update(prefix + message)
-        digest = k.digest()
+        digest = evm_personal_sign_digest(message)
         logger.debug(
             "EvmWallet.personal_sign: payload=%d bytes, digest=%s", len(message), digest.hex()
         )
@@ -248,16 +242,42 @@ def fuel_compact_sign(private_key_bytes: bytes, digest: bytes) -> bytes:
     return r + bytes(s)
 
 
+def fuel_personal_sign_digest(message: bytes) -> bytes:
+    """Compute the Fuel personalSign digest.
+
+    Constructs ``SHA-256(b"\\x19Fuel Signed Message:\\n" + len(message) + message)``
+    and returns the 32-byte digest.
+
+    This is the shared framing logic used by :meth:`Wallet.personal_sign`,
+    :func:`personal_sign`, and :meth:`ExternalSigner.personal_sign`.
+    """
+    prefix = b"\x19Fuel Signed Message:\n"
+    length_str = str(len(message)).encode("utf-8")
+    return hashlib.sha256(prefix + length_str + message).digest()
+
+
+def evm_personal_sign_digest(message: bytes) -> bytes:
+    """Compute the Ethereum personal_sign digest.
+
+    Constructs ``keccak256(b"\\x19Ethereum Signed Message:\\n" + str(len(message)) + message)``
+    and returns the 32-byte digest.
+
+    This is the shared framing logic used by :meth:`EvmWallet.personal_sign`,
+    :func:`evm_personal_sign`, and :meth:`ExternalEvmSigner.personal_sign`.
+    """
+    prefix = f"\x19Ethereum Signed Message:\n{len(message)}".encode()
+    k = keccak.new(digest_bits=256)
+    k.update(prefix + message)
+    return k.digest()
+
+
 def personal_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     """Sign using Fuel's personalSign format (for session creation).
 
     prefix = b"\\x19Fuel Signed Message:\\n" + str(len(message)) + message
     digest = sha256(prefix + length_str + message)
     """
-    prefix = b"\x19Fuel Signed Message:\n"
-    length_str = str(len(message_bytes)).encode("utf-8")
-    full_message = prefix + length_str + message_bytes
-    digest = hashlib.sha256(full_message).digest()
+    digest = fuel_personal_sign_digest(message_bytes)
     logger.debug("personal_sign: payload=%d bytes, digest=%s", len(message_bytes), digest.hex())
     return fuel_compact_sign(private_key_bytes, digest)
 
@@ -278,10 +298,7 @@ def evm_personal_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     prefix = "\\x19Ethereum Signed Message:\\n" + str(len(message))
     digest = keccak256(prefix_bytes + message)
     """
-    prefix = f"\x19Ethereum Signed Message:\n{len(message_bytes)}".encode()
-    k = keccak.new(digest_bits=256)
-    k.update(prefix + message_bytes)
-    digest = k.digest()
+    digest = evm_personal_sign_digest(message_bytes)
     logger.debug("evm_personal_sign: payload=%d bytes, digest=%s", len(message_bytes), digest.hex())
     return fuel_compact_sign(private_key_bytes, digest)
 
@@ -370,10 +387,7 @@ class ExternalSigner:
 
     def personal_sign(self, message: bytes) -> bytes:
         """Sign using Fuel's personalSign format, delegating to the external signer."""
-        prefix = b"\x19Fuel Signed Message:\n"
-        length_str = str(len(message)).encode("utf-8")
-        full_message = prefix + length_str + message
-        digest = hashlib.sha256(full_message).digest()
+        digest = fuel_personal_sign_digest(message)
         logger.debug(
             "ExternalSigner.personal_sign: payload=%d bytes, digest=%s",
             len(message),
@@ -426,10 +440,7 @@ class ExternalEvmSigner:
 
     def personal_sign(self, message: bytes) -> bytes:
         """Sign using Ethereum's personal_sign format, delegating to the external signer."""
-        prefix = f"\x19Ethereum Signed Message:\n{len(message)}".encode()
-        k = keccak.new(digest_bits=256)
-        k.update(prefix + message)
-        digest = k.digest()
+        digest = evm_personal_sign_digest(message)
         logger.debug(
             "ExternalEvmSigner.personal_sign: payload=%d bytes, digest=%s",
             len(message),

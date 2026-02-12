@@ -9,7 +9,9 @@ from o2_sdk.crypto import (
     ExternalSigner,
     Signer,
     evm_personal_sign,
+    evm_personal_sign_digest,
     fuel_compact_sign,
+    fuel_personal_sign_digest,
     generate_evm_wallet,
     generate_keypair,
     generate_wallet,
@@ -101,6 +103,63 @@ class TestFuelCompactSign:
             assert s <= half_order, f"s value not normalized at iteration {i}"
 
 
+class TestFuelPersonalSignDigest:
+    """Test the shared Fuel personalSign digest helper."""
+
+    def test_returns_32_bytes(self):
+        digest = fuel_personal_sign_digest(b"hello")
+        assert len(digest) == 32
+
+    def test_matches_manual_computation(self):
+        msg = b"test"
+        prefix = b"\x19Fuel Signed Message:\n"
+        length_str = str(len(msg)).encode("utf-8")
+        expected = hashlib.sha256(prefix + length_str + msg).digest()
+        assert fuel_personal_sign_digest(msg) == expected
+
+    def test_deterministic(self):
+        assert fuel_personal_sign_digest(b"x") == fuel_personal_sign_digest(b"x")
+
+    def test_different_messages_differ(self):
+        assert fuel_personal_sign_digest(b"a") != fuel_personal_sign_digest(b"b")
+
+    def test_empty_message(self):
+        msg = b""
+        prefix = b"\x19Fuel Signed Message:\n"
+        length_str = b"0"
+        expected = hashlib.sha256(prefix + length_str + msg).digest()
+        assert fuel_personal_sign_digest(msg) == expected
+
+
+class TestEvmPersonalSignDigest:
+    """Test the shared EVM personal_sign digest helper."""
+
+    def test_returns_32_bytes(self):
+        digest = evm_personal_sign_digest(b"hello")
+        assert len(digest) == 32
+
+    def test_matches_manual_computation(self):
+        from Crypto.Hash import keccak
+
+        msg = b"test"
+        prefix = f"\x19Ethereum Signed Message:\n{len(msg)}".encode()
+        k = keccak.new(digest_bits=256)
+        k.update(prefix + msg)
+        expected = k.digest()
+        assert evm_personal_sign_digest(msg) == expected
+
+    def test_deterministic(self):
+        assert evm_personal_sign_digest(b"x") == evm_personal_sign_digest(b"x")
+
+    def test_different_messages_differ(self):
+        assert evm_personal_sign_digest(b"a") != evm_personal_sign_digest(b"b")
+
+    def test_fuel_vs_evm_digests_differ(self):
+        """Fuel and EVM digest helpers produce different results for the same message."""
+        msg = b"same message"
+        assert fuel_personal_sign_digest(msg) != evm_personal_sign_digest(msg)
+
+
 class TestPersonalSign:
     def test_personal_sign_length(self):
         sig = personal_sign(TEST_PRIVATE_KEY, b"hello world")
@@ -117,13 +176,9 @@ class TestPersonalSign:
         assert sig1 != sig2
 
     def test_personal_sign_prefix_applied(self):
-        """Verify personalSign uses the Fuel prefix."""
+        """Verify personalSign uses the Fuel prefix via shared digest helper."""
         msg = b"test"
-        # Manual computation of what personal_sign should produce
-        prefix = b"\x19Fuel Signed Message:\n"
-        length_str = str(len(msg)).encode("utf-8")
-        full_message = prefix + length_str + msg
-        digest = hashlib.sha256(full_message).digest()
+        digest = fuel_personal_sign_digest(msg)
         expected = fuel_compact_sign(TEST_PRIVATE_KEY, digest)
         actual = personal_sign(TEST_PRIVATE_KEY, msg)
         assert actual == expected
@@ -161,14 +216,9 @@ class TestEvmPersonalSign:
         assert len(sig) == 64
 
     def test_evm_personal_sign_uses_keccak(self):
-        """Verify evm_personal_sign uses Ethereum prefix + keccak256."""
-        from Crypto.Hash import keccak
-
+        """Verify evm_personal_sign uses Ethereum prefix + keccak256 via shared digest helper."""
         msg = b"test"
-        prefix = f"\x19Ethereum Signed Message:\n{len(msg)}".encode()
-        k = keccak.new(digest_bits=256)
-        k.update(prefix + msg)
-        digest = k.digest()
+        digest = evm_personal_sign_digest(msg)
         expected = fuel_compact_sign(TEST_PRIVATE_KEY, digest)
         actual = evm_personal_sign(TEST_PRIVATE_KEY, msg)
         assert actual == expected
@@ -326,12 +376,7 @@ class TestExternalSigner:
         msg = b"hello"
         signer.personal_sign(msg)
 
-        # Manually compute expected digest
-        prefix = b"\x19Fuel Signed Message:\n"
-        length_str = str(len(msg)).encode("utf-8")
-        full_message = prefix + length_str + msg
-        expected_digest = hashlib.sha256(full_message).digest()
-
+        expected_digest = fuel_personal_sign_digest(msg)
         assert len(received_digests) == 1
         assert received_digests[0] == expected_digest
 
@@ -366,8 +411,6 @@ class TestExternalEvmSigner:
 
     def test_callback_receives_keccak_digest(self):
         """Verify that the sign_digest callback receives a keccak256 digest."""
-        from Crypto.Hash import keccak
-
         received_digests: list[bytes] = []
 
         def capture_digest(digest: bytes) -> bytes:
@@ -383,11 +426,6 @@ class TestExternalEvmSigner:
         msg = b"hello"
         signer.personal_sign(msg)
 
-        # Manually compute expected keccak256 digest
-        prefix = f"\x19Ethereum Signed Message:\n{len(msg)}".encode()
-        k = keccak.new(digest_bits=256)
-        k.update(prefix + msg)
-        expected_digest = k.digest()
-
+        expected_digest = evm_personal_sign_digest(msg)
         assert len(received_digests) == 1
         assert received_digests[0] == expected_digest

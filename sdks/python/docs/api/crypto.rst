@@ -81,8 +81,8 @@ Wallet classes
 
       Sign using Fuel's ``personalSign`` format.
 
-      Computes ``sha256("\x19Fuel Signed Message:\n" + len + message)``
-      and signs with secp256k1.
+      Uses :func:`fuel_personal_sign_digest` for message framing and
+      :func:`fuel_compact_sign` for signing.
 
       :param message: The message bytes.
       :type message: bytes
@@ -123,8 +123,8 @@ Wallet classes
 
       Sign using Ethereum's ``personal_sign`` format.
 
-      Computes ``keccak256("\x19Ethereum Signed Message:\n" + len + message)``
-      and signs with secp256k1.
+      Uses :func:`evm_personal_sign_digest` for message framing and
+      :func:`fuel_compact_sign` for signing.
 
       :param message: The message bytes.
       :type message: bytes
@@ -188,6 +188,50 @@ Wallet generation and loading
    :rtype: tuple[str, bytes, str, str]
 
 
+Digest helpers
+--------------
+
+These functions compute the message digest for each signing scheme without
+performing the actual ECDSA signing.  They are the single source of truth
+for message framing and are used internally by all ``personal_sign``
+methods (:class:`Wallet`, :class:`EvmWallet`, :class:`ExternalSigner`,
+:class:`ExternalEvmSigner`) and the module-level convenience functions.
+
+.. function:: fuel_personal_sign_digest(message)
+
+   Compute the Fuel ``personalSign`` digest.
+
+   Constructs:
+
+   .. code-block:: text
+
+      SHA-256(b"\x19Fuel Signed Message:\n" + str(len(message)) + message)
+
+   and returns the 32-byte digest.
+
+   :param message: The raw message bytes.
+   :type message: bytes
+   :returns: The 32-byte SHA-256 digest.
+   :rtype: bytes
+
+.. function:: evm_personal_sign_digest(message)
+
+   Compute the Ethereum ``personal_sign`` digest.
+
+   Constructs:
+
+   .. code-block:: text
+
+      keccak256(b"\x19Ethereum Signed Message:\n" + str(len(message)) + message)
+
+   and returns the 32-byte digest.
+
+   :param message: The raw message bytes.
+   :type message: bytes
+   :returns: The 32-byte keccak-256 digest.
+   :rtype: bytes
+
+
 Signing functions
 -----------------
 
@@ -216,9 +260,8 @@ Signing functions
    Sign a message using Fuel's ``personalSign`` format.
 
    Used for **session creation** and **withdrawals** with Fuel-native
-   wallets.
-
-   Format: ``sha256("\x19Fuel Signed Message:\n" + str(len(msg)) + msg)``
+   wallets.  Delegates to :func:`fuel_personal_sign_digest` for framing
+   and :func:`fuel_compact_sign` for signing.
 
    :param private_key_bytes: The 32-byte private key.
    :type private_key_bytes: bytes
@@ -247,8 +290,8 @@ Signing functions
    Sign using Ethereum's ``personal_sign`` prefix + keccak-256.
 
    Used for session creation and withdrawals with **EVM wallets**.
-
-   Format: ``keccak256("\x19Ethereum Signed Message:\n" + str(len(msg)) + msg)``
+   Delegates to :func:`evm_personal_sign_digest` for framing and
+   :func:`fuel_compact_sign` for signing.
 
    :param private_key_bytes: The 32-byte private key.
    :type private_key_bytes: bytes
@@ -306,8 +349,8 @@ enclaves, use the external signer classes.
 
    A Fuel-native signer backed by an external signing function.
 
-   The SDK handles Fuel-specific message framing (prefix + SHA-256
-   hashing); your callback only needs to sign a raw 32-byte digest.
+   The SDK uses :func:`fuel_personal_sign_digest` internally for message
+   framing; your callback only needs to sign a raw 32-byte digest.
 
    :param b256_address: The Fuel B256 address for this signer.
    :type b256_address: str
@@ -333,7 +376,8 @@ enclaves, use the external signer classes.
 
    An EVM signer backed by an external signing function.
 
-   Same as :class:`ExternalSigner` but uses Ethereum ``personal_sign``
+   Same as :class:`ExternalSigner` but uses
+   :func:`evm_personal_sign_digest` for Ethereum ``personal_sign``
    message framing (prefix + keccak-256 hashing).
 
    :param b256_address: The Fuel B256 address (EVM address zero-padded).

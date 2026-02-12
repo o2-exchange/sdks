@@ -14,6 +14,9 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 
+_HEX_CHARS = frozenset("0123456789abcdefABCDEF")
+
+
 class Id(str):
     """Identifier that always displays with a ``0x`` prefix.
 
@@ -21,9 +24,8 @@ class Id(str):
     ``0x`` prefix and sometimes without.  ``Id`` normalises the value on
     construction so that ``str(id)`` always starts with ``0x``.
 
-    Because ``Id`` is a ``str`` subclass it is fully backward-compatible:
-    comparisons, f-strings, logging, ``is not None`` checks, etc. all work
-    unchanged.
+    Raises :class:`ValueError` if the value contains non-hex characters
+    or is empty.
 
     >>> Id("97edbbf5")
     Id('0x97edbbf5')
@@ -32,9 +34,10 @@ class Id(str):
     """
 
     def __new__(cls, value: str) -> Id:
-        if not value.startswith("0x"):
-            value = f"0x{value}"
-        return super().__new__(cls, value.lower())
+        raw = value[2:] if value.lower().startswith("0x") else value
+        if not raw or not _HEX_CHARS.issuperset(raw):
+            raise ValueError(f"Id requires a non-empty hex string, got {value!r}")
+        return super().__new__(cls, f"0x{raw}".lower())
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, str):
@@ -42,6 +45,9 @@ class Id(str):
             return super().__eq__(normalized.lower())
         return NotImplemented
 
+    # This will return True on case-insensitive comparison, that is by design.
+    # Id("abc") == "0xABC"
+    # This is to account for EIP-55 encoded addresses.
     def __hash__(self) -> int:
         return super().__hash__()
 
@@ -167,21 +173,21 @@ class Market:
 
 @dataclass
 class MarketsResponse:
-    books_registry_id: Id
-    accounts_registry_id: Id
-    trade_account_oracle_id: Id
+    books_registry_id: Id | None
+    accounts_registry_id: Id | None
+    trade_account_oracle_id: Id | None
     chain_id: str
-    base_asset_id: Id
+    base_asset_id: Id | None
     markets: list[Market]
 
     @classmethod
     def from_dict(cls, d: dict) -> MarketsResponse:
         return cls(
-            books_registry_id=Id(d.get("books_registry_id", "")),
-            accounts_registry_id=Id(d.get("accounts_registry_id", "")),
-            trade_account_oracle_id=Id(d.get("trade_account_oracle_id", "")),
+            books_registry_id=_parse_id(d.get("books_registry_id")),
+            accounts_registry_id=_parse_id(d.get("accounts_registry_id")),
+            trade_account_oracle_id=_parse_id(d.get("trade_account_oracle_id")),
             chain_id=d.get("chain_id", "0x0000000000000000"),
-            base_asset_id=Id(d.get("base_asset_id", "")),
+            base_asset_id=_parse_id(d.get("base_asset_id")),
             markets=[Market.from_dict(m) for m in d.get("markets", [])],
         )
 
