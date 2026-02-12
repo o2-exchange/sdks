@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://docs.o2.app/logo.svg" width="120" alt="O2 Exchange">
+  <a href="https://o2.app"><img src="https://docs.o2.app/logo.svg" width="120" alt="O2 Exchange"></a>
 </p>
 
 <h1 align="center">O2 Exchange SDKs</h1>
@@ -114,8 +114,8 @@ cargo install just
 Clone the repo and install all SDK dependencies:
 
 ```bash
-git clone https://github.com/o2-exchange-org/o2-sdks.git
-cd o2-sdks
+git clone https://github.com/o2-exchange/sdks.git
+cd sdks
 just setup    # Creates Python venv, installs Python + TypeScript deps
 ```
 
@@ -153,7 +153,7 @@ just integration rust
 ## 📁 Repository Structure
 
 ```
-o2-sdks/
+sdks/
 ├── abi/
 │   ├── mainnet/          # Mainnet contract ABIs
 │   └── testnet/          # Testnet contract ABIs
@@ -180,7 +180,7 @@ o2-sdks/
 ## 📚 Documentation
 
 - [O2 Documentation](https://docs.o2.app) — Exchange docs and API reference
-- [O2 Markets API](https://api.o2.app/v1/markets) — On-chain contract IDs
+- [O2 Markets API](https://api.o2.app/v1/markets) — On-chain contract IDs (mainnet)
 - [Python SDK README](sdks/python/README.md) — Installation, usage, and examples
 - [TypeScript SDK README](sdks/typescript/README.md) — Installation, usage, and examples
 - [Rust SDK README](sdks/rust/README.md) — Installation, usage, and examples
@@ -189,4 +189,4 @@ Each SDK also includes an `AGENTS.md` with a complete LLM-optimized API referenc
 
 ## 📄 License
 
-[Apache License 2.0](LICENSE) — Copyright 2025 Breathe Speed Inc.
+[Apache License 2.0](LICENSE) — Copyright 2026 Breathe Speed Inc.
