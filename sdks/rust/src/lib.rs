@@ -24,6 +24,17 @@
 ///     Ok(())
 /// }
 /// ```
+///
+/// # Guides
+///
+/// The [`guides`] module contains integration guides covering common
+/// workflows and patterns:
+///
+/// - [`guides::trading`] — Order types, batch actions, and market maker patterns
+/// - [`guides::market_data`] — Fetching depth, trades, candles, and balances
+/// - [`guides::websocket_streams`] — Real-time data with `TypedStream`
+/// - [`guides::error_handling`] — Error types and recovery patterns
+/// - [`guides::external_signers`] — Integrating KMS/HSM via the `SignableWallet` trait
 pub mod api;
 pub mod client;
 pub mod config;
@@ -31,6 +42,7 @@ pub mod crypto;
 pub mod decimal;
 pub mod encoding;
 pub mod errors;
+pub mod guides;
 pub mod models;
 pub mod websocket;
 

@@ -10,6 +10,7 @@ on:
       - "sdks/typescript/docs/**"
       - "sdks/typescript/typedoc.json"
       - "sdks/rust/src/**"
+      - "sdks/rust/docs/**"
       - "sdks/rust/Cargo.toml"
 
 # Allow only one deployment at a time
