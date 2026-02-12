@@ -218,17 +218,13 @@ impl O2WebSocket {
 
         // Re-send all tracked subscriptions
         {
-            let guard = self.inner.lock().await;
+            let mut guard = self.inner.lock().await;
             let subs = guard.subscriptions.clone();
-            if guard.sink.is_some() {
+            if let Some(ref mut sink) = guard.sink {
                 // We need to drop guard to send, so collect first
-                drop(guard);
-                let mut inner = self.inner.lock().await;
-                if let Some(ref mut sink) = inner.sink {
-                    for sub in &subs {
-                        let text = serde_json::to_string(sub).unwrap_or_default();
-                        let _ = sink.send(WsMsg::Text(text)).await;
-                    }
+                for sub in &subs {
+                    let text = serde_json::to_string(sub).unwrap_or_default();
+                    let _ = sink.send(WsMsg::Text(text)).await;
                 }
             }
         }
@@ -451,10 +447,8 @@ impl O2WebSocket {
 
                     // Re-send all tracked subscriptions and signal reconnect
                     {
-                        let guard = inner.lock().await;
-                        let subs = guard.subscriptions.clone();
-                        drop(guard);
                         let mut guard = inner.lock().await;
+                        let subs = guard.subscriptions.clone();
                         if let Some(ref mut sink) = guard.sink {
                             for sub in &subs {
                                 let text = serde_json::to_string(sub).unwrap_or_default();
