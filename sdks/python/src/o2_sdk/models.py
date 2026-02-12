@@ -24,14 +24,20 @@ class OrderSide(Enum):
 
 
 class OrderType(Enum):
-    """Type of an order."""
+    """Simple order types (no associated data required).
+
+    For order types that require additional parameters, use the dedicated
+    dataclasses instead:
+
+    - :class:`LimitOrder` for limit orders (requires price + timestamp).
+    - :class:`BoundedMarketOrder` for bounded market orders (requires
+      max_price + min_price).
+    """
 
     SPOT = "Spot"
     MARKET = "Market"
-    LIMIT = "Limit"
     FILL_OR_KILL = "FillOrKill"
     POST_ONLY = "PostOnly"
-    BOUNDED_MARKET = "BoundedMarket"
 
 
 @dataclass

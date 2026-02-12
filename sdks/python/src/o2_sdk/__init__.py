@@ -76,6 +76,7 @@ from .errors import (
 from .models import (
     AccountCreateResponse,
     AccountInfo,
+    Action,
     ActionsResponse,
     AddressIdentity,
     AggregatedAsset,
@@ -122,6 +123,7 @@ __all__ = [
     "AccountCreateResponse",
     "AccountInfo",
     "AccountNotFound",
+    "Action",
     "ActionsResponse",
     "AddressIdentity",
     "AggregatedAsset",
