@@ -198,7 +198,7 @@ Market models
       :type: Id
 
    .. attribute:: chain_id
-      :type: Id
+      :type: str
 
    .. attribute:: base_asset_id
       :type: Id

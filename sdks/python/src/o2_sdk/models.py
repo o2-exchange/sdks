@@ -36,6 +36,15 @@ class Id(str):
             value = f"0x{value}"
         return super().__new__(cls, value.lower())
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, str):
+            normalized = other if other.lower().startswith("0x") else f"0x{other}"
+            return super().__eq__(normalized.lower())
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return super().__hash__()
+
     def __repr__(self) -> str:  # pragma: no cover - cosmetic
         return f"Id({super().__repr__()})"
 
@@ -161,7 +170,7 @@ class MarketsResponse:
     books_registry_id: Id
     accounts_registry_id: Id
     trade_account_oracle_id: Id
-    chain_id: Id
+    chain_id: str
     base_asset_id: Id
     markets: list[Market]
 
@@ -171,14 +180,16 @@ class MarketsResponse:
             books_registry_id=Id(d.get("books_registry_id", "")),
             accounts_registry_id=Id(d.get("accounts_registry_id", "")),
             trade_account_oracle_id=Id(d.get("trade_account_oracle_id", "")),
-            chain_id=Id(d.get("chain_id", "0x0000000000000000")),
+            chain_id=d.get("chain_id", "0x0000000000000000"),
             base_asset_id=Id(d.get("base_asset_id", "")),
             markets=[Market.from_dict(m) for m in d.get("markets", [])],
         )
 
     @property
     def chain_id_int(self) -> int:
-        return int(self.chain_id, 16)
+        if self.chain_id.lower().startswith("0x"):
+            return int(self.chain_id, 16)
+        return int(self.chain_id)
 
 
 # ---------------------------------------------------------------------------

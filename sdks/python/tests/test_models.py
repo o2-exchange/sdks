@@ -121,6 +121,23 @@ class TestMarketsResponse:
         assert resp.chain_id_int == 0
         assert resp.accounts_registry_id == "0xdef"
 
+    def test_chain_id_hex(self):
+        data = {
+            "chain_id": "0x26A1",
+            "markets": [],
+        }
+        resp = MarketsResponse.from_dict(data)
+        assert resp.chain_id_int == 9889
+
+    def test_chain_id_decimal(self):
+        """Decimal chain ID strings must not be reinterpreted as hex."""
+        data = {
+            "chain_id": "9889",
+            "markets": [],
+        }
+        resp = MarketsResponse.from_dict(data)
+        assert resp.chain_id_int == 9889
+
 
 class TestIdentity:
     def test_address(self):
@@ -293,6 +310,22 @@ class TestId:
 
     def test_equality_normalized(self):
         assert Id("abc") == Id("0xabc")
+
+    def test_equality_case_insensitive(self):
+        """Mixed-case hex IDs must match after Id normalization."""
+        assert Id("0xABCD1234") == Id("0xabcd1234")
+        assert Id("ABCD1234") == Id("0xabcd1234")
+
+    def test_equality_raw_string_case_insensitive(self):
+        """Id.__eq__ normalizes raw strings for case-insensitive comparison."""
+        assert Id("0xabcd") == "0xABCD"
+        assert Id("0xabcd") == "0xAbCd"
+        assert Id("0xabcd") == "0xabcd"
+        assert Id("0xabcd") == "abcd"
+
+    def test_equality_non_string(self):
+        """Non-string comparisons return NotImplemented."""
+        assert Id("0xabc") != 123
 
 
 class TestActionsResponse:
