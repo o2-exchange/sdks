@@ -170,13 +170,13 @@ jobs:
                 <h2>Python SDK</h2>
                 <p>Python client with full type annotations and Sphinx documentation.</p>
               </a>
-              <a class="card" href="typescript/">
-                <h2>TypeScript SDK</h2>
-                <p>TypeScript client with TypeDoc API reference and guides.</p>
-              </a>
               <a class="card" href="rust/">
                 <h2>Rust SDK</h2>
                 <p>Rust client with cargo doc API reference.</p>
+              </a>
+              <a class="card" href="typescript/">
+                <h2>TypeScript SDK</h2>
+                <p>TypeScript client with TypeDoc API reference and guides.</p>
               </a>
             </div>
           </body>
