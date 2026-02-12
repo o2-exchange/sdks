@@ -171,23 +171,26 @@ class Market:
         return int(quantity - math.ceil(remainder / price))
 
 
+_ZERO_ID = "0" * 64
+
+
 @dataclass
 class MarketsResponse:
-    books_registry_id: Id | None
-    accounts_registry_id: Id | None
-    trade_account_oracle_id: Id | None
+    books_registry_id: Id
+    accounts_registry_id: Id
+    trade_account_oracle_id: Id
     chain_id: str
-    base_asset_id: Id | None
+    base_asset_id: Id
     markets: list[Market]
 
     @classmethod
     def from_dict(cls, d: dict) -> MarketsResponse:
         return cls(
-            books_registry_id=_parse_id(d.get("books_registry_id")),
-            accounts_registry_id=_parse_id(d.get("accounts_registry_id")),
-            trade_account_oracle_id=_parse_id(d.get("trade_account_oracle_id")),
+            books_registry_id=Id(d.get("books_registry_id") or _ZERO_ID),
+            accounts_registry_id=Id(d.get("accounts_registry_id") or _ZERO_ID),
+            trade_account_oracle_id=Id(d.get("trade_account_oracle_id") or _ZERO_ID),
             chain_id=d.get("chain_id", "0x0000000000000000"),
-            base_asset_id=_parse_id(d.get("base_asset_id")),
+            base_asset_id=Id(d.get("base_asset_id") or _ZERO_ID),
             markets=[Market.from_dict(m) for m in d.get("markets", [])],
         )
 
