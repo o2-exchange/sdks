@@ -115,6 +115,12 @@ pub enum O2Error {
     #[error("WebSocket error: {0}")]
     WebSocketError(String),
 
+    #[error("WebSocket reconnected")]
+    WebSocketReconnected,
+
+    #[error("WebSocket disconnected: {0}")]
+    WebSocketDisconnected(String),
+
     #[error("JSON error: {0}")]
     JsonError(String),
 

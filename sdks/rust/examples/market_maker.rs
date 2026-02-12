@@ -1,29 +1,27 @@
-use o2_sdk::crypto::*;
-use o2_sdk::encoding::*;
 /// Market maker bot example for O2 Exchange.
 ///
 /// Places symmetric buy and sell orders around a reference price,
 /// cancelling stale orders and replacing them atomically each cycle.
+use o2_sdk::crypto::*;
 use o2_sdk::*;
-use serde_json::json;
 use std::time::Duration;
 
 struct MakerConfig {
-    market_pair: String,
-    spread_pct: f64,
-    order_size: f64,
+    market_pair: MarketSymbol,
+    spread_pct: UnsignedDecimal,
+    order_size: UnsignedDecimal,
     cycle_interval: Duration,
-    reference_price: f64,
+    reference_price: UnsignedDecimal,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MakerConfig {
-        market_pair: "fFUEL/fUSDC".to_string(),
-        spread_pct: 0.02,  // 2% spread
-        order_size: 100.0, // base quantity
+        market_pair: MarketSymbol::from("fFUEL/fUSDC"),
+        spread_pct: "0.02".parse()?, // 2% spread
+        order_size: "100".parse()?,  // base quantity
         cycle_interval: Duration::from_secs(30),
-        reference_price: 0.05, // starting reference price
+        reference_price: "0.05".parse()?, // starting reference price
     };
 
     let mut client = O2Client::new(Network::Testnet);
@@ -49,19 +47,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let market = client.get_market(&config.market_pair).await?;
 
-    let mut active_buy_id: Option<String> = None;
-    let mut active_sell_id: Option<String> = None;
+    let mut active_buy_id: Option<OrderId> = None;
+    let mut active_sell_id: Option<OrderId> = None;
 
     println!("Starting market maker loop...");
 
     loop {
-        let ref_price = config.reference_price;
-        let buy_price = ref_price * (1.0 - config.spread_pct);
-        let sell_price = ref_price * (1.0 + config.spread_pct);
+        let buy_price = config.reference_price * UnsignedDecimal::ONE.try_sub(config.spread_pct)?;
+        let sell_price = config.reference_price * (UnsignedDecimal::ONE + config.spread_pct);
 
-        let scaled_buy_price = market.scale_price(buy_price);
-        let scaled_sell_price = market.scale_price(sell_price);
-        let scaled_quantity = market.scale_quantity(config.order_size);
+        let scaled_buy_price = market.scale_price(&buy_price);
+        let scaled_sell_price = market.scale_price(&sell_price);
+        let scaled_quantity = market.scale_quantity(&config.order_size);
 
         println!(
             "Cycle: buy@{} sell@{} qty={}",
@@ -71,97 +68,43 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
 
         // Build actions: cancel stale + settle + create new
-        let contract_id = parse_hex_32(&market.contract_id)?;
-        let trade_account_bytes = parse_hex_32(&session.trade_account_id)?;
-        let base_asset = parse_hex_32(&market.base.asset)?;
-        let quote_asset = parse_hex_32(&market.quote.asset)?;
+        let mut actions: Vec<Action> = Vec::new();
 
-        let mut calls: Vec<CallArg> = Vec::new();
-        let mut actions_json: Vec<serde_json::Value> = Vec::new();
-
-        // Cancel existing orders (if any)
         if let Some(ref oid) = active_buy_id {
-            let oid_bytes = parse_hex_32(oid)?;
-            calls.push(cancel_order_to_call(&contract_id, &oid_bytes));
-            actions_json.push(json!({"CancelOrder": {"order_id": oid}}));
+            actions.push(Action::CancelOrder {
+                order_id: oid.clone(),
+            });
         }
-
         if let Some(ref oid) = active_sell_id {
-            let oid_bytes = parse_hex_32(oid)?;
-            calls.push(cancel_order_to_call(&contract_id, &oid_bytes));
-            actions_json.push(json!({"CancelOrder": {"order_id": oid}}));
+            actions.push(Action::CancelOrder {
+                order_id: oid.clone(),
+            });
         }
 
-        // Settle balance
-        calls.push(settle_balance_to_call(
-            &contract_id,
-            1,
-            &trade_account_bytes,
-        ));
-        actions_json.push(json!({
-            "SettleBalance": {
-                "to": {"ContractId": session.trade_account_id}
-            }
-        }));
+        actions.push(Action::SettleBalance);
 
-        // Create buy order
-        calls.push(create_order_to_call(
-            &contract_id,
-            "Buy",
-            scaled_buy_price,
-            scaled_quantity,
-            &OrderTypeEncoding::Spot,
-            market.base.decimals,
-            &base_asset,
-            &quote_asset,
-        ));
-        actions_json.push(json!({
-            "CreateOrder": {
-                "side": "Buy",
-                "price": scaled_buy_price.to_string(),
-                "quantity": scaled_quantity.to_string(),
-                "order_type": "Spot"
-            }
-        }));
+        actions.push(Action::CreateOrder {
+            side: Side::Buy,
+            price: buy_price,
+            quantity: config.order_size,
+            order_type: OrderType::Spot,
+        });
 
-        // Create sell order
-        calls.push(create_order_to_call(
-            &contract_id,
-            "Sell",
-            scaled_sell_price,
-            scaled_quantity,
-            &OrderTypeEncoding::Spot,
-            market.base.decimals,
-            &base_asset,
-            &quote_asset,
-        ));
-        actions_json.push(json!({
-            "CreateOrder": {
-                "side": "Sell",
-                "price": scaled_sell_price.to_string(),
-                "quantity": scaled_quantity.to_string(),
-                "order_type": "Spot"
-            }
-        }));
+        actions.push(Action::CreateOrder {
+            side: Side::Sell,
+            price: sell_price,
+            quantity: config.order_size,
+            order_type: OrderType::Spot,
+        });
 
-        // Check action count (max 5)
-        if calls.len() > 5 {
-            eprintln!("Too many actions ({}), trimming cancels", calls.len());
-            // Remove cancels to fit within limit
-            while calls.len() > 5 {
-                calls.remove(0);
-                actions_json.remove(0);
-            }
+        // Max 5 actions per batch — trim oldest (cancels) if needed
+        while actions.len() > 5 {
+            actions.remove(0);
         }
 
-        // Sign and submit
-        let market_actions = vec![MarketActions {
-            market_id: market.market_id.clone(),
-            actions: actions_json,
-        }];
-
+        let market_pair = market.symbol_pair();
         let result = client
-            .batch_actions_raw(&mut session, market_actions, calls, true)
+            .batch_actions(&mut session, &market_pair, actions, true)
             .await;
 
         match result {

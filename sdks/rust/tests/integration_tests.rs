@@ -3,7 +3,43 @@
 ///
 /// These tests require network access and hit the live testnet API.
 /// Run with: cargo test --features integration --test integration_tests -- --test-threads=1
+///
+/// # Order Book Pollution & Pricing Strategy
+///
+/// Integration tests create ephemeral accounts (new wallets each run), so orders
+/// from prior runs can never be cancelled. Over time, orphaned orders accumulate
+/// at whatever prices tests used. All pricing strategies must tolerate an
+/// arbitrary number of stale orders on the book.
+///
+/// ## Non-fill tests: PostOnly Buy at minimum price step
+///
+/// The minimum price step (10^{-max_precision}) is the absolute floor — no sell
+/// can exist below it, so a PostOnly Buy there always rests. The locked quote
+/// value is trivially small regardless of quantity.
+///
+/// ## Fill tests: Maker PostOnly Buy + Taker FillOrKill Sell
+///
+/// A taker *buy* walks the sell side from lowest ask upward, paying for every
+/// intermediate order. If stale sells have accumulated at high prices, this
+/// becomes prohibitively expensive. A taker *sell* walks the buy side from
+/// highest bid downward — each fill *pays the taker* rather than costing them.
+/// Stale buys at high prices are harmless (taker gets a better fill), and stale
+/// buys at low prices are never reached.
+///
+/// FillOrKill for the taker prevents leaving a resting order on the book, which
+/// is the primary vector for adding new pollution.
+///
+/// ## Cleanup: `cancel_all_orders` at test start
+///
+/// Cleans up leaked orders from earlier tests within the same suite run. Cannot
+/// fix prior runs (different wallets), but prevents intra-run accumulation.
+///
+/// ## Sizing: 10x min_order
+///
+/// Comfortable margin above the minimum order threshold to absorb fee deductions
+/// and rounding without rejection.
 use futures_util::StreamExt;
+use rust_decimal::Decimal;
 use serial_test::serial;
 use tokio::sync::OnceCell;
 
@@ -12,9 +48,9 @@ use o2_sdk::*;
 
 struct SharedSetup {
     maker_wallet: Wallet,
-    maker_trade_account_id: String,
+    maker_trade_account_id: TradeAccountId,
     taker_wallet: Wallet,
-    taker_trade_account_id: String,
+    taker_trade_account_id: TradeAccountId,
 }
 
 static SHARED: OnceCell<SharedSetup> = OnceCell::const_new();
@@ -27,6 +63,60 @@ async fn mint_with_retry(api: &O2Api, trade_account_id: &str, max_retries: usize
         if attempt < max_retries - 1 {
             tokio::time::sleep(std::time::Duration::from_secs(65)).await;
         }
+    }
+}
+
+async fn ensure_funded(
+    client: &mut O2Client,
+    trade_account_id: &TradeAccountId,
+    asset_symbol: &str,
+    min_balance: u64,
+) {
+    let mut balance: u64;
+    let mut mint_count = 0;
+    const MAX_MINTS: usize = 5;
+
+    loop {
+        let balances = client.get_balances(trade_account_id).await.unwrap();
+        balance = balances
+            .get(asset_symbol)
+            .and_then(|b| b.trading_account_balance.as_deref())
+            .unwrap_or("0")
+            .parse()
+            .unwrap_or(0);
+
+        if balance >= min_balance {
+            if mint_count > 0 {
+                eprintln!(
+                    "Balance for {} is now {} (needed {})",
+                    asset_symbol, balance, min_balance
+                );
+            }
+            break;
+        }
+
+        if mint_count >= MAX_MINTS {
+            eprintln!(
+                "Warning: Balance for {} is {} after {} mints (need {})",
+                asset_symbol, balance, mint_count, min_balance
+            );
+            break;
+        }
+
+        eprintln!(
+            "Balance for {} is {} (need {}), minting... (attempt {}/{})",
+            asset_symbol,
+            balance,
+            min_balance,
+            mint_count + 1,
+            MAX_MINTS
+        );
+
+        mint_with_retry(&client.api, trade_account_id.as_str(), 3).await;
+        mint_count += 1;
+
+        // Allow time for on-chain balance to update after mint
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
     }
 }
 
@@ -44,14 +134,15 @@ async fn whitelist_with_retry(api: &O2Api, trade_account_id: &str, max_retries: 
 }
 
 /// Place an order, retrying with re-whitelist on TraderNotWhiteListed errors.
+#[allow(clippy::too_many_arguments)]
 async fn create_order_with_whitelist_retry(
     client: &mut O2Client,
     session: &mut Session,
-    trade_account_id: &str,
-    market_pair: &str,
+    trade_account_id: &TradeAccountId,
+    market_pair: &MarketSymbol,
     side: Side,
-    price: f64,
-    quantity: f64,
+    price: UnsignedDecimal,
+    quantity: UnsignedDecimal,
     order_type: OrderType,
     settle_first: bool,
     collect_orders: bool,
@@ -80,7 +171,7 @@ async fn create_order_with_whitelist_retry(
                     other => format!("{other}").contains("TraderNotWhiteListed"),
                 };
                 if is_whitelist_err && attempt < max_retries - 1 {
-                    whitelist_with_retry(&client.api, trade_account_id, 2).await;
+                    whitelist_with_retry(&client.api, trade_account_id.as_str(), 2).await;
                     // Additional backoff on top of whitelist propagation delay
                     tokio::time::sleep(std::time::Duration::from_secs(5 * (attempt as u64 + 1)))
                         .await;
@@ -93,7 +184,7 @@ async fn create_order_with_whitelist_retry(
     unreachable!()
 }
 
-async fn setup_funded_account(client: &mut O2Client) -> (Wallet, String) {
+async fn setup_funded_account(client: &mut O2Client) -> (Wallet, TradeAccountId) {
     let wallet = client.generate_wallet().unwrap();
     let mut account = None;
     for attempt in 0..4u32 {
@@ -109,8 +200,8 @@ async fn setup_funded_account(client: &mut O2Client) -> (Wallet, String) {
         }
     }
     let trade_account_id = account.unwrap().trade_account_id.clone().unwrap();
-    whitelist_with_retry(&client.api, &trade_account_id, 4).await;
-    mint_with_retry(&client.api, &trade_account_id, 4).await;
+    whitelist_with_retry(&client.api, trade_account_id.as_str(), 4).await;
+    mint_with_retry(&client.api, trade_account_id.as_str(), 4).await;
     (wallet, trade_account_id)
 }
 
@@ -137,7 +228,7 @@ async fn test_fetch_markets() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let first = &markets[0];
-    assert!(!first.market_id.is_empty());
+    assert!(!first.market_id.as_str().is_empty());
     assert!(!first.contract_id.is_empty());
     assert!(!first.base.symbol.is_empty());
     assert!(!first.quote.symbol.is_empty());
@@ -149,7 +240,11 @@ async fn test_get_depth() {
     let markets = client.get_markets().await.unwrap();
     let market = &markets[0];
 
-    let depth = client.api.get_depth(&market.market_id, 10).await.unwrap();
+    let depth = client
+        .api
+        .get_depth(market.market_id.as_str(), 10)
+        .await
+        .unwrap();
 
     // Depth should have buys and sells (may be empty on thin testnet)
     assert!(depth.buys.is_some() || depth.sells.is_some());
@@ -163,7 +258,7 @@ async fn test_get_trades() {
 
     let trades = client
         .api
-        .get_trades(&market.market_id, "desc", 10, None, None)
+        .get_trades(market.market_id.as_str(), "desc", 10, None, None)
         .await
         .unwrap();
 
@@ -189,7 +284,7 @@ async fn test_create_account_and_whitelist() {
     // Whitelist (idempotent)
     let whitelist = client
         .api
-        .whitelist_account(&trade_account_id)
+        .whitelist_account(trade_account_id.as_str())
         .await
         .unwrap();
     assert!(whitelist.success.unwrap_or(false));
@@ -233,7 +328,7 @@ async fn test_faucet_mint() {
     // Verify the shared account exists and has a trade_account_id
     let account = client
         .api
-        .get_account_by_id(&shared.maker_trade_account_id)
+        .get_account_by_id(shared.maker_trade_account_id.as_str())
         .await
         .unwrap();
     assert!(
@@ -271,79 +366,69 @@ async fn test_full_session_creation() {
         .await
         .unwrap();
 
-    assert!(!session.trade_account_id.is_empty());
+    assert!(!session.trade_account_id.as_str().is_empty());
     assert!(!session.contract_ids.is_empty());
     assert!(session.expiry > 0);
 }
 
 /// Calculate minimum quantity that meets min_order at the given price.
-fn min_quantity_for_min_order(market: &o2_sdk::Market, price: f64) -> f64 {
-    let min_order: f64 = market.min_order.parse().unwrap_or(1_000_000.0);
-    let base_factor = 10f64.powi(market.base.decimals as i32);
-    let quote_factor = 10f64.powi(market.quote.decimals as i32);
-    let min_qty = min_order / (price * quote_factor);
+fn min_quantity_for_min_order(market: &o2_sdk::Market, price: &UnsignedDecimal) -> UnsignedDecimal {
+    let min_order: Decimal = market
+        .min_order
+        .parse()
+        .unwrap_or(Decimal::new(1_000_000, 0));
+    let base_factor = Decimal::from(10u64.pow(market.base.decimals));
+    let quote_factor = Decimal::from(10u64.pow(market.quote.decimals));
+    let min_qty = min_order / (*price.inner() * quote_factor);
     let truncate_factor =
-        10f64.powi(market.base.decimals as i32 - market.base.max_precision as i32);
+        Decimal::from(10u64.pow(market.base.decimals - market.base.max_precision));
     let step = truncate_factor / base_factor;
-    let rounded = ((min_qty / step).ceil()) * step;
-    rounded * 1.1 // 10% margin
+    let rounded = (min_qty / step).ceil() * step;
+    let with_margin = rounded * Decimal::new(11, 1); // 1.1x margin
+    UnsignedDecimal::new(with_margin).unwrap()
 }
 
-/// Get reference price, best bid, and best ask from market data.
-async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f64, f64, f64) {
-    let mut ref_price = 0.0;
-    let mut best_bid = 0.0;
-    let mut best_ask = 0.0;
+/// Moderate price for fill tests: min_order * 10^base.max_precision / 10^quote.decimals.
+/// For fETH/fUSDC: 1e9 * 10^3 / 10^9 = 1000 fUSDC/fETH.
+/// Low enough to avoid walking through expensive stale sells, high enough for comfortable
+/// order sizing.
+fn moderate_fill_price(market: &o2_sdk::Market) -> UnsignedDecimal {
+    let min_order: Decimal = market
+        .min_order
+        .parse()
+        .unwrap_or(Decimal::new(1_000_000, 0));
+    let base_precision_factor = Decimal::from(10u64.pow(market.base.max_precision));
+    let quote_factor = Decimal::from(10u64.pow(market.quote.decimals));
+    let price = min_order * base_precision_factor / quote_factor;
+    UnsignedDecimal::new(price).unwrap()
+}
 
-    if let Ok(depth) = client.api.get_depth(&market.market_id, 10).await {
-        if let Some(buys) = &depth.buys {
-            if let Some(entry) = buys.first() {
-                if let Ok(p) = entry.price.parse::<u64>() {
-                    if p > 0 {
-                        best_bid = market.format_price(p);
-                        if ref_price == 0.0 {
-                            ref_price = best_bid;
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(sells) = &depth.sells {
-            if let Some(entry) = sells.first() {
-                if let Ok(p) = entry.price.parse::<u64>() {
-                    if p > 0 {
-                        best_ask = market.format_price(p);
-                        if ref_price == 0.0 {
-                            ref_price = best_ask;
-                        }
-                    }
-                }
-            }
-        }
-    }
+/// Quantity targeting ~10x min_order value for comfortable margin.
+/// For fETH/fUSDC at price 1000: qty = 10 * 1e9 / (1000 * 1e9) = 0.01 fETH.
+fn fill_quantity(market: &o2_sdk::Market, price: &UnsignedDecimal) -> UnsignedDecimal {
+    let min_order: Decimal = market
+        .min_order
+        .parse()
+        .unwrap_or(Decimal::new(1_000_000, 0));
+    let quote_factor = Decimal::from(10u64.pow(market.quote.decimals));
+    let base_factor = Decimal::from(10u64.pow(market.base.decimals));
+    // qty = 10 * min_order / (price * quote_factor), in human units
+    let qty = Decimal::from(10u64) * min_order / (*price.inner() * quote_factor);
+    // Round up to the base precision step
+    let truncate_factor =
+        Decimal::from(10u64.pow(market.base.decimals - market.base.max_precision));
+    let step = truncate_factor / base_factor;
+    let rounded = (qty / step).ceil() * step;
+    UnsignedDecimal::new(rounded).unwrap()
+}
 
-    if let Ok(trades) = client
-        .api
-        .get_trades(&market.market_id, "desc", 5, None, None)
-        .await
-    {
-        if let Some(trade_list) = &trades.trades {
-            if let Some(first) = trade_list.first() {
-                if let Some(price_str) = &first.price {
-                    if let Ok(p) = price_str.parse::<u64>() {
-                        if p > 0 {
-                            ref_price = market.format_price(p);
-                        }
-                    }
-                }
-            }
-        }
+/// Best-effort cleanup: cancel all open orders and settle balance for an account.
+/// Prevents intra-run order leakage between tests sharing the same OnceCell accounts.
+async fn cleanup_open_orders(client: &mut O2Client, wallet: &Wallet, market_pair: &MarketSymbol) {
+    if let Ok(mut session) = client.create_session(wallet, &[market_pair], 30).await {
+        let _ = client.cancel_all_orders(&mut session, market_pair).await;
+        let _ = client.settle_balance(&mut session, market_pair).await;
     }
-
-    if ref_price == 0.0 {
-        ref_price = 1.0;
-    }
-    (ref_price, best_bid, best_ask)
 }
 
 #[tokio::test]
@@ -357,30 +442,24 @@ async fn test_order_placement_and_cancellation() {
     let market_pair = market.symbol_pair();
 
     // Re-whitelist before trading (handles propagation delays)
-    whitelist_with_retry(&client.api, &shared.maker_trade_account_id, 2).await;
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+
+    // Cancel leaked orders from earlier tests in this run
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
 
     // Use the minimum price step — guaranteed below any ask on the book.
-    // The buy cost is always ≈ min_order regardless of price, so this is affordable.
-    let price_step = 10f64.powi(-(market.quote.max_precision as i32));
-    let buy_price = price_step;
-    let quantity = min_quantity_for_min_order(market, buy_price);
+    let price_step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    let buy_price = UnsignedDecimal::new(price_step).unwrap();
+    let quantity = min_quantity_for_min_order(market, &buy_price);
 
-    // Verify quote balance
-    let balances = client
-        .get_balances(&shared.maker_trade_account_id)
-        .await
-        .unwrap();
-    let quote_symbol = &markets[0].quote.symbol;
-    let quote_balance = balances
-        .get(quote_symbol)
-        .expect("No quote balance after faucet");
-    let balance_val: u64 = quote_balance
-        .trading_account_balance
-        .as_deref()
-        .unwrap_or("0")
-        .parse()
-        .unwrap_or(0);
-    assert!(balance_val > 0, "Quote balance should be > 0");
+    // Ensure maker has quote balance — re-mint if depleted from prior test runs
+    ensure_funded(
+        &mut client,
+        &shared.maker_trade_account_id,
+        &market.quote.symbol,
+        50_000_000,
+    )
+    .await;
 
     let mut session = client
         .create_session(&shared.maker_wallet, &[&market_pair], 30)
@@ -424,6 +503,9 @@ async fn test_order_placement_and_cancellation() {
         .await
         .unwrap();
     assert!(cancel_resp.is_success(), "Cancel should succeed");
+
+    // Settle balance to release locked funds
+    let _ = client.settle_balance(&mut session, &market_pair).await;
 }
 
 #[tokio::test]
@@ -437,39 +519,35 @@ async fn test_cross_account_fill() {
     let market_pair = market.symbol_pair();
 
     // Re-whitelist both accounts before trading
-    whitelist_with_retry(&client.api, &shared.maker_trade_account_id, 2).await;
-    whitelist_with_retry(&client.api, &shared.taker_trade_account_id, 2).await;
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+    whitelist_with_retry(&client.api, shared.taker_trade_account_id.as_str(), 2).await;
 
-    // Get reference price from market data
-    let (ref_price, _best_bid, best_ask) = get_market_prices(&mut client, market).await;
+    // Cancel leaked orders from earlier tests in this run
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+    cleanup_open_orders(&mut client, &shared.taker_wallet, &market_pair).await;
 
-    // Sell price: 10% above best ask to ensure PostOnly rests.
-    // Using a moderate premium keeps taker quantity affordable.
-    let sell_price = if best_ask > 0.0 {
-        best_ask * 1.1
-    } else {
-        ref_price * 1.5
-    };
-    let quantity = min_quantity_for_min_order(market, sell_price);
+    // Maker buys (needs quote), taker sells (needs base)
+    ensure_funded(
+        &mut client,
+        &shared.maker_trade_account_id,
+        &market.quote.symbol,
+        50_000_000,
+    )
+    .await;
+    ensure_funded(
+        &mut client,
+        &shared.taker_trade_account_id,
+        &market.base.symbol,
+        50_000_000,
+    )
+    .await;
 
-    // Check maker base balance
-    let balances = client
-        .get_balances(&shared.maker_trade_account_id)
-        .await
-        .unwrap();
-    let base_symbol = &market.base.symbol;
-    let base_val: u64 = balances
-        .get(base_symbol)
-        .and_then(|b| b.trading_account_balance.as_deref())
-        .unwrap_or("0")
-        .parse()
-        .unwrap_or(0);
-    assert!(
-        base_val > 0,
-        "Maker base balance should be > 0 after faucet"
-    );
+    // Moderate price below any stale sells — maker buy rests safely.
+    // Taker sell walks buys from highest bid down, which is free (receives funds).
+    let fill_price = moderate_fill_price(market);
+    let quantity = fill_quantity(market, &fill_price);
 
-    // Maker: PostOnly Sell above market → rests on the book
+    // Maker: PostOnly Buy at moderate price — rests below all stale sells
     let mut maker_session = client
         .create_session(&shared.maker_wallet, &[&market_pair], 30)
         .await
@@ -480,8 +558,8 @@ async fn test_cross_account_fill() {
         &mut maker_session,
         &shared.maker_trade_account_id,
         &market_pair,
-        Side::Sell,
-        sell_price,
+        Side::Buy,
+        fill_price,
         quantity,
         OrderType::PostOnly,
         true,
@@ -512,11 +590,7 @@ async fn test_cross_account_fill() {
         "Maker order was unexpectedly cancelled"
     );
 
-    // Taker: buy a small multiple of the maker quantity to limit gas usage.
-    // Using too much quote balance causes OutOfGas when the taker walks
-    // through many intermediate orders on a busy book.
-    let taker_quantity = quantity * 3.0;
-
+    // Taker: FillOrKill Sell — fills against maker (or stale buys), never rests
     let mut taker_session = client
         .create_session(&shared.taker_wallet, &[&market_pair], 30)
         .await
@@ -527,10 +601,10 @@ async fn test_cross_account_fill() {
         &mut taker_session,
         &shared.taker_trade_account_id,
         &market_pair,
-        Side::Buy,
-        sell_price,
-        taker_quantity,
-        OrderType::Spot,
+        Side::Sell,
+        fill_price,
+        quantity,
+        OrderType::FillOrKill,
         true,
         true,
         3,
@@ -544,9 +618,27 @@ async fn test_cross_account_fill() {
         taker_resp.message
     );
 
-    // Cleanup: cancel maker order if still open (may or may not have been filled)
+    // Cleanup: cancel both orders if still open
     let _ = client
         .cancel_order(&mut maker_session, maker_order_id, &market_pair)
+        .await;
+    if let Some(taker_order_id) = taker_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.as_ref())
+    {
+        let _ = client
+            .cancel_order(&mut taker_session, taker_order_id, &market_pair)
+            .await;
+    }
+
+    // Settle balances to release locked funds for both accounts
+    let _ = client
+        .settle_balance(&mut maker_session, &market_pair)
+        .await;
+    let _ = client
+        .settle_balance(&mut taker_session, &market_pair)
         .await;
 }
 
@@ -580,18 +672,21 @@ async fn test_websocket_depth() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let market = &markets[0];
-    let (ws, mut stream) = client.stream_depth(&market.market_id, "10").await.unwrap();
+    let mut stream = client.stream_depth(&market.market_id, "10").await.unwrap();
 
     // Wait for one depth update with a timeout
     let update = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await;
 
     match update {
-        Ok(Some(depth)) => {
+        Ok(Some(Ok(depth))) => {
             // Should have either a view (snapshot) or changes (delta)
             assert!(
                 depth.view.is_some() || depth.changes.is_some(),
                 "Depth update should have view or changes"
             );
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
         }
         Ok(None) => {
             panic!("WebSocket stream ended unexpectedly");
@@ -602,5 +697,439 @@ async fn test_websocket_depth() {
         }
     }
 
-    let _ = ws.disconnect().await;
+    let _ = client.disconnect_ws().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn test_websocket_trades() {
+    let shared = get_shared_setup().await;
+    let mut client = O2Client::new(Network::Testnet);
+
+    let markets = client.get_markets().await.unwrap();
+    let market = &markets[0];
+    let market_pair = market.symbol_pair();
+
+    // Re-whitelist both accounts before trading
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+    whitelist_with_retry(&client.api, shared.taker_trade_account_id.as_str(), 2).await;
+
+    // Cancel leaked orders from earlier tests in this run
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+    cleanup_open_orders(&mut client, &shared.taker_wallet, &market_pair).await;
+
+    // Subscribe to trades WebSocket
+    let mut stream = client.stream_trades(&market.market_id).await.unwrap();
+
+    // Allow time for subscription to be registered on server
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Maker buys (needs quote), taker sells (needs base)
+    ensure_funded(
+        &mut client,
+        &shared.maker_trade_account_id,
+        &market.quote.symbol,
+        50_000_000,
+    )
+    .await;
+    ensure_funded(
+        &mut client,
+        &shared.taker_trade_account_id,
+        &market.base.symbol,
+        50_000_000,
+    )
+    .await;
+
+    // Moderate price below any stale sells — maker buy rests safely.
+    // Taker sell walks buys from highest bid down, which is free (receives funds).
+    let fill_price = moderate_fill_price(market);
+    let quantity = fill_quantity(market, &fill_price);
+
+    // Maker: PostOnly Buy at moderate price — rests below all stale sells
+    let mut maker_session = client
+        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let maker_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut maker_session,
+        &shared.maker_trade_account_id,
+        &market_pair,
+        Side::Buy,
+        fill_price,
+        quantity,
+        OrderType::PostOnly,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        maker_resp.is_success(),
+        "Maker order failed: {:?}",
+        maker_resp.message
+    );
+    let maker_orders = maker_resp
+        .orders
+        .as_ref()
+        .expect("Should have maker orders");
+    assert!(!maker_orders.is_empty());
+    let maker_order = &maker_orders[0];
+    let maker_order_id = maker_order
+        .order_id
+        .as_ref()
+        .expect("Maker order should have order_id");
+
+    // Taker: FillOrKill Sell — fills against maker (or stale buys), never rests
+    let mut taker_session = client
+        .create_session(&shared.taker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let taker_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut taker_session,
+        &shared.taker_trade_account_id,
+        &market_pair,
+        Side::Sell,
+        fill_price,
+        quantity,
+        OrderType::FillOrKill,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        taker_resp.is_success(),
+        "Taker order failed: {:?}",
+        taker_resp.message
+    );
+
+    // Wait for trade update with timeout
+    let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
+
+    match update {
+        Ok(Some(Ok(trade))) => {
+            // Verify the TradeUpdate structure is valid
+            assert!(
+                trade.action.is_some() || trade.trades.is_some() || trade.market_id.is_some(),
+                "Trade update should have at least one field populated"
+            );
+            eprintln!("Received trade update: {:?}", trade.action);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
+        }
+        Ok(None) => {
+            panic!("WebSocket stream ended unexpectedly");
+        }
+        Err(_) => {
+            // Cross-account fill generated a trade, so a TradeUpdate MUST arrive
+            panic!(
+                "WebSocket trades timed out after successful cross-account fill - subscription is broken"
+            );
+        }
+    }
+
+    // Cleanup: cancel both orders if still open
+    let _ = client
+        .cancel_order(&mut maker_session, maker_order_id, &market_pair)
+        .await;
+    if let Some(taker_order_id) = taker_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.as_ref())
+    {
+        let _ = client
+            .cancel_order(&mut taker_session, taker_order_id, &market_pair)
+            .await;
+    }
+
+    // Settle balances to release locked funds for both accounts
+    let _ = client
+        .settle_balance(&mut maker_session, &market_pair)
+        .await;
+    let _ = client
+        .settle_balance(&mut taker_session, &market_pair)
+        .await;
+
+    let _ = client.disconnect_ws().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn test_websocket_orders() {
+    let shared = get_shared_setup().await;
+    let mut client = O2Client::new(Network::Testnet);
+
+    let markets = client.get_markets().await.unwrap();
+    let market = &markets[0];
+    let market_pair = market.symbol_pair();
+
+    // Re-whitelist before trading
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+
+    // Cancel leaked orders from earlier tests in this run
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+
+    // Connect to WebSocket and subscribe to orders
+    let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
+    let mut stream = client.stream_orders(&[identity]).await.unwrap();
+
+    // Allow time for subscription to be registered on server
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Create a session and place an order
+    let mut session = client
+        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    // Use minimum price step for PostOnly Buy
+    let price_step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    let buy_price = UnsignedDecimal::new(price_step).unwrap();
+    let quantity = min_quantity_for_min_order(market, &buy_price);
+
+    let order_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut session,
+        &shared.maker_trade_account_id,
+        &market_pair,
+        Side::Buy,
+        buy_price,
+        quantity,
+        OrderType::PostOnly,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    let order_id = order_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.clone());
+
+    // Wait for order update with timeout
+    let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
+
+    match update {
+        Ok(Some(Ok(order_update))) => {
+            assert!(
+                order_update.action.is_some() || order_update.orders.is_some(),
+                "Order update should have action or orders"
+            );
+            eprintln!("Received order update: {:?}", order_update.action);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
+        }
+        Ok(None) => {
+            panic!("WebSocket stream ended unexpectedly");
+        }
+        Err(_) => {
+            // Order placement succeeded, so an OrderUpdate MUST arrive
+            panic!(
+                "WebSocket orders timed out after successful order placement - subscription is broken"
+            );
+        }
+    }
+
+    // Cleanup: cancel the order if it exists
+    if let Some(oid) = order_id {
+        let _ = client.cancel_order(&mut session, &oid, &market_pair).await;
+        // Settle balance to release locked funds
+        let _ = client.settle_balance(&mut session, &market_pair).await;
+    }
+
+    let _ = client.disconnect_ws().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn test_websocket_balances() {
+    let shared = get_shared_setup().await;
+    let mut client = O2Client::new(Network::Testnet);
+
+    let markets = client.get_markets().await.unwrap();
+    let market = &markets[0];
+    let market_pair = market.symbol_pair();
+
+    // Re-whitelist before trading
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+
+    // Cancel leaked orders from earlier tests in this run
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+
+    // Connect to WebSocket and subscribe to balances
+    let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
+    let mut stream = client.stream_balances(&[identity]).await.unwrap();
+
+    // Allow time for subscription to be registered on server
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Create a session and place an order (which locks balance)
+    let mut session = client
+        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let price_step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    let buy_price = UnsignedDecimal::new(price_step).unwrap();
+    let quantity = min_quantity_for_min_order(market, &buy_price);
+
+    let order_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut session,
+        &shared.maker_trade_account_id,
+        &market_pair,
+        Side::Buy,
+        buy_price,
+        quantity,
+        OrderType::PostOnly,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    let order_id = order_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.clone());
+
+    // Wait for balance update with timeout
+    let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
+
+    match update {
+        Ok(Some(Ok(balance_update))) => {
+            assert!(
+                balance_update.action.is_some() || balance_update.balance.is_some(),
+                "Balance update should have action or balance"
+            );
+            eprintln!("Received balance update: {:?}", balance_update.action);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
+        }
+        Ok(None) => {
+            panic!("WebSocket stream ended unexpectedly");
+        }
+        Err(_) => {
+            // Order placement locks balance, so a BalanceUpdate MUST arrive
+            panic!(
+                "WebSocket balances timed out after successful order placement - subscription is broken"
+            );
+        }
+    }
+
+    // Cleanup
+    if let Some(oid) = order_id {
+        let _ = client.cancel_order(&mut session, &oid, &market_pair).await;
+        // Settle balance to release locked funds
+        let _ = client.settle_balance(&mut session, &market_pair).await;
+    }
+
+    let _ = client.disconnect_ws().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn test_websocket_nonce() {
+    let shared = get_shared_setup().await;
+    let mut client = O2Client::new(Network::Testnet);
+
+    let markets = client.get_markets().await.unwrap();
+    let market = &markets[0];
+    let market_pair = market.symbol_pair();
+
+    // Re-whitelist before trading
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+
+    // Cancel leaked orders from earlier tests in this run
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+
+    // Connect to WebSocket and subscribe to nonce
+    let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
+    let mut stream = client.stream_nonce(&[identity]).await.unwrap();
+
+    // Allow time for subscription to be registered on server
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Create a session and place an order (which bumps nonce)
+    let mut session = client
+        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let price_step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    let buy_price = UnsignedDecimal::new(price_step).unwrap();
+    let quantity = min_quantity_for_min_order(market, &buy_price);
+
+    let order_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut session,
+        &shared.maker_trade_account_id,
+        &market_pair,
+        Side::Buy,
+        buy_price,
+        quantity,
+        OrderType::PostOnly,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    let order_id = order_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.clone());
+
+    // Wait for nonce update with timeout
+    let update = tokio::time::timeout(std::time::Duration::from_secs(30), stream.next()).await;
+
+    match update {
+        Ok(Some(Ok(nonce_update))) => {
+            assert!(
+                nonce_update.action.is_some() || nonce_update.nonce.is_some(),
+                "Nonce update should have action or nonce"
+            );
+            eprintln!("Received nonce update: {:?}", nonce_update.nonce);
+        }
+        Ok(Some(Err(e))) => {
+            panic!("WebSocket stream error: {e}");
+        }
+        Ok(None) => {
+            panic!("WebSocket stream ended unexpectedly");
+        }
+        Err(_) => {
+            // Order placement bumps nonce, so a NonceUpdate MUST arrive
+            panic!(
+                "WebSocket nonce timed out after successful order placement - subscription is broken"
+            );
+        }
+    }
+
+    // Cleanup
+    if let Some(oid) = order_id {
+        let _ = client.cancel_order(&mut session, &oid, &market_pair).await;
+        // Settle balance to release locked funds
+        let _ = client.settle_balance(&mut session, &market_pair).await;
+    }
+
+    let _ = client.disconnect_ws().await;
 }

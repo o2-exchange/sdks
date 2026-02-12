@@ -316,7 +316,7 @@ impl O2Api {
     }
 
     /// POST /v1/session/actions - Execute trading actions.
-    pub async fn submit_actions(
+    pub(crate) async fn submit_actions(
         &self,
         owner_id: &str,
         request: &SessionActionsRequest,

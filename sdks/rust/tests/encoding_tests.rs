@@ -4,6 +4,7 @@
 /// and action signing bytes.
 use o2_sdk::encoding::*;
 use o2_sdk::models::{Market, MarketAsset};
+use o2_sdk::UnsignedDecimal;
 
 #[test]
 fn test_u64_be_zero() {
@@ -496,14 +497,18 @@ fn test_order_type_spot_to_encoding() {
 #[test]
 fn test_order_type_limit_to_encoding() {
     let market = test_market();
+    let price: UnsignedDecimal = "0.05".parse().unwrap();
     let (enc, json) = o2_sdk::OrderType::Limit {
-        price: 0.05,
+        price: price.clone(),
         timestamp: 1700000000,
     }
     .to_encoding(&market);
     match enc {
-        OrderTypeEncoding::Limit { price, timestamp } => {
-            assert_eq!(price, market.scale_price(0.05));
+        OrderTypeEncoding::Limit {
+            price: scaled,
+            timestamp,
+        } => {
+            assert_eq!(scaled, market.scale_price(&price));
             assert_eq!(timestamp, 1700000000);
         }
         _ => panic!("Expected Limit encoding"),
@@ -515,9 +520,11 @@ fn test_order_type_limit_to_encoding() {
 #[test]
 fn test_order_type_bounded_market_to_encoding() {
     let market = test_market();
+    let max_p: UnsignedDecimal = "1.0".parse().unwrap();
+    let min_p: UnsignedDecimal = "0.5".parse().unwrap();
     let (enc, json) = o2_sdk::OrderType::BoundedMarket {
-        max_price: 1.0,
-        min_price: 0.5,
+        max_price: max_p.clone(),
+        min_price: min_p.clone(),
     }
     .to_encoding(&market);
     match enc {
@@ -525,8 +532,8 @@ fn test_order_type_bounded_market_to_encoding() {
             max_price,
             min_price,
         } => {
-            assert_eq!(max_price, market.scale_price(1.0));
-            assert_eq!(min_price, market.scale_price(0.5));
+            assert_eq!(max_price, market.scale_price(&max_p));
+            assert_eq!(min_price, market.scale_price(&min_p));
         }
         _ => panic!("Expected BoundedMarket encoding"),
     }

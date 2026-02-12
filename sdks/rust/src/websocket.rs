@@ -58,12 +58,21 @@ impl Default for WsConfig {
 }
 
 /// A typed stream of WebSocket messages.
+///
+/// Each item is a `Result<T, O2Error>`:
+/// - `Ok(update)` — a normal data message
+/// - `Err(O2Error::WebSocketReconnected)` — the connection was lost and re-established;
+///   consumers of non-snapshot subscriptions should re-fetch current state
+/// - `Err(O2Error::WebSocketDisconnected(_))` — permanent connection loss
+///
+/// For simple usage, `while let Some(Ok(update)) = stream.next().await` ignores
+/// lifecycle signals and stops on any error.
 pub struct TypedStream<T> {
-    rx: mpsc::UnboundedReceiver<T>,
+    rx: mpsc::UnboundedReceiver<Result<T, O2Error>>,
 }
 
 impl<T> Stream for TypedStream<T> {
-    type Item = T;
+    type Item = Result<T, O2Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.rx.poll_recv(cx)
@@ -74,11 +83,11 @@ impl<T> Stream for TypedStream<T> {
 struct WsInner {
     sink: Option<WsSink>,
     subscriptions: Vec<serde_json::Value>,
-    depth_senders: Vec<mpsc::UnboundedSender<DepthUpdate>>,
-    orders_senders: Vec<mpsc::UnboundedSender<OrderUpdate>>,
-    trades_senders: Vec<mpsc::UnboundedSender<TradeUpdate>>,
-    balances_senders: Vec<mpsc::UnboundedSender<BalanceUpdate>>,
-    nonce_senders: Vec<mpsc::UnboundedSender<NonceUpdate>>,
+    depth_senders: Vec<mpsc::UnboundedSender<Result<DepthUpdate, O2Error>>>,
+    orders_senders: Vec<mpsc::UnboundedSender<Result<OrderUpdate, O2Error>>>,
+    trades_senders: Vec<mpsc::UnboundedSender<Result<TradeUpdate, O2Error>>>,
+    balances_senders: Vec<mpsc::UnboundedSender<Result<BalanceUpdate, O2Error>>>,
+    nonce_senders: Vec<mpsc::UnboundedSender<Result<NonceUpdate, O2Error>>>,
 }
 
 impl WsInner {
@@ -110,6 +119,45 @@ impl WsInner {
         self.trades_senders.clear();
         self.balances_senders.clear();
         self.nonce_senders.clear();
+    }
+
+    /// Signal all subscribers that a reconnect occurred.
+    fn signal_reconnected(&self) {
+        for tx in &self.depth_senders {
+            let _ = tx.send(Err(O2Error::WebSocketReconnected));
+        }
+        for tx in &self.orders_senders {
+            let _ = tx.send(Err(O2Error::WebSocketReconnected));
+        }
+        for tx in &self.trades_senders {
+            let _ = tx.send(Err(O2Error::WebSocketReconnected));
+        }
+        for tx in &self.balances_senders {
+            let _ = tx.send(Err(O2Error::WebSocketReconnected));
+        }
+        for tx in &self.nonce_senders {
+            let _ = tx.send(Err(O2Error::WebSocketReconnected));
+        }
+    }
+
+    /// Send disconnect error to all subscribers, then clear.
+    fn close_all_senders_with_error(&mut self, msg: &str) {
+        for tx in &self.depth_senders {
+            let _ = tx.send(Err(O2Error::WebSocketDisconnected(msg.to_string())));
+        }
+        for tx in &self.orders_senders {
+            let _ = tx.send(Err(O2Error::WebSocketDisconnected(msg.to_string())));
+        }
+        for tx in &self.trades_senders {
+            let _ = tx.send(Err(O2Error::WebSocketDisconnected(msg.to_string())));
+        }
+        for tx in &self.balances_senders {
+            let _ = tx.send(Err(O2Error::WebSocketDisconnected(msg.to_string())));
+        }
+        for tx in &self.nonce_senders {
+            let _ = tx.send(Err(O2Error::WebSocketDisconnected(msg.to_string())));
+        }
+        self.close_all_senders();
     }
 }
 
@@ -274,35 +322,35 @@ impl O2WebSocket {
                         "subscribe_depth" | "subscribe_depth_update" => {
                             if let Ok(update) = serde_json::from_value::<DepthUpdate>(parsed) {
                                 for tx in &guard.depth_senders {
-                                    let _ = tx.send(update.clone());
+                                    let _ = tx.send(Ok(update.clone()));
                                 }
                             }
                         }
                         "subscribe_orders" => {
                             if let Ok(update) = serde_json::from_value::<OrderUpdate>(parsed) {
                                 for tx in &guard.orders_senders {
-                                    let _ = tx.send(update.clone());
+                                    let _ = tx.send(Ok(update.clone()));
                                 }
                             }
                         }
-                        "trades" => {
+                        "subscribe_trades" => {
                             if let Ok(update) = serde_json::from_value::<TradeUpdate>(parsed) {
                                 for tx in &guard.trades_senders {
-                                    let _ = tx.send(update.clone());
+                                    let _ = tx.send(Ok(update.clone()));
                                 }
                             }
                         }
                         "subscribe_balances" => {
                             if let Ok(update) = serde_json::from_value::<BalanceUpdate>(parsed) {
                                 for tx in &guard.balances_senders {
-                                    let _ = tx.send(update.clone());
+                                    let _ = tx.send(Ok(update.clone()));
                                 }
                             }
                         }
-                        "nonce" => {
+                        "subscribe_nonce" => {
                             if let Ok(update) = serde_json::from_value::<NonceUpdate>(parsed) {
                                 for tx in &guard.nonce_senders {
-                                    let _ = tx.send(update.clone());
+                                    let _ = tx.send(Ok(update.clone()));
                                 }
                             }
                         }
@@ -380,8 +428,9 @@ impl O2WebSocket {
         while should_run.load(Ordering::SeqCst) {
             if config.max_attempts > 0 && attempts >= config.max_attempts {
                 // Max attempts reached — signal all subscribers and stop
+                should_run.store(false, Ordering::SeqCst);
                 let mut guard = inner.lock().await;
-                guard.close_all_senders();
+                guard.close_all_senders_with_error("Connection lost after max retries");
                 return;
             }
 
@@ -400,7 +449,7 @@ impl O2WebSocket {
                     connected.store(true, Ordering::SeqCst);
                     *last_pong.lock().await = Instant::now();
 
-                    // Re-send all tracked subscriptions
+                    // Re-send all tracked subscriptions and signal reconnect
                     {
                         let guard = inner.lock().await;
                         let subs = guard.subscriptions.clone();
@@ -412,6 +461,7 @@ impl O2WebSocket {
                                 let _ = sink.send(WsMsg::Text(text)).await;
                             }
                         }
+                        guard.signal_reconnected();
                     }
 
                     // Spawn new read loop (recursive via reconnect)
@@ -463,7 +513,7 @@ impl O2WebSocket {
         self.connected.load(Ordering::SeqCst)
     }
 
-    /// Subscribe to order book depth. Returns a stream of DepthUpdate messages.
+    /// Subscribe to order book depth. Returns a stream of `Result<DepthUpdate, O2Error>`.
     pub async fn stream_depth(
         &self,
         market_id: &str,
@@ -486,7 +536,7 @@ impl O2WebSocket {
         Ok(TypedStream { rx })
     }
 
-    /// Subscribe to order updates. Returns a stream of OrderUpdate messages.
+    /// Subscribe to order updates. Returns a stream of `Result<OrderUpdate, O2Error>`.
     pub async fn stream_orders(
         &self,
         identities: &[Identity],
@@ -507,7 +557,7 @@ impl O2WebSocket {
         Ok(TypedStream { rx })
     }
 
-    /// Subscribe to trades. Returns a stream of TradeUpdate messages.
+    /// Subscribe to trades. Returns a stream of `Result<TradeUpdate, O2Error>`.
     pub async fn stream_trades(
         &self,
         market_id: &str,
@@ -528,7 +578,7 @@ impl O2WebSocket {
         Ok(TypedStream { rx })
     }
 
-    /// Subscribe to balance updates. Returns a stream of BalanceUpdate messages.
+    /// Subscribe to balance updates. Returns a stream of `Result<BalanceUpdate, O2Error>`.
     pub async fn stream_balances(
         &self,
         identities: &[Identity],
@@ -549,7 +599,7 @@ impl O2WebSocket {
         Ok(TypedStream { rx })
     }
 
-    /// Subscribe to nonce updates. Returns a stream of NonceUpdate messages.
+    /// Subscribe to nonce updates. Returns a stream of `Result<NonceUpdate, O2Error>`.
     pub async fn stream_nonce(
         &self,
         identities: &[Identity],
@@ -641,6 +691,12 @@ impl O2WebSocket {
         Ok(())
     }
 
+    /// Check if the WebSocket has been permanently terminated
+    /// (max reconnect attempts exhausted or explicitly stopped).
+    pub fn is_terminated(&self) -> bool {
+        !self.should_run.load(Ordering::SeqCst)
+    }
+
     /// Close the WebSocket connection and stop all tasks.
     pub async fn disconnect(&self) -> Result<(), O2Error> {
         self.should_run.store(false, Ordering::SeqCst);
@@ -656,5 +712,17 @@ impl O2WebSocket {
         guard.close_all_senders();
 
         Ok(())
+    }
+}
+
+impl Drop for O2WebSocket {
+    fn drop(&mut self) {
+        self.should_run.store(false, Ordering::SeqCst);
+        if let Some(h) = self.reader_handle.take() {
+            h.abort();
+        }
+        if let Some(h) = self.ping_handle.take() {
+            h.abort();
+        }
     }
 }

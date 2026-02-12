@@ -28,6 +28,7 @@ pub mod api;
 pub mod client;
 pub mod config;
 pub mod crypto;
+pub mod decimal;
 pub mod encoding;
 pub mod errors;
 pub mod models;
@@ -36,9 +37,11 @@ pub mod websocket;
 // Re-export primary types for convenience.
 pub use client::O2Client;
 pub use config::{Network, NetworkConfig};
-pub use crypto::{EvmWallet, Wallet};
-pub use encoding::{CallArg, OrderTypeEncoding, GAS_MAX};
+pub use crypto::{EvmWallet, SignableWallet, Wallet};
+pub use decimal::UnsignedDecimal;
 pub use errors::O2Error;
 pub use models::*;
-pub use models::{Action, OrderType, Side};
+pub use models::{
+    Action, AssetId, MarketId, MarketSymbol, OrderId, OrderType, Side, TradeAccountId,
+};
 pub use websocket::{O2WebSocket, TypedStream, WsConfig};
