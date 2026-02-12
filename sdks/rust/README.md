@@ -78,6 +78,16 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
 
+## Guides
+
+| Guide | Description |
+|-------|-------------|
+| [Trading](docs/guides/trading.md) | Order types, batch actions, cancel/replace, and market maker patterns |
+| [Market Data](docs/guides/market-data.md) | Fetching depth, trades, candles, tickers, and balances |
+| [WebSocket Streams](docs/guides/websocket-streams.md) | Real-time data with `TypedStream` and reconnection handling |
+| [Error Handling](docs/guides/error-handling.md) | Error types, recovery patterns, and robust trading loops |
+| [External Signers](docs/guides/external-signers.md) | Integrating KMS/HSM via the `SignableWallet` trait |
+
 ## Examples
 
 | Example | Description |
