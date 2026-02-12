@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/docs.yml"
       - "sdks/python/docs/**"
       - "sdks/typescript/src/**"
       - "sdks/typescript/docs/**"
