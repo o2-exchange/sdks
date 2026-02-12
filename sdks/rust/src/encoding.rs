@@ -308,10 +308,10 @@ pub fn action_to_call(
             quantity,
             order_type,
         } => {
-            let base_asset = parse_hex_32(&market.base.asset)?;
-            let quote_asset = parse_hex_32(&market.quote.asset)?;
-            let scaled_price = market.scale_price(*price);
-            let scaled_quantity = market.scale_quantity(*quantity);
+            let base_asset = parse_hex_32(market.base.asset.as_str())?;
+            let quote_asset = parse_hex_32(market.quote.asset.as_str())?;
+            let scaled_price = market.scale_price(price);
+            let scaled_quantity = market.scale_quantity(quantity);
             let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity);
 
             market
@@ -344,7 +344,7 @@ pub fn action_to_call(
             Ok((call, json))
         }
         Action::CancelOrder { order_id } => {
-            let order_id_bytes = parse_hex_32(order_id)?;
+            let order_id_bytes = parse_hex_32(order_id.as_str())?;
             let call = cancel_order_to_call(&contract_id, &order_id_bytes);
             let json = serde_json::json!({
                 "CancelOrder": { "order_id": order_id }

@@ -43,8 +43,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             &mut session,
             &market_pair,
             Side::Buy,
-            0.001, // price (human-readable)
-            100.0, // quantity (human-readable)
+            "0.001".parse()?, // price (human-readable)
+            "100".parse()?,   // quantity (human-readable)
             OrderType::Spot,
             true, // settle first
             true, // collect orders

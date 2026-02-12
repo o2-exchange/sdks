@@ -4,6 +4,7 @@
 /// These tests require network access and hit the live testnet API.
 /// Run with: cargo test --features integration --test integration_tests -- --test-threads=1
 use futures_util::StreamExt;
+use rust_decimal::Decimal;
 use serial_test::serial;
 use tokio::sync::OnceCell;
 
@@ -12,9 +13,9 @@ use o2_sdk::*;
 
 struct SharedSetup {
     maker_wallet: Wallet,
-    maker_trade_account_id: String,
+    maker_trade_account_id: TradeAccountId,
     taker_wallet: Wallet,
-    taker_trade_account_id: String,
+    taker_trade_account_id: TradeAccountId,
 }
 
 static SHARED: OnceCell<SharedSetup> = OnceCell::const_new();
@@ -47,11 +48,11 @@ async fn whitelist_with_retry(api: &O2Api, trade_account_id: &str, max_retries: 
 async fn create_order_with_whitelist_retry(
     client: &mut O2Client,
     session: &mut Session,
-    trade_account_id: &str,
-    market_pair: &str,
+    trade_account_id: &TradeAccountId,
+    market_pair: &MarketSymbol,
     side: Side,
-    price: f64,
-    quantity: f64,
+    price: UnsignedDecimal,
+    quantity: UnsignedDecimal,
     order_type: OrderType,
     settle_first: bool,
     collect_orders: bool,
@@ -80,7 +81,7 @@ async fn create_order_with_whitelist_retry(
                     other => format!("{other}").contains("TraderNotWhiteListed"),
                 };
                 if is_whitelist_err && attempt < max_retries - 1 {
-                    whitelist_with_retry(&client.api, trade_account_id, 2).await;
+                    whitelist_with_retry(&client.api, trade_account_id.as_str(), 2).await;
                     // Additional backoff on top of whitelist propagation delay
                     tokio::time::sleep(std::time::Duration::from_secs(5 * (attempt as u64 + 1)))
                         .await;
@@ -93,7 +94,7 @@ async fn create_order_with_whitelist_retry(
     unreachable!()
 }
 
-async fn setup_funded_account(client: &mut O2Client) -> (Wallet, String) {
+async fn setup_funded_account(client: &mut O2Client) -> (Wallet, TradeAccountId) {
     let wallet = client.generate_wallet().unwrap();
     let mut account = None;
     for attempt in 0..4u32 {
@@ -109,8 +110,8 @@ async fn setup_funded_account(client: &mut O2Client) -> (Wallet, String) {
         }
     }
     let trade_account_id = account.unwrap().trade_account_id.clone().unwrap();
-    whitelist_with_retry(&client.api, &trade_account_id, 4).await;
-    mint_with_retry(&client.api, &trade_account_id, 4).await;
+    whitelist_with_retry(&client.api, trade_account_id.as_str(), 4).await;
+    mint_with_retry(&client.api, trade_account_id.as_str(), 4).await;
     (wallet, trade_account_id)
 }
 
@@ -137,7 +138,7 @@ async fn test_fetch_markets() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let first = &markets[0];
-    assert!(!first.market_id.is_empty());
+    assert!(!first.market_id.as_str().is_empty());
     assert!(!first.contract_id.is_empty());
     assert!(!first.base.symbol.is_empty());
     assert!(!first.quote.symbol.is_empty());
@@ -149,7 +150,11 @@ async fn test_get_depth() {
     let markets = client.get_markets().await.unwrap();
     let market = &markets[0];
 
-    let depth = client.api.get_depth(&market.market_id, 10).await.unwrap();
+    let depth = client
+        .api
+        .get_depth(market.market_id.as_str(), 10)
+        .await
+        .unwrap();
 
     // Depth should have buys and sells (may be empty on thin testnet)
     assert!(depth.buys.is_some() || depth.sells.is_some());
@@ -163,7 +168,7 @@ async fn test_get_trades() {
 
     let trades = client
         .api
-        .get_trades(&market.market_id, "desc", 10, None, None)
+        .get_trades(market.market_id.as_str(), "desc", 10, None, None)
         .await
         .unwrap();
 
@@ -189,7 +194,7 @@ async fn test_create_account_and_whitelist() {
     // Whitelist (idempotent)
     let whitelist = client
         .api
-        .whitelist_account(&trade_account_id)
+        .whitelist_account(trade_account_id.as_str())
         .await
         .unwrap();
     assert!(whitelist.success.unwrap_or(false));
@@ -233,7 +238,7 @@ async fn test_faucet_mint() {
     // Verify the shared account exists and has a trade_account_id
     let account = client
         .api
-        .get_account_by_id(&shared.maker_trade_account_id)
+        .get_account_by_id(shared.maker_trade_account_id.as_str())
         .await
         .unwrap();
     assert!(
@@ -271,38 +276,46 @@ async fn test_full_session_creation() {
         .await
         .unwrap();
 
-    assert!(!session.trade_account_id.is_empty());
+    assert!(!session.trade_account_id.as_str().is_empty());
     assert!(!session.contract_ids.is_empty());
     assert!(session.expiry > 0);
 }
 
 /// Calculate minimum quantity that meets min_order at the given price.
-fn min_quantity_for_min_order(market: &o2_sdk::Market, price: f64) -> f64 {
-    let min_order: f64 = market.min_order.parse().unwrap_or(1_000_000.0);
-    let base_factor = 10f64.powi(market.base.decimals as i32);
-    let quote_factor = 10f64.powi(market.quote.decimals as i32);
-    let min_qty = min_order / (price * quote_factor);
+fn min_quantity_for_min_order(market: &o2_sdk::Market, price: &UnsignedDecimal) -> UnsignedDecimal {
+    let min_order: Decimal = market
+        .min_order
+        .parse()
+        .unwrap_or(Decimal::new(1_000_000, 0));
+    let base_factor = Decimal::from(10u64.pow(market.base.decimals));
+    let quote_factor = Decimal::from(10u64.pow(market.quote.decimals));
+    let min_qty = min_order / (*price.inner() * quote_factor);
     let truncate_factor =
-        10f64.powi(market.base.decimals as i32 - market.base.max_precision as i32);
+        Decimal::from(10u64.pow(market.base.decimals - market.base.max_precision));
     let step = truncate_factor / base_factor;
-    let rounded = ((min_qty / step).ceil()) * step;
-    rounded * 1.1 // 10% margin
+    let rounded = (min_qty / step).ceil() * step;
+    let with_margin = rounded * Decimal::new(11, 1); // 1.1x margin
+    UnsignedDecimal::new(with_margin).unwrap()
 }
 
 /// Get reference price, best bid, and best ask from market data.
-async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f64, f64, f64) {
-    let mut ref_price = 0.0;
-    let mut best_bid = 0.0;
-    let mut best_ask = 0.0;
+async fn get_market_prices(
+    client: &mut O2Client,
+    market: &o2_sdk::Market,
+) -> (UnsignedDecimal, UnsignedDecimal, UnsignedDecimal) {
+    let zero = UnsignedDecimal::zero();
+    let mut ref_price = zero.clone();
+    let mut best_bid = zero.clone();
+    let mut best_ask = zero.clone();
 
-    if let Ok(depth) = client.api.get_depth(&market.market_id, 10).await {
+    if let Ok(depth) = client.api.get_depth(market.market_id.as_str(), 10).await {
         if let Some(buys) = &depth.buys {
             if let Some(entry) = buys.first() {
                 if let Ok(p) = entry.price.parse::<u64>() {
                     if p > 0 {
                         best_bid = market.format_price(p);
-                        if ref_price == 0.0 {
-                            ref_price = best_bid;
+                        if ref_price == zero {
+                            ref_price = best_bid.clone();
                         }
                     }
                 }
@@ -313,8 +326,8 @@ async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f
                 if let Ok(p) = entry.price.parse::<u64>() {
                     if p > 0 {
                         best_ask = market.format_price(p);
-                        if ref_price == 0.0 {
-                            ref_price = best_ask;
+                        if ref_price == zero {
+                            ref_price = best_ask.clone();
                         }
                     }
                 }
@@ -324,7 +337,7 @@ async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f
 
     if let Ok(trades) = client
         .api
-        .get_trades(&market.market_id, "desc", 5, None, None)
+        .get_trades(market.market_id.as_str(), "desc", 5, None, None)
         .await
     {
         if let Some(trade_list) = &trades.trades {
@@ -340,8 +353,8 @@ async fn get_market_prices(client: &mut O2Client, market: &o2_sdk::Market) -> (f
         }
     }
 
-    if ref_price == 0.0 {
-        ref_price = 1.0;
+    if ref_price == zero {
+        ref_price = UnsignedDecimal::from(1u64);
     }
     (ref_price, best_bid, best_ask)
 }
@@ -357,13 +370,13 @@ async fn test_order_placement_and_cancellation() {
     let market_pair = market.symbol_pair();
 
     // Re-whitelist before trading (handles propagation delays)
-    whitelist_with_retry(&client.api, &shared.maker_trade_account_id, 2).await;
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
 
     // Use the minimum price step — guaranteed below any ask on the book.
     // The buy cost is always ≈ min_order regardless of price, so this is affordable.
-    let price_step = 10f64.powi(-(market.quote.max_precision as i32));
-    let buy_price = price_step;
-    let quantity = min_quantity_for_min_order(market, buy_price);
+    let price_step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    let buy_price = UnsignedDecimal::new(price_step).unwrap();
+    let quantity = min_quantity_for_min_order(market, &buy_price);
 
     // Verify quote balance
     let balances = client
@@ -437,20 +450,21 @@ async fn test_cross_account_fill() {
     let market_pair = market.symbol_pair();
 
     // Re-whitelist both accounts before trading
-    whitelist_with_retry(&client.api, &shared.maker_trade_account_id, 2).await;
-    whitelist_with_retry(&client.api, &shared.taker_trade_account_id, 2).await;
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+    whitelist_with_retry(&client.api, shared.taker_trade_account_id.as_str(), 2).await;
 
     // Get reference price from market data
     let (ref_price, _best_bid, best_ask) = get_market_prices(&mut client, market).await;
+    let zero = UnsignedDecimal::zero();
 
     // Sell price: 10% above best ask to ensure PostOnly rests.
     // Using a moderate premium keeps taker quantity affordable.
-    let sell_price = if best_ask > 0.0 {
-        best_ask * 1.1
+    let sell_price = if best_ask > zero {
+        UnsignedDecimal::new(*best_ask.inner() * Decimal::new(11, 1)).unwrap()
     } else {
-        ref_price * 1.5
+        UnsignedDecimal::new(*ref_price.inner() * Decimal::new(15, 1)).unwrap()
     };
-    let quantity = min_quantity_for_min_order(market, sell_price);
+    let quantity = min_quantity_for_min_order(market, &sell_price);
 
     // Check maker base balance
     let balances = client
@@ -515,7 +529,7 @@ async fn test_cross_account_fill() {
     // Taker: buy a small multiple of the maker quantity to limit gas usage.
     // Using too much quote balance causes OutOfGas when the taker walks
     // through many intermediate orders on a busy book.
-    let taker_quantity = quantity * 3.0;
+    let taker_quantity = UnsignedDecimal::new(*quantity.inner() * Decimal::from(3u64)).unwrap();
 
     let mut taker_session = client
         .create_session(&shared.taker_wallet, &[&market_pair], 30)

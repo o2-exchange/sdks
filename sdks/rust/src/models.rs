@@ -2,8 +2,81 @@
 ///
 /// All models use serde for JSON serialization/deserialization.
 /// String fields are used for large numeric values to avoid precision loss.
+use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
+
+use crate::decimal::UnsignedDecimal;
+
+macro_rules! newtype_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            pub fn new(s: impl Into<String>) -> Self {
+                Self(s.into())
+            }
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl AsRef<str> for $name {
+            fn as_ref(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(s: String) -> Self {
+                Self(s)
+            }
+        }
+
+        impl From<&str> for $name {
+            fn from(s: &str) -> Self {
+                Self(s.to_string())
+            }
+        }
+
+        impl std::ops::Deref for $name {
+            type Target = str;
+            fn deref(&self) -> &str {
+                &self.0
+            }
+        }
+    };
+}
+
+newtype_id!(
+    /// A market symbol pair like "FUEL/USDC".
+    MarketSymbol
+);
+newtype_id!(
+    /// A hex market ID.
+    MarketId
+);
+newtype_id!(
+    /// A hex order ID.
+    OrderId
+);
+newtype_id!(
+    /// A hex trade account ID.
+    TradeAccountId
+);
+newtype_id!(
+    /// A hex asset ID.
+    AssetId
+);
 
 /// Deserialize a value that may be a JSON number or a string containing a number.
 fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -76,8 +149,14 @@ pub enum OrderType {
     Market,
     FillOrKill,
     PostOnly,
-    Limit { price: f64, timestamp: u64 },
-    BoundedMarket { max_price: f64, min_price: f64 },
+    Limit {
+        price: UnsignedDecimal,
+        timestamp: u64,
+    },
+    BoundedMarket {
+        max_price: UnsignedDecimal,
+        min_price: UnsignedDecimal,
+    },
 }
 
 /// High-level action for use with `batch_actions`.
@@ -87,12 +166,12 @@ pub enum OrderType {
 pub enum Action {
     CreateOrder {
         side: Side,
-        price: f64,
-        quantity: f64,
+        price: UnsignedDecimal,
+        quantity: UnsignedDecimal,
         order_type: OrderType,
     },
     CancelOrder {
-        order_id: String,
+        order_id: OrderId,
     },
     SettleBalance,
     RegisterReferer {
@@ -117,7 +196,7 @@ impl OrderType {
             ),
             OrderType::PostOnly => (OrderTypeEncoding::PostOnly, serde_json::json!("PostOnly")),
             OrderType::Limit { price, timestamp } => {
-                let scaled_price = market.scale_price(*price);
+                let scaled_price = market.scale_price(price);
                 (
                     OrderTypeEncoding::Limit {
                         price: scaled_price,
@@ -130,8 +209,8 @@ impl OrderType {
                 max_price,
                 min_price,
             } => {
-                let scaled_max = market.scale_price(*max_price);
-                let scaled_min = market.scale_price(*min_price);
+                let scaled_max = market.scale_price(max_price);
+                let scaled_min = market.scale_price(min_price);
                 (
                     OrderTypeEncoding::BoundedMarket {
                         max_price: scaled_max,
@@ -178,7 +257,7 @@ pub enum Signature {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketAsset {
     pub symbol: String,
-    pub asset: String,
+    pub asset: AssetId,
     pub decimals: u32,
     pub max_precision: u32,
 }
@@ -187,7 +266,7 @@ pub struct MarketAsset {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Market {
     pub contract_id: String,
-    pub market_id: String,
+    pub market_id: MarketId,
     pub maker_fee: String,
     pub taker_fee: String,
     pub min_order: String,
@@ -200,32 +279,44 @@ pub struct Market {
 
 impl Market {
     /// Convert a chain-scaled price to human-readable.
-    pub fn format_price(&self, chain_value: u64) -> f64 {
-        chain_value as f64 / 10f64.powi(self.quote.decimals as i32)
+    pub fn format_price(&self, chain_value: u64) -> UnsignedDecimal {
+        let d = Decimal::from(chain_value) / Decimal::from(10u64.pow(self.quote.decimals));
+        UnsignedDecimal::new(d).unwrap()
     }
 
     /// Convert a human-readable price to chain-scaled integer, truncated to max_precision.
-    pub fn scale_price(&self, human_value: f64) -> u64 {
-        let scaled = (human_value * 10f64.powi(self.quote.decimals as i32)) as u64;
+    pub fn scale_price(&self, human_value: &UnsignedDecimal) -> u64 {
+        let factor = Decimal::from(10u64.pow(self.quote.decimals));
+        let scaled = (*human_value.inner() * factor)
+            .floor()
+            .to_string()
+            .parse::<u64>()
+            .unwrap_or(0);
         let truncate_factor = 10u64.pow(self.quote.decimals - self.quote.max_precision);
         (scaled / truncate_factor) * truncate_factor
     }
 
     /// Convert a chain-scaled quantity to human-readable.
-    pub fn format_quantity(&self, chain_value: u64) -> f64 {
-        chain_value as f64 / 10f64.powi(self.base.decimals as i32)
+    pub fn format_quantity(&self, chain_value: u64) -> UnsignedDecimal {
+        let d = Decimal::from(chain_value) / Decimal::from(10u64.pow(self.base.decimals));
+        UnsignedDecimal::new(d).unwrap()
     }
 
     /// Convert a human-readable quantity to chain-scaled integer, truncated to max_precision.
-    pub fn scale_quantity(&self, human_value: f64) -> u64 {
-        let scaled = (human_value * 10f64.powi(self.base.decimals as i32)) as u64;
+    pub fn scale_quantity(&self, human_value: &UnsignedDecimal) -> u64 {
+        let factor = Decimal::from(10u64.pow(self.base.decimals));
+        let scaled = (*human_value.inner() * factor)
+            .floor()
+            .to_string()
+            .parse::<u64>()
+            .unwrap_or(0);
         let truncate_factor = 10u64.pow(self.base.decimals - self.base.max_precision);
         (scaled / truncate_factor) * truncate_factor
     }
 
-    /// The symbol pair string, e.g. "FUEL/USDC".
-    pub fn symbol_pair(&self) -> String {
-        format!("{}/{}", self.base.symbol, self.quote.symbol)
+    /// The symbol pair, e.g. "FUEL/USDC".
+    pub fn symbol_pair(&self) -> MarketSymbol {
+        MarketSymbol::new(format!("{}/{}", self.base.symbol, self.quote.symbol))
     }
 
     /// Adjust quantity downward so that `(price * quantity) % 10^base_decimals == 0`.
@@ -310,7 +401,7 @@ pub struct TradeAccount {
 /// Account response from GET /v1/accounts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountResponse {
-    pub trade_account_id: Option<String>,
+    pub trade_account_id: Option<TradeAccountId>,
     pub trade_account: Option<TradeAccount>,
     pub session: Option<SessionInfo>,
 }
@@ -326,7 +417,7 @@ pub struct SessionInfo {
 /// Response from POST /v1/accounts (create account).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAccountResponse {
-    pub trade_account_id: Option<String>,
+    pub trade_account_id: Option<TradeAccountId>,
     pub nonce: Option<String>,
 }
 
@@ -361,7 +452,7 @@ pub struct Session {
     pub owner_address: [u8; 32],
     pub session_private_key: [u8; 32],
     pub session_address: [u8; 32],
-    pub trade_account_id: String,
+    pub trade_account_id: TradeAccountId,
     pub contract_ids: Vec<String>,
     pub expiry: u64,
     pub nonce: u64,
@@ -374,7 +465,7 @@ pub struct Session {
 /// An order from the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
-    pub order_id: Option<String>,
+    pub order_id: Option<OrderId>,
     pub side: Option<String>,
     pub order_type: Option<serde_json::Value>,
     #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
@@ -400,7 +491,7 @@ pub struct Order {
     #[serde(default)]
     pub order_tx_history: Option<Vec<serde_json::Value>>,
     #[serde(default)]
-    pub market_id: Option<String>,
+    pub market_id: Option<MarketId>,
     #[serde(default)]
     pub owner: Option<Identity>,
     #[serde(default)]
@@ -557,18 +648,18 @@ pub enum ActionItem {
 
 /// A market-grouped set of actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MarketActions {
-    pub market_id: String,
+pub(crate) struct MarketActions {
+    pub market_id: MarketId,
     pub actions: Vec<serde_json::Value>,
 }
 
 /// Request body for POST /v1/session/actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionActionsRequest {
+pub(crate) struct SessionActionsRequest {
     pub actions: Vec<MarketActions>,
     pub signature: Signature,
     pub nonce: String,
-    pub trade_account_id: String,
+    pub trade_account_id: TradeAccountId,
     pub session_id: Identity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub collect_orders: Option<bool>,
@@ -612,11 +703,11 @@ impl SessionActionsResponse {
 /// Request body for POST /v1/accounts/withdraw.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawRequest {
-    pub trade_account_id: String,
+    pub trade_account_id: TradeAccountId,
     pub signature: Signature,
     pub nonce: String,
     pub to: Identity,
-    pub asset_id: String,
+    pub asset_id: AssetId,
     pub amount: String,
 }
 

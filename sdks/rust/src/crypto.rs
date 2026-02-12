@@ -221,6 +221,45 @@ pub fn evm_personal_sign(private_key: &[u8; 32], message: &[u8]) -> Result<[u8; 
     fuel_compact_sign(private_key, &digest)
 }
 
+/// Trait for wallets that can sign messages for O2 Exchange operations.
+///
+/// Implemented for both [`Wallet`] (Fuel-native, SHA-256) and [`EvmWallet`] (keccak256).
+pub trait SignableWallet {
+    /// The B256 address used as the owner identity.
+    fn b256_address(&self) -> &[u8; 32];
+    /// The 32-byte private key.
+    fn private_key(&self) -> &[u8; 32];
+    /// Sign a message using the wallet's personal_sign scheme.
+    ///
+    /// - Fuel wallets use `\x19Fuel Signed Message:\n` prefix + SHA-256.
+    /// - EVM wallets use `\x19Ethereum Signed Message:\n` prefix + keccak256.
+    fn personal_sign(&self, message: &[u8]) -> Result<[u8; 64], O2Error>;
+}
+
+impl SignableWallet for Wallet {
+    fn b256_address(&self) -> &[u8; 32] {
+        &self.b256_address
+    }
+    fn private_key(&self) -> &[u8; 32] {
+        &self.private_key
+    }
+    fn personal_sign(&self, message: &[u8]) -> Result<[u8; 64], O2Error> {
+        personal_sign(&self.private_key, message)
+    }
+}
+
+impl SignableWallet for EvmWallet {
+    fn b256_address(&self) -> &[u8; 32] {
+        &self.b256_address
+    }
+    fn private_key(&self) -> &[u8; 32] {
+        &self.private_key
+    }
+    fn personal_sign(&self, message: &[u8]) -> Result<[u8; 64], O2Error> {
+        evm_personal_sign(&self.private_key, message)
+    }
+}
+
 /// Derive a Fuel B256 address from a public key (65 bytes, 0x04 prefix).
 pub fn address_from_pubkey(public_key: &[u8; 65]) -> [u8; 32] {
     Sha256::digest(&public_key[1..65]).into()
