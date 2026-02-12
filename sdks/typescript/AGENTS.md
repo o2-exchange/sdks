@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-npm install o2-sdk
+npm install @o2exchange/sdk
 ```
 
 Requires Node.js 18+.
@@ -11,7 +11,7 @@ Requires Node.js 18+.
 ## Quick Start (5-line working example)
 
 ```ts
-import { O2Client, Network } from "o2-sdk";
+import { O2Client, Network } from "@o2exchange/sdk";
 
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = client.generateWallet();

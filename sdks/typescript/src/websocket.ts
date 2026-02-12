@@ -1,11 +1,17 @@
 /**
  * WebSocket client for O2 Exchange real-time data.
  *
+ * Provides real-time streaming of order book depth, orders, trades,
+ * balances, and nonce updates via `AsyncGenerator` streams.
+ *
  * Features:
- * - Auto-reconnect with exponential backoff
- * - AsyncGenerator streams for each subscription type
- * - Heartbeat/ping-pong handling
- * - Proper subscription/unsubscription management
+ * - Auto-reconnect with exponential backoff and jitter
+ * - `AsyncGenerator` streams for each subscription type
+ * - Heartbeat/ping-pong health monitoring
+ * - Automatic re-subscription after reconnect
+ * - Proper cleanup on disconnect
+ *
+ * @module
  */
 
 import WebSocket from "ws";
@@ -19,16 +25,43 @@ import type {
   TradeUpdate,
 } from "./models.js";
 
+/**
+ * Configuration options for {@link O2WebSocket}.
+ */
 export interface O2WebSocketOptions {
+  /** Network endpoint configuration. */
   config: NetworkConfig;
+  /** Enable auto-reconnect on disconnect (default: `true`). */
   reconnect?: boolean;
+  /** Maximum reconnection attempts (default: `10`). */
   maxReconnectAttempts?: number;
+  /** Base delay between reconnects in milliseconds (default: `1000`). */
   reconnectDelayMs?: number;
+  /** Heartbeat ping interval in milliseconds (default: `30000`). */
   pingIntervalMs?: number;
 }
 
 type MessageHandler = (data: Record<string, unknown>) => void;
 
+/**
+ * WebSocket client for O2 Exchange real-time data streams.
+ *
+ * Use via {@link O2Client.streamDepth}, {@link O2Client.streamOrders}, etc.
+ * for the simplest interface, or create a standalone instance for advanced
+ * use cases.
+ *
+ * @example
+ * ```ts
+ * import { O2WebSocket, TESTNET } from "@o2exchange/sdk";
+ *
+ * const ws = new O2WebSocket({ config: TESTNET });
+ * await ws.connect();
+ * for await (const update of ws.streamDepth(marketId, "10")) {
+ *   console.log(update);
+ * }
+ * ws.disconnect();
+ * ```
+ */
 export class O2WebSocket {
   private ws: WebSocket | null = null;
   private readonly url: string;
@@ -187,26 +220,31 @@ export class O2WebSocket {
 
   // ── Unsubscribe ─────────────────────────────────────────────────
 
+  /** Unsubscribe from depth updates for a market. */
   unsubscribeDepth(marketId: string): void {
     this.send({ action: "unsubscribe_depth", market_id: marketId });
     this.removePendingSub("subscribe_depth", marketId);
   }
 
+  /** Unsubscribe from order updates. */
   unsubscribeOrders(): void {
     this.send({ action: "unsubscribe_orders" });
     this.removePendingSub("subscribe_orders");
   }
 
+  /** Unsubscribe from trade updates for a market. */
   unsubscribeTrades(marketId: string): void {
     this.send({ action: "unsubscribe_trades", market_id: marketId });
     this.removePendingSub("subscribe_trades", marketId);
   }
 
+  /** Unsubscribe from balance updates. */
   unsubscribeBalances(identities: Identity[]): void {
     this.send({ action: "unsubscribe_balances", identities });
     this.removePendingSub("subscribe_balances");
   }
 
+  /** Unsubscribe from nonce updates. */
   unsubscribeNonce(identities: Identity[]): void {
     this.send({ action: "unsubscribe_nonce", identities });
     this.removePendingSub("subscribe_nonce");

@@ -9,7 +9,7 @@ import contextlib
 
 import pytest
 
-from o2_sdk import Network, O2Client
+from o2_sdk import Network, O2Client, OrderSide, OrderType
 from o2_sdk.api import O2Api
 from o2_sdk.config import get_config
 
@@ -326,10 +326,10 @@ class TestTradingFlow:
             client,
             session=session,
             market=market.pair,
-            side="Buy",
+            side=OrderSide.BUY,
             price=buy_price,
             quantity=quantity,
-            order_type="PostOnly",
+            order_type=OrderType.POST_ONLY,
             settle_first=True,
             collect_orders=True,
         )
@@ -391,10 +391,10 @@ class TestTradingFlow:
             client,
             session=maker_session,
             market=market.pair,
-            side="Sell",
+            side=OrderSide.SELL,
             price=sell_price,
             quantity=quantity,
-            order_type="PostOnly",
+            order_type=OrderType.POST_ONLY,
             settle_first=True,
             collect_orders=True,
         )
@@ -418,10 +418,10 @@ class TestTradingFlow:
             client,
             session=taker_session,
             market=market.pair,
-            side="Buy",
+            side=OrderSide.BUY,
             price=sell_price,
             quantity=taker_quantity,
-            order_type="Spot",
+            order_type=OrderType.SPOT,
             settle_first=True,
             collect_orders=True,
         )

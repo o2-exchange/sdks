@@ -1,12 +1,20 @@
 /**
  * Cryptographic operations for O2 Exchange.
  *
- * Key generation, signing (personalSign, rawSign, evm_personal_sign),
- * and Fuel compact signature encoding.
+ * Provides key generation, wallet creation, and signing operations for
+ * both Fuel-native and EVM-compatible wallets. Implements three signing
+ * modes used by the O2 Exchange:
  *
- * CRITICAL: @noble/secp256k1 v3 defaults prehash:true.
- * We MUST use prehash:false since we pre-hash ourselves.
- * Must configure etc.hmacSha256Sync for synchronous signing.
+ * - **personalSign** — Fuel prefix + SHA-256 (for session creation)
+ * - **rawSign** — Plain SHA-256 (for session actions)
+ * - **evmPersonalSign** — Ethereum prefix + keccak-256 (for EVM owner sessions)
+ *
+ * @remarks
+ * Uses `@noble/secp256k1` v3 with `prehash:false` since we pre-hash
+ * all messages ourselves. The `hmacSha256` configuration is required
+ * for synchronous signing.
+ *
+ * @module
  */
 
 import { hmac } from "@noble/hashes/hmac.js";
@@ -30,14 +38,31 @@ secp.hashes.sha256 = (...msgs: Uint8Array[]) => {
 
 // ── Types ───────────────────────────────────────────────────────────
 
+/**
+ * A Fuel-native secp256k1 wallet.
+ *
+ * The address is derived as `SHA-256(publicKey[1:65])`, skipping the
+ * `0x04` uncompressed prefix byte.
+ */
 export interface Wallet {
+  /** The 32-byte private key. */
   privateKey: Uint8Array;
-  publicKey: Uint8Array; // 65 bytes uncompressed
-  b256Address: string; // 0x-prefixed hex
+  /** The 65-byte uncompressed public key (with `0x04` prefix). */
+  publicKey: Uint8Array;
+  /** The 0x-prefixed, 64-character hex Fuel address. */
+  b256Address: string;
 }
 
+/**
+ * An EVM-compatible secp256k1 wallet.
+ *
+ * Extends {@link Wallet} with an Ethereum-style address derived as the
+ * last 20 bytes of `keccak256(publicKey[1:65])`. The `b256Address` is the
+ * EVM address zero-padded to 32 bytes.
+ */
 export interface EvmWallet extends Wallet {
-  evmAddress: string; // 0x-prefixed 40-char hex
+  /** The 0x-prefixed, 40-character hex Ethereum address. */
+  evmAddress: string;
 }
 
 // ── Key Generation ──────────────────────────────────────────────────

@@ -8,7 +8,7 @@ import asyncio
 import logging
 import signal
 
-from o2_sdk import Network, O2Client
+from o2_sdk import BoundedMarketOrder, Network, O2Client, OrderSide
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("taker_bot")
@@ -74,14 +74,13 @@ async def main():
                     result = await client.create_order(
                         session=session,
                         market=market.pair,
-                        side="Buy",
+                        side=OrderSide.BUY,
                         price=ask_price,
                         quantity=quantity,
-                        order_type="BoundedMarket",
-                        order_type_data={
-                            "max_price": max_price,
-                            "min_price": 0.0,
-                        },
+                        order_type=BoundedMarketOrder(
+                            max_price=max_price,
+                            min_price=0.0,
+                        ),
                         settle_first=True,
                         collect_orders=True,
                     )

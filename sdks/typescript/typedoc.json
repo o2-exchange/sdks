@@ -1,0 +1,22 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "docs/_build",
+  "name": "O2 SDK for TypeScript",
+  "readme": "docs/index.md",
+  "projectDocuments": [
+    "docs/quickstart.md",
+    "docs/guides/trading.md",
+    "docs/guides/market-data.md",
+    "docs/guides/websocket-streams.md",
+    "docs/guides/error-handling.md"
+  ],
+  "categorizeByGroup": true,
+  "navigationLinks": {
+    "GitHub": "https://github.com/o2-exchange/sdks"
+  },
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "includeVersion": true,
+  "sourceLinkTemplate": "https://github.com/o2-exchange/sdks/blob/main/sdks/typescript/{path}#L{line}"
+}

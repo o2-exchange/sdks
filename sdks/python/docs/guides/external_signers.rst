@@ -97,7 +97,7 @@ components:
    def sign_digest(digest: bytes) -> bytes:
        # Your KMS/HSM returns (r, s, recovery_id)
        r: bytes = ...   # 32 bytes
-       s: bytes = ...   # 32 bytes (must be low-s normalised)
+       s: bytes = ...   # 32 bytes (must be low-s normalized)
        v: int   = ...   # 0 or 1
 
        return to_fuel_compact_signature(r, s, v)
@@ -111,7 +111,7 @@ byte of ``s``:
 
 .. warning::
 
-   The ``s`` component **must be low-s normalised** before passing to
+   The ``s`` component **must be low-s normalized** before passing to
    :func:`~o2_sdk.crypto.to_fuel_compact_signature`. Most modern signing
    libraries (coincurve, ethers.js, etc.) do this automatically, but
    check your KMS documentation.

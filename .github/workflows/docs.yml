@@ -5,6 +5,9 @@ on:
     branches: [main]
     paths:
       - "sdks/python/docs/**"
+      - "sdks/typescript/src/**"
+      - "sdks/typescript/docs/**"
+      - "sdks/typescript/typedoc.json"
 
 # Allow only one deployment at a time
 concurrency:
@@ -40,27 +43,100 @@ jobs:
       - name: Build Sphinx HTML
         run: python -m sphinx -W --keep-going -b html sdks/python/docs _site/python
 
-      - name: Add root redirect
+      - name: Upload Python docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-docs
+          path: _site/python
+
+  typescript-build:
+    name: Build TypeScript Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: sdks/typescript
+
+      - name: Build TypeDoc HTML
+        run: npx typedoc --out ../../_site/typescript
+        working-directory: sdks/typescript
+
+      - name: Upload TypeScript docs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: typescript-docs
+          path: _site/typescript
+
+  deploy:
+    name: Deploy Docs to GitHub Pages
+    needs: [python-build, typescript-build]
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download Python docs
+        uses: actions/download-artifact@v4
+        with:
+          name: python-docs
+          path: _site/python
+
+      - name: Download TypeScript docs
+        uses: actions/download-artifact@v4
+        with:
+          name: typescript-docs
+          path: _site/typescript
+
+      - name: Add root index with SDK selector
         run: |
-          cat > _site/index.html << 'EOF'
+          cat > _site/index.html << 'HEREDOC'
           <!DOCTYPE html>
-          <html><head><meta http-equiv="refresh" content="0; url=python/"></head>
-          <body><a href="python/">Redirecting to Python SDK docs…</a></body></html>
-          EOF
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <title>O2 Exchange SDK Documentation</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
+              h1 { font-size: 1.8rem; margin-bottom: 0.5rem; }
+              p { color: #666; margin-bottom: 2rem; }
+              .cards { display: flex; gap: 1rem; }
+              .card { flex: 1; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.5rem; text-decoration: none; color: inherit; transition: box-shadow 0.2s; }
+              .card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); }
+              .card h2 { margin: 0 0 0.5rem; font-size: 1.2rem; }
+              .card p { margin: 0; font-size: 0.9rem; }
+            </style>
+          </head>
+          <body>
+            <h1>O2 Exchange SDK Docs</h1>
+            <p>Choose an SDK to view its documentation.</p>
+            <div class="cards">
+              <a class="card" href="python/">
+                <h2>Python SDK</h2>
+                <p>Python client with full type annotations and Sphinx documentation.</p>
+              </a>
+              <a class="card" href="typescript/">
+                <h2>TypeScript SDK</h2>
+                <p>TypeScript client with TypeDoc API reference and guides.</p>
+              </a>
+            </div>
+          </body>
+          </html>
+          HEREDOC
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: _site
 
-  python-deploy:
-    name: Deploy Python Docs to GitHub Pages
-    needs: python-build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

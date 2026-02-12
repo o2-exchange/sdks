@@ -25,6 +25,17 @@ check: fmt-check lint
 # Run all unit tests
 test: test-python test-typescript test-rust
 
+# Build documentation for all SDKs
+docs: docs-python docs-typescript
+
+# Build Python SDK documentation
+docs-python:
+    cd sdks/python && python -m sphinx -W --keep-going -b html docs docs/_build
+
+# Build TypeScript SDK documentation
+docs-typescript:
+    cd sdks/typescript && npx typedoc
+
 # Run integration tests (one SDK at a time to avoid overwhelming testnet)
 integration sdk:
     just integration-{{ sdk }}

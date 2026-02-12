@@ -5,7 +5,9 @@ from typing import ClassVar
 from o2_sdk.models import (
     AccountInfo,
     ActionsResponse,
+    AddressIdentity,
     Balance,
+    ContractIdentity,
     DepthSnapshot,
     DepthUpdate,
     FaucetResponse,
@@ -142,14 +144,14 @@ class TestMarketsResponse:
 class TestIdentity:
     def test_address(self):
         i = Identity.from_dict({"Address": "0xabc"})
-        assert i.variant == "Address"
+        assert isinstance(i, AddressIdentity)
         assert i.value == "0xabc"
         assert i.discriminant == 0
         assert i.to_dict() == {"Address": "0xabc"}
 
     def test_contract_id(self):
         i = Identity.from_dict({"ContractId": "0xdef"})
-        assert i.variant == "ContractId"
+        assert isinstance(i, ContractIdentity)
         assert i.discriminant == 1
 
 
@@ -439,8 +441,8 @@ class TestTrade:
             "timestamp": "1734876543",
         }
         trade = Trade.from_dict(data)
-        assert isinstance(trade.trade_id, Id)
-        assert trade.trade_id == "0x12345"
+        assert isinstance(trade.trade_id, str)
+        assert trade.trade_id == "12345"
         assert trade.side == "Buy"
 
 

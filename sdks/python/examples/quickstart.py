@@ -2,7 +2,7 @@
 
 import asyncio
 
-from o2_sdk import Network, O2Client
+from o2_sdk import Network, O2Client, OrderSide, OrderType
 
 
 async def main():
@@ -54,10 +54,10 @@ async def main():
     result = await client.create_order(
         session=session,
         market=market.pair,
-        side="Buy",
+        side=OrderSide.BUY,
         price=price,
         quantity=quantity,
-        order_type="Spot",
+        order_type=OrderType.SPOT,
         settle_first=True,
         collect_orders=True,
     )
