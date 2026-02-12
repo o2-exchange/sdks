@@ -63,16 +63,16 @@ integration-typescript:
 
 # --- Rust ---
 lint-rust:
-    cd sdks/rust && cargo clippy -- -D warnings
+    cd sdks/rust && cargo clippy --all-features -- -D warnings
 
 fmt-rust:
-    cd sdks/rust && cargo fmt
+    cd sdks/rust && cargo fmt --all
 
 fmt-check-rust:
-    cd sdks/rust && cargo fmt --check
+    cd sdks/rust && cargo fmt --all --check
 
 test-rust:
-    cd sdks/rust && cargo test
+    cd sdks/rust && cargo test --all-features
 
 integration-rust:
     cd sdks/rust && cargo test --features integration --test integration_tests -- --test-threads=1
