@@ -149,6 +149,7 @@ class O2WebSocket:
 
     async def disconnect(self) -> None:
         """Disconnect from the WebSocket."""
+        logger.info("WebSocket disconnecting")
         self._should_run = False
         self._connected = False
         if self._ping_task and not self._ping_task.done():
@@ -168,6 +169,7 @@ class O2WebSocket:
 
     async def _send(self, message: dict) -> None:
         if self._ws:
+            logger.debug("WS send: %s", message.get("action", message))
             await self._ws.send(json.dumps(message))
 
     async def _listen(self) -> None:
@@ -198,8 +200,11 @@ class O2WebSocket:
         if key and key in self._message_queues:
             try:
                 self._message_queues[key].put_nowait(data)
+                logger.debug("WS dispatched %s -> %s queue", action, key)
             except asyncio.QueueFull:
                 logger.warning("Queue full for %s, dropping message", key)
+        elif key is None and action:
+            logger.warning("WS unhandled action: %s", action)
 
     def _action_to_queue_key(self, action: str) -> str | None:
         if action in ("subscribe_depth", "subscribe_depth_update"):

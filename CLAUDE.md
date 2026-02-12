@@ -1,5 +1,7 @@
 # O2 SDKs - Development Guide
 
+This repository is published at `https://github.com/o2-exchange/sdks.git`.
+
 ## Build Orchestration
 
 A `justfile` is provided for common tasks across all SDKs:

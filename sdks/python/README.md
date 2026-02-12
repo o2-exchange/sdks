@@ -33,16 +33,18 @@ Requires **Python 3.10+**.
 ## Quick Start
 
 ```python
+import logging
 import asyncio
 from o2_sdk import O2Client, Network
 
 async def main():
+    logging.basicConfig(level=logging.DEBUG)
     client = O2Client(network=Network.TESTNET)
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
     result = await client.create_order(session, "fFUEL/fUSDC", "Buy", price=0.02, quantity=100.0)
-    print(result.tx_id)
+    print(f"Created order with transaction ID {result.tx_id}")
     await client.close()
 
 asyncio.run(main())

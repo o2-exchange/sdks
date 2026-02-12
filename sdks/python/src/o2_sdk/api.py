@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -74,11 +75,20 @@ class O2Api:
             hdrs.update(headers)
 
         for attempt in range(max_retries):
+            if params:
+                logger.debug("%s %s params=%s", method, path, params)
+            elif json is not None:
+                logger.debug("%s %s body=%s", method, path, json)
+            else:
+                logger.debug("%s %s", method, path)
+
+            t0 = time.monotonic()
             try:
                 async with session.request(
                     method, url, json=json, params=params, headers=hdrs
                 ) as resp:
                     data = await resp.json(content_type=None)
+                    elapsed_ms = (time.monotonic() - t0) * 1000
 
                     # Rate limit: check both code 1003 and HTTP 429
                     is_rate_limited = (
@@ -87,7 +97,14 @@ class O2Api:
                     if is_rate_limited:
                         if attempt < max_retries - 1:
                             wait = 2 ** (attempt + 1)
-                            logger.warning("Rate limited, retrying in %ds", wait)
+                            logger.warning(
+                                "Rate limited on %s %s, retrying in %ds (attempt %d/%d)",
+                                method,
+                                path,
+                                wait,
+                                attempt + 1,
+                                max_retries,
+                            )
                             await asyncio.sleep(wait)
                             continue
                         raise RateLimitExceeded(
@@ -102,6 +119,15 @@ class O2Api:
                     if resp.status >= 400 and isinstance(data, dict):
                         code = data.get("code")
                         message = data.get("message", f"HTTP {resp.status}")
+                        logger.debug(
+                            "%s %s -> %d error (code=%s) %.0fms: %s",
+                            method,
+                            path,
+                            resp.status,
+                            code,
+                            elapsed_ms,
+                            message,
+                        )
                         if code is not None:
                             from .errors import ERROR_CODE_MAP
 
@@ -111,10 +137,22 @@ class O2Api:
                             reason = data.get("reason", "")
                             full_msg = f"{message}: {reason}" if reason else message
                             raise O2Error(message=full_msg)
+                    else:
+                        logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)
 
                     return data
             except aiohttp.ClientError as e:
+                elapsed_ms = (time.monotonic() - t0) * 1000
                 if attempt < max_retries - 1:
+                    logger.debug(
+                        "%s %s -> network error, retrying (attempt %d/%d, %.0fms): %s",
+                        method,
+                        path,
+                        attempt + 1,
+                        max_retries,
+                        elapsed_ms,
+                        e,
+                    )
                     await asyncio.sleep(2**attempt)
                     continue
                 raise O2Error(message=str(e)) from e
