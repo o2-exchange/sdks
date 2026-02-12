@@ -1,0 +1,58 @@
+name: Publish SDK Docs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/python/docs/**"
+
+# Allow only one deployment at a time
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+# Grant GITHUB_TOKEN permissions for Pages deployment
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  python-build:
+    name: Build Python Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v6
+        with:
+          cache: pip
+          cache-dependency-path: |
+            sdks/python/pyproject.toml
+            sdks/python/docs/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r sdks/python/docs/requirements.txt
+          pip install -e sdks/python
+
+      - name: Build Sphinx HTML
+        run: python -m sphinx -W --keep-going -b html sdks/python/docs sdks/python/docs/_build/html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: sdks/python/docs/_build/html
+
+  python-deploy:
+    name: Deploy Python Docs to GitHub Pages
+    needs: python-build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
