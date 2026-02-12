@@ -1,8 +1,25 @@
 /**
  * High-level O2Client for the O2 Exchange.
  *
- * Orchestrates wallet management, account lifecycle, session management,
- * trading, market data, and WebSocket streaming.
+ * The {@link O2Client} is the main entry point for the O2 SDK. It orchestrates
+ * wallet management, account lifecycle, session management, trading,
+ * market data, and WebSocket streaming — handling all encoding, signing,
+ * and nonce management automatically.
+ *
+ * @example
+ * ```ts
+ * import { O2Client, Network } from "@o2exchange/sdk";
+ *
+ * const client = new O2Client({ network: Network.TESTNET });
+ * const wallet = client.generateWallet();
+ * const { tradeAccountId } = await client.setupAccount(wallet);
+ * const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
+ * const { response } = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
+ * console.log(`Order TX: ${response.tx_id}`);
+ * client.close();
+ * ```
+ *
+ * @module
  */
 
 import { O2Api } from "./api.js";
@@ -55,12 +72,36 @@ import type {
 } from "./models.js";
 import { O2WebSocket } from "./websocket.js";
 
+/**
+ * Options for constructing an {@link O2Client}.
+ *
+ * Provide either `network` (to use a pre-configured environment) or
+ * `config` (for custom endpoint configuration). If neither is provided,
+ * defaults to `Network.TESTNET`.
+ */
 export interface O2ClientOptions {
+  /** The network environment to connect to (default: `Network.TESTNET`). */
   network?: Network;
+  /** Custom network configuration (overrides `network`). */
   config?: NetworkConfig;
 }
 
+/**
+ * High-level client for the O2 Exchange.
+ *
+ * Orchestrates wallet management, account lifecycle, session creation,
+ * trading (with automatic encoding and signing), market data retrieval,
+ * and real-time WebSocket streaming.
+ *
+ * @example
+ * ```ts
+ * const client = new O2Client({ network: Network.TESTNET });
+ * const wallet = client.generateWallet();
+ * const { tradeAccountId } = await client.setupAccount(wallet);
+ * ```
+ */
 export class O2Client {
+  /** The underlying low-level REST API client. */
   readonly api: O2Api;
   private wsClient: O2WebSocket | null = null;
   private readonly config: NetworkConfig;
@@ -74,11 +115,27 @@ export class O2Client {
 
   // ── Wallet management ───────────────────────────────────────────
 
+  /**
+   * Generate a new Fuel-native secp256k1 wallet.
+   *
+   * @returns A new wallet state with a random private key.
+   *
+   * @example
+   * ```ts
+   * const wallet = client.generateWallet();
+   * console.log(wallet.b256Address); // "0x..."
+   * ```
+   */
   generateWallet(): WalletState {
     const w = generateWallet();
     return { privateKey: w.privateKey, b256Address: w.b256Address, isEvm: false };
   }
 
+  /**
+   * Generate a new EVM-compatible secp256k1 wallet.
+   *
+   * @returns A new wallet state with EVM address and zero-padded b256 address.
+   */
   generateEvmWallet(): WalletState {
     const w = generateEvmWallet();
     return {
@@ -89,11 +146,23 @@ export class O2Client {
     };
   }
 
+  /**
+   * Load a Fuel-native wallet from a private key hex string.
+   *
+   * @param privateKeyHex - The private key as a 0x-prefixed hex string.
+   * @returns The loaded wallet state.
+   */
   loadWallet(privateKeyHex: string): WalletState {
     const w = walletFromPrivateKey(privateKeyHex);
     return { privateKey: w.privateKey, b256Address: w.b256Address, isEvm: false };
   }
 
+  /**
+   * Load an EVM-compatible wallet from a private key hex string.
+   *
+   * @param privateKeyHex - The private key as a 0x-prefixed hex string.
+   * @returns The loaded wallet state with EVM address.
+   */
   loadEvmWallet(privateKeyHex: string): WalletState {
     const w = evmWalletFromPrivateKey(privateKeyHex);
     return {
@@ -483,28 +552,55 @@ export class O2Client {
 
   // ── Market data ─────────────────────────────────────────────────
 
+  /** Fetch all available markets. Results are cached for 60 seconds. */
   async getMarkets(): Promise<Market[]> {
     const data = await this.fetchMarkets();
     return data.markets;
   }
 
+  /**
+   * Resolve a market by symbol pair (e.g., `"fFUEL/fUSDC"`) or hex market ID.
+   *
+   * @param symbolPair - The market pair or hex ID.
+   * @throws {@link O2Error} if the market is not found.
+   */
   async getMarket(symbolPair: string): Promise<Market> {
     const data = await this.fetchMarkets();
     return this.resolveMarket(data, symbolPair);
   }
 
+  /**
+   * Fetch the order book depth snapshot.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param precision - Number of price levels (default: 10).
+   */
   async getDepth(market: string | Market, precision = 10): Promise<DepthSnapshot> {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getDepth(marketId, precision);
   }
 
+  /**
+   * Fetch recent trades for a market.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param count - Number of trades to return (default: 50).
+   */
   async getTrades(market: string | Market, count = 50): Promise<Trade[]> {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getTrades(marketId, "desc", count);
   }
 
+  /**
+   * Fetch OHLCV candlestick bars.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
+   * @param from - Start time (Unix seconds).
+   * @param to - End time (Unix seconds).
+   */
   async getBars(
     market: string | Market,
     resolution: string,
@@ -516,6 +612,11 @@ export class O2Client {
     return this.api.getBars(marketId, from, to, resolution);
   }
 
+  /**
+   * Fetch real-time ticker data for a market.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   */
   async getTicker(market: string | Market) {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
@@ -552,6 +653,14 @@ export class O2Client {
     return result;
   }
 
+  /**
+   * Fetch orders for an account on a market.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @param market - Market pair string or {@link Market} object.
+   * @param isOpen - Filter by open/closed status.
+   * @param count - Number of orders (default: 20).
+   */
   async getOrders(
     tradeAccountId: string,
     market: string | Market,
@@ -569,6 +678,12 @@ export class O2Client {
     return resp.orders;
   }
 
+  /**
+   * Fetch a single order by ID.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param orderId - The order identifier.
+   */
   async getOrder(market: string | Market, orderId: string): Promise<Order> {
     const resolved = typeof market === "string" ? await this.getMarket(market) : market;
     return this.api.getOrder(resolved.market_id, orderId);
@@ -584,6 +699,13 @@ export class O2Client {
     return this.wsClient;
   }
 
+  /**
+   * Stream real-time order book depth updates.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param precision - Number of price levels (default: 10).
+   * @returns An async generator yielding {@link DepthUpdate} messages.
+   */
   async streamDepth(market: string | Market, precision = 10): Promise<AsyncGenerator<DepthUpdate>> {
     const ws = await this.ensureWs();
     const marketId =
@@ -591,11 +713,23 @@ export class O2Client {
     return ws.streamDepth(marketId, precision);
   }
 
+  /**
+   * Stream real-time order updates for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @returns An async generator yielding {@link OrderUpdate} messages.
+   */
   async streamOrders(tradeAccountId: string): Promise<AsyncGenerator<OrderUpdate>> {
     const ws = await this.ensureWs();
     return ws.streamOrders([{ ContractId: tradeAccountId }]);
   }
 
+  /**
+   * Stream real-time trades for a market.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @returns An async generator yielding {@link TradeUpdate} messages.
+   */
   async streamTrades(market: string | Market): Promise<AsyncGenerator<TradeUpdate>> {
     const ws = await this.ensureWs();
     const marketId =
@@ -603,11 +737,23 @@ export class O2Client {
     return ws.streamTrades(marketId);
   }
 
+  /**
+   * Stream real-time balance updates for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @returns An async generator yielding {@link BalanceUpdate} messages.
+   */
   async streamBalances(tradeAccountId: string): Promise<AsyncGenerator<BalanceUpdate>> {
     const ws = await this.ensureWs();
     return ws.streamBalances([{ ContractId: tradeAccountId }]);
   }
 
+  /**
+   * Stream real-time nonce updates for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @returns An async generator yielding {@link NonceUpdate} messages.
+   */
   async streamNonce(tradeAccountId: string): Promise<AsyncGenerator<NonceUpdate>> {
     const ws = await this.ensureWs();
     return ws.streamNonce([{ ContractId: tradeAccountId }]);
@@ -682,11 +828,25 @@ export class O2Client {
 
   // ── Nonce management ────────────────────────────────────────────
 
+  /**
+   * Fetch the current on-chain nonce for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   */
   async getNonce(tradeAccountId: string): Promise<bigint> {
     const info = await this.api.getAccount({ tradeAccountId });
     return BigInt(info.trade_account?.nonce ?? "0");
   }
 
+  /**
+   * Re-fetch the nonce from the API and update the session state.
+   *
+   * Call this after errors to re-sync the nonce (it increments on-chain
+   * even on reverts).
+   *
+   * @param session - The session state to update.
+   * @returns The fresh nonce value.
+   */
   async refreshNonce(session: SessionState): Promise<bigint> {
     const nonce = await this.getNonce(session.tradeAccountId);
     session.nonce = nonce;

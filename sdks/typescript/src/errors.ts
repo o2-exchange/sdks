@@ -1,16 +1,42 @@
 /**
  * Error types mapping all O2 Exchange error codes.
  *
- * Handles two distinct error formats for POST /v1/session/actions:
- * - Pre-flight validation error (has `code` field)
- * - On-chain revert error (has `message` + `reason` + `receipts`, NO `code` field)
+ * The SDK defines a typed error class for every API error code, all
+ * extending the base {@link O2Error} class. Two distinct error formats
+ * exist for `POST /v1/session/actions`:
  *
- * Success detection: check for `tx_id` in response.
+ * - **Pre-flight validation error** — Has a numeric `code` field
+ * - **On-chain revert error** — Has `message` + `reason` + `receipts`, no `code`
+ *
+ * Use {@link parseApiError} to convert raw API responses into typed errors,
+ * and {@link isActionsSuccess} to check if a response was successful.
+ *
+ * @module
  */
 
+/**
+ * Base error class for all O2 Exchange errors.
+ *
+ * All API errors extend this class. Check `code` for pre-flight errors
+ * and `reason` for on-chain revert details.
+ *
+ * @example
+ * ```ts
+ * try {
+ *   await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 100.0);
+ * } catch (error) {
+ *   if (error instanceof O2Error) {
+ *     console.log(error.code, error.message, error.reason);
+ *   }
+ * }
+ * ```
+ */
 export class O2Error extends Error {
+  /** API error code (present for pre-flight validation errors). */
   readonly code: number | undefined;
+  /** On-chain revert reason string (e.g., `"NotEnoughBalance"`). */
   readonly reason: string | undefined;
+  /** Transaction receipts from on-chain reverts. */
   readonly receipts: unknown[] | undefined;
 
   constructor(message: string, code?: number, reason?: string, receipts?: unknown[]) {
@@ -24,6 +50,7 @@ export class O2Error extends Error {
 
 // ── General (1xxx) ──────────────────────────────────────────────────
 
+/** Unexpected server error (code 1000). Retry with exponential backoff. */
 export class InternalError extends O2Error {
   constructor(message = "Unexpected server error") {
     super(message, 1000);
@@ -31,6 +58,7 @@ export class InternalError extends O2Error {
   }
 }
 
+/** Malformed or invalid request (code 1001). */
 export class InvalidRequest extends O2Error {
   constructor(message = "Malformed or invalid request") {
     super(message, 1001);
@@ -38,6 +66,7 @@ export class InvalidRequest extends O2Error {
   }
 }
 
+/** Failed to parse request body (code 1002). */
 export class ParseError extends O2Error {
   constructor(message = "Failed to parse request body") {
     super(message, 1002);
@@ -45,6 +74,7 @@ export class ParseError extends O2Error {
   }
 }
 
+/** Too many requests (code 1003). The SDK auto-retries with exponential backoff. */
 export class RateLimitExceeded extends O2Error {
   constructor(message = "Too many requests") {
     super(message, 1003);
@@ -52,6 +82,7 @@ export class RateLimitExceeded extends O2Error {
   }
 }
 
+/** Region not allowed (code 1004). */
 export class GeoRestricted extends O2Error {
   constructor(message = "Region not allowed") {
     super(message, 1004);
@@ -61,6 +92,7 @@ export class GeoRestricted extends O2Error {
 
 // ── Market (2xxx) ───────────────────────────────────────────────────
 
+/** Market not found (code 2000). Check the market_id. */
 export class MarketNotFound extends O2Error {
   constructor(message = "Market not found") {
     super(message, 2000);
@@ -68,6 +100,7 @@ export class MarketNotFound extends O2Error {
   }
 }
 
+/** Market is currently paused (code 2001). Wait for the market to resume. */
 export class MarketPaused extends O2Error {
   constructor(message = "Market is currently paused") {
     super(message, 2001);
@@ -75,6 +108,7 @@ export class MarketPaused extends O2Error {
   }
 }
 
+/** Market already exists (code 2002). */
 export class MarketAlreadyExists extends O2Error {
   constructor(message = "Market already exists") {
     super(message, 2002);
@@ -84,6 +118,7 @@ export class MarketAlreadyExists extends O2Error {
 
 // ── Order (3xxx) ────────────────────────────────────────────────────
 
+/** Order not found (code 3000). The order may have been filled or cancelled. */
 export class OrderNotFound extends O2Error {
   constructor(message = "Order not found") {
     super(message, 3000);
@@ -91,6 +126,7 @@ export class OrderNotFound extends O2Error {
   }
 }
 
+/** Order is not in active state (code 3001). */
 export class OrderNotActive extends O2Error {
   constructor(message = "Order is not in active state") {
     super(message, 3001);
@@ -98,6 +134,7 @@ export class OrderNotActive extends O2Error {
   }
 }
 
+/** Invalid order parameters (code 3002). Check price and quantity. */
 export class InvalidOrderParams extends O2Error {
   constructor(message = "Invalid order parameters") {
     super(message, 3002);
@@ -107,6 +144,7 @@ export class InvalidOrderParams extends O2Error {
 
 // ── Account/Session (4xxx) ──────────────────────────────────────────
 
+/** Signature verification failed (code 4000). Check signing method and key. */
 export class InvalidSignature extends O2Error {
   constructor(message = "Signature verification failed") {
     super(message, 4000);
@@ -114,6 +152,7 @@ export class InvalidSignature extends O2Error {
   }
 }
 
+/** Session is invalid or expired (code 4001). Create a new session. */
 export class InvalidSession extends O2Error {
   constructor(message = "Session is invalid or expired") {
     super(message, 4001);
@@ -121,6 +160,7 @@ export class InvalidSession extends O2Error {
   }
 }
 
+/** Trading account not found (code 4002). Call {@link O2Client.setupAccount}. */
 export class AccountNotFound extends O2Error {
   constructor(message = "Trading account not found") {
     super(message, 4002);
@@ -128,6 +168,7 @@ export class AccountNotFound extends O2Error {
   }
 }
 
+/** Whitelist not configured (code 4003). Whitelist the account first. */
 export class WhitelistNotConfigured extends O2Error {
   constructor(message = "Whitelist not configured") {
     super(message, 4003);
@@ -137,6 +178,7 @@ export class WhitelistNotConfigured extends O2Error {
 
 // ── Trade (5xxx) ────────────────────────────────────────────────────
 
+/** Trade not found (code 5000). */
 export class TradeNotFound extends O2Error {
   constructor(message = "Trade not found") {
     super(message, 5000);
@@ -144,6 +186,7 @@ export class TradeNotFound extends O2Error {
   }
 }
 
+/** Invalid trade count (code 5001). */
 export class InvalidTradeCount extends O2Error {
   constructor(message = "Invalid trade count") {
     super(message, 5001);
@@ -153,6 +196,7 @@ export class InvalidTradeCount extends O2Error {
 
 // ── Subscription/WebSocket (6xxx) ───────────────────────────────────
 
+/** Already subscribed to this topic (code 6000). */
 export class AlreadySubscribed extends O2Error {
   constructor(message = "Already subscribed to this topic") {
     super(message, 6000);
@@ -160,6 +204,7 @@ export class AlreadySubscribed extends O2Error {
   }
 }
 
+/** Subscription limit exceeded (code 6001). Unsubscribe from unused streams. */
 export class TooManySubscriptions extends O2Error {
   constructor(message = "Subscription limit exceeded") {
     super(message, 6001);
@@ -167,6 +212,7 @@ export class TooManySubscriptions extends O2Error {
   }
 }
 
+/** General subscription error (code 6002). Try reconnecting the WebSocket. */
 export class SubscriptionError extends O2Error {
   constructor(message = "General subscription error") {
     super(message, 6002);
@@ -176,6 +222,7 @@ export class SubscriptionError extends O2Error {
 
 // ── Validation (7xxx) ───────────────────────────────────────────────
 
+/** Invalid amount specified (code 7000). */
 export class InvalidAmount extends O2Error {
   constructor(message = "Invalid amount specified") {
     super(message, 7000);
@@ -183,6 +230,7 @@ export class InvalidAmount extends O2Error {
   }
 }
 
+/** Invalid time range (code 7001). */
 export class InvalidTimeRange extends O2Error {
   constructor(message = "Invalid time range") {
     super(message, 7001);
@@ -190,6 +238,7 @@ export class InvalidTimeRange extends O2Error {
   }
 }
 
+/** Invalid pagination params (code 7002). */
 export class InvalidPagination extends O2Error {
   constructor(message = "Invalid pagination params") {
     super(message, 7002);
@@ -197,6 +246,7 @@ export class InvalidPagination extends O2Error {
   }
 }
 
+/** No actions in request (code 7003). Add at least one action. */
 export class NoActionsProvided extends O2Error {
   constructor(message = "No actions in request") {
     super(message, 7003);
@@ -204,6 +254,7 @@ export class NoActionsProvided extends O2Error {
   }
 }
 
+/** Too many actions (max 5 per batch) (code 7004). Split into multiple batches. */
 export class TooManyActions extends O2Error {
   constructor(message = "Too many actions (max 5)") {
     super(message, 7004);
@@ -213,6 +264,7 @@ export class TooManyActions extends O2Error {
 
 // ── Block/Events (8xxx) ─────────────────────────────────────────────
 
+/** Block not found (code 8000). The block may not be indexed yet. */
 export class BlockNotFound extends O2Error {
   constructor(message = "Block not found") {
     super(message, 8000);
@@ -220,6 +272,7 @@ export class BlockNotFound extends O2Error {
   }
 }
 
+/** Events not found for block (code 8001). */
 export class EventsNotFound extends O2Error {
   constructor(message = "Events not found for block") {
     super(message, 8001);
@@ -229,6 +282,11 @@ export class EventsNotFound extends O2Error {
 
 // ── Client-side errors ──────────────────────────────────────────────
 
+/**
+ * Client-side error raised when a session has expired.
+ *
+ * Create a new session via {@link O2Client.createSession} to continue trading.
+ */
 export class SessionExpired extends O2Error {
   constructor(message = "Session has expired. Create a new session before submitting actions.") {
     super(message);
@@ -238,6 +296,12 @@ export class SessionExpired extends O2Error {
 
 // ── On-chain revert error ───────────────────────────────────────────
 
+/**
+ * Error raised when an on-chain transaction reverts.
+ *
+ * Has no `code` field. Check `reason` for the revert name (e.g.,
+ * `"NotEnoughBalance"`, `"TraderNotWhiteListed"`, `"PricePrecision"`).
+ */
 export class OnChainRevertError extends O2Error {
   constructor(message: string, reason?: string, receipts?: unknown[]) {
     super(message, undefined, reason, receipts);
