@@ -6,8 +6,8 @@ use tokio_stream::StreamExt;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let buy_below_price = 0.04; // Execute buy when best ask <= this price
-    let max_quantity = 50.0;
+    let buy_below_price: UnsignedDecimal = "0.04".parse()?;
+    let max_quantity: UnsignedDecimal = "50".parse()?;
 
     let mut client = O2Client::new(Network::Testnet);
 
@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Connect to WebSocket for real-time depth
     let ws = O2WebSocket::connect(&client.config.ws_url).await?;
-    let mut depth_stream = ws.stream_depth(&market.market_id, "10").await?;
+    let mut depth_stream = ws.stream_depth(market.market_id.as_str(), "10").await?;
 
     println!("Listening for depth updates (buy when ask <= {buy_below_price})...");
 
@@ -48,18 +48,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(sell_levels) = sells {
             if let Some(best_ask) = sell_levels.first() {
-                let ask_price: f64 = best_ask.price.parse().unwrap_or(0.0);
-                let ask_human = market.format_price(ask_price as u64);
+                let ask_price: u64 = best_ask.price.parse().unwrap_or(0);
+                if ask_price == 0 {
+                    continue;
+                }
+                let ask_human = market.format_price(ask_price);
 
-                if ask_human > 0.0 && ask_human <= buy_below_price {
+                if ask_human <= buy_below_price {
                     println!("Target price hit! Best ask: {ask_human}");
+
+                    // Use a price slightly above the ask (0.5% slippage)
+                    let slippage_factor: UnsignedDecimal = "1.005".parse()?;
+                    let taker_price = ask_human * slippage_factor;
 
                     let result = client
                         .create_order(
                             &mut session,
                             &market_pair,
                             Side::Buy,
-                            ask_human * 1.005,
+                            taker_price,
                             max_quantity,
                             OrderType::Spot,
                             true,
@@ -79,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let _ = client.refresh_nonce(&mut session).await;
                         }
                     }
-                } else if ask_human > 0.0 {
+                } else {
                     println!("Best ask: {ask_human} (waiting for <= {buy_below_price})");
                 }
             }
