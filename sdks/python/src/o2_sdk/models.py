@@ -6,6 +6,7 @@ All API request/response types as dataclasses with JSON parsing helpers.
 from __future__ import annotations
 
 import math
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -709,7 +710,7 @@ class CreateOrderAction:
         ot: Any
         if isinstance(self.order_type, LimitOrder):
             lo = self.order_type
-            ts = lo.timestamp if lo.timestamp is not None else 0
+            ts = lo.timestamp if lo.timestamp is not None else int(time.time())
             ot = {"Limit": [str(int(lo.price)), str(ts)]}
         elif isinstance(self.order_type, BoundedMarketOrder):
             bm = self.order_type
