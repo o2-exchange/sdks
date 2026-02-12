@@ -285,7 +285,7 @@ impl O2WebSocket {
                                 }
                             }
                         }
-                        "trades" => {
+                        "subscribe_trades" => {
                             if let Ok(update) = serde_json::from_value::<TradeUpdate>(parsed) {
                                 for tx in &guard.trades_senders {
                                     let _ = tx.send(update.clone());
@@ -299,7 +299,7 @@ impl O2WebSocket {
                                 }
                             }
                         }
-                        "nonce" => {
+                        "subscribe_nonce" => {
                             if let Ok(update) = serde_json::from_value::<NonceUpdate>(parsed) {
                                 for tx in &guard.nonce_senders {
                                     let _ = tx.send(update.clone());
