@@ -35,7 +35,7 @@ Requires **Python 3.10+**.
 ```python
 import logging
 import asyncio
-from o2_sdk import O2Client, Network
+from o2_sdk import O2Client, Network, OrderSide, OrderType
 
 async def main():
     logging.basicConfig(level=logging.DEBUG)
@@ -43,7 +43,9 @@ async def main():
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order(session, "fFUEL/fUSDC", "Buy", price=0.02, quantity=100.0)
+    result = await client.create_order(
+        session, "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0
+    )
     print(f"Created order with transaction ID {result.tx_id}")
     await client.close()
 
@@ -53,10 +55,11 @@ asyncio.run(main())
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
+- **Strongly Typed** — Enums for order sides/types, dataclasses for actions and order parameters
 - **Market Data** — Fetch order book depth, recent trades, OHLCV candles, and ticker data
 - **WebSocket Streams** — Real-time depth, order, trade, balance, and nonce updates via `async for`
 - **Wallet Support** — Fuel-native and EVM wallets with session-based signing
-- **Batch Actions** — Submit up to 5 actions per request (cancel + settle + create in one call)
+- **Batch Actions** — Submit up to 5 typed actions per request (cancel + settle + create in one call)
 - **Error Handling** — Typed exceptions (`O2Error`, `InvalidSignature`, `RateLimitExceeded`, etc.)
 
 ## API Overview
@@ -71,7 +74,7 @@ asyncio.run(main())
 | `cancel_order(session, order_id, market)` | Cancel a specific order |
 | `cancel_all_orders(session, market)` | Cancel all open orders |
 | `settle_balance(session, market)` | Settle filled order proceeds |
-| `batch_actions(session, actions)` | Submit raw action batch |
+| `batch_actions(session, actions)` | Submit typed action batch (`list[MarketActions]`) |
 | `get_markets()` / `get_market(pair)` | Fetch market info |
 | `get_depth(market)` / `get_trades(market)` | Order book and trade data |
 | `get_balances(account)` / `get_orders(account, market)` | Account data |

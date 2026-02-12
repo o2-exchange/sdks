@@ -7,7 +7,55 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
+
+# ---------------------------------------------------------------------------
+# Enums for order parameters
+# ---------------------------------------------------------------------------
+
+
+class OrderSide(Enum):
+    """Side of an order."""
+
+    BUY = "Buy"
+    SELL = "Sell"
+
+
+class OrderType(Enum):
+    """Type of an order."""
+
+    SPOT = "Spot"
+    MARKET = "Market"
+    LIMIT = "Limit"
+    FILL_OR_KILL = "FillOrKill"
+    POST_ONLY = "PostOnly"
+    BOUNDED_MARKET = "BoundedMarket"
+
+
+@dataclass
+class LimitOrder:
+    """Limit order with expiry.
+
+    In ``create_order``: *price* is human-readable (auto-scaled).
+    In ``CreateOrderAction``: *price* should be the pre-scaled chain integer.
+    """
+
+    price: float
+    timestamp: int | None = None  # unix timestamp; None = current time
+
+
+@dataclass
+class BoundedMarketOrder:
+    """Bounded market order with price bounds.
+
+    In ``create_order``: prices are human-readable (auto-scaled).
+    In ``CreateOrderAction``: prices should be pre-scaled chain integers.
+    """
+
+    max_price: float
+    min_price: float
+
 
 # ---------------------------------------------------------------------------
 # Scalar wrappers
@@ -205,30 +253,58 @@ class MarketsResponse:
 
 @dataclass
 class Identity:
-    variant: str  # "Address" or "ContractId"
+    """Base identity type. Use AddressIdentity or ContractIdentity to construct."""
+
     value: str  # 0x-prefixed hex
-
-    def to_dict(self) -> dict:
-        return {self.variant: self.value}
-
-    def __repr__(self) -> str:  # pragma: no cover - cosmetic
-        return f"Identity({self.variant}={self.value})"
 
     @classmethod
     def from_dict(cls, d: dict) -> Identity:
         if "Address" in d:
-            return cls(variant="Address", value=d["Address"])
+            return AddressIdentity(value=d["Address"])
         elif "ContractId" in d:
-            return cls(variant="ContractId", value=d["ContractId"])
+            return ContractIdentity(value=d["ContractId"])
         raise ValueError(f"Unknown identity format: {d}")
 
     @property
     def address_bytes(self) -> bytes:
         return bytes.fromhex(self.value[2:])
 
+    def to_dict(self) -> dict:
+        raise NotImplementedError  # subclasses override
+
     @property
     def discriminant(self) -> int:
-        return 0 if self.variant == "Address" else 1
+        raise NotImplementedError  # subclasses override
+
+
+@dataclass
+class AddressIdentity(Identity):
+    """Identity for a Fuel Address."""
+
+    def to_dict(self) -> dict:
+        return {"Address": self.value}
+
+    @property
+    def discriminant(self) -> int:
+        return 0
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return f"AddressIdentity({self.value})"
+
+
+@dataclass
+class ContractIdentity(Identity):
+    """Identity for a Fuel ContractId."""
+
+    def to_dict(self) -> dict:
+        return {"ContractId": self.value}
+
+    @property
+    def discriminant(self) -> int:
+        return 1
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return f"ContractIdentity({self.value})"
 
 
 @dataclass
@@ -613,6 +689,105 @@ class ActionsResponse:
     @property
     def success(self) -> bool:
         return self.tx_id is not None
+
+
+# ---------------------------------------------------------------------------
+# Action models (typed inputs for batch_actions)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CreateOrderAction:
+    """Create a new order (pre-scaled values for batch_actions)."""
+
+    side: OrderSide
+    price: str  # pre-scaled chain integer as string
+    quantity: str  # pre-scaled chain integer as string
+    order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT
+
+    def to_dict(self) -> dict:
+        ot: Any
+        if isinstance(self.order_type, LimitOrder):
+            lo = self.order_type
+            ts = lo.timestamp if lo.timestamp is not None else 0
+            ot = {"Limit": [str(int(lo.price)), str(ts)]}
+        elif isinstance(self.order_type, BoundedMarketOrder):
+            bm = self.order_type
+            ot = {
+                "BoundedMarket": {
+                    "max_price": str(int(bm.max_price)),
+                    "min_price": str(int(bm.min_price)),
+                }
+            }
+        else:
+            ot = self.order_type.value
+        return {
+            "CreateOrder": {
+                "side": self.side.value,
+                "price": self.price,
+                "quantity": self.quantity,
+                "order_type": ot,
+            }
+        }
+
+
+@dataclass
+class CancelOrderAction:
+    """Cancel an existing order."""
+
+    order_id: Id
+
+    def to_dict(self) -> dict:
+        return {"CancelOrder": {"order_id": self.order_id}}
+
+
+@dataclass
+class SettleBalanceAction:
+    """Settle balance to an identity.
+
+    Accepts an ``Identity`` (``AddressIdentity`` / ``ContractIdentity``)
+    or an ``Id`` which is auto-wrapped as ``ContractIdentity``.
+    """
+
+    to: Identity | Id
+
+    def to_dict(self) -> dict:
+        if isinstance(self.to, Identity):
+            return {"SettleBalance": {"to": self.to.to_dict()}}
+        return {"SettleBalance": {"to": {"ContractId": str(self.to)}}}
+
+
+@dataclass
+class RegisterRefererAction:
+    """Register a referer.
+
+    Accepts an ``Identity`` (``AddressIdentity`` / ``ContractIdentity``)
+    or an ``Id`` which is auto-wrapped as ``ContractIdentity``.
+    """
+
+    to: Identity | Id
+
+    def to_dict(self) -> dict:
+        if isinstance(self.to, Identity):
+            return {"RegisterReferer": {"to": self.to.to_dict()}}
+        return {"RegisterReferer": {"to": {"ContractId": str(self.to)}}}
+
+
+Action = CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction
+
+
+@dataclass
+class MarketActions:
+    """Group of actions for a specific market."""
+
+    market_id: str
+    actions: list[Action]
+
+    def to_dict(self) -> dict:
+        return {
+            "market_id": self.market_id,
+            "actions": [a.to_dict() for a in self.actions],
+        }
 
 
 # ---------------------------------------------------------------------------

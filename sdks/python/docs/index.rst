@@ -28,7 +28,7 @@ Quick example
 .. code-block:: python
 
    import asyncio
-   from o2_sdk import O2Client, Network
+   from o2_sdk import O2Client, Network, OrderSide
 
    async def main():
        client = O2Client(network=Network.TESTNET)
@@ -36,7 +36,7 @@ Quick example
        account = await client.setup_account(owner)
        session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
        result = await client.create_order(
-           session, "fFUEL/fUSDC", "Buy", price=0.02, quantity=100.0
+           session, "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0
        )
        print(result.tx_id)
        await client.close()

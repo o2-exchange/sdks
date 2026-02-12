@@ -13,7 +13,16 @@ import contextlib
 import logging
 import signal
 
-from o2_sdk import Network, O2Client
+from o2_sdk import (
+    CancelOrderAction,
+    CreateOrderAction,
+    MarketActions,
+    Network,
+    O2Client,
+    OrderSide,
+    OrderType,
+    SettleBalanceAction,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("market_maker")
@@ -104,14 +113,12 @@ async def main():
 
                 # Cancel stale orders (skip if filled)
                 if active_buy_id and active_buy_id not in filled_orders:
-                    actions_list.append({"CancelOrder": {"order_id": active_buy_id}})
+                    actions_list.append(CancelOrderAction(order_id=active_buy_id))
                 if active_sell_id and active_sell_id not in filled_orders:
-                    actions_list.append({"CancelOrder": {"order_id": active_sell_id}})
+                    actions_list.append(CancelOrderAction(order_id=active_sell_id))
 
                 # Settle
-                actions_list.append(
-                    {"SettleBalance": {"to": {"ContractId": session.trade_account_id}}}
-                )
+                actions_list.append(SettleBalanceAction(to=session.trade_account_id))
 
                 # Place new orders
                 scaled_buy_price = market.scale_price(buy_price)
@@ -120,26 +127,22 @@ async def main():
                 scaled_quantity = market.adjust_quantity(scaled_buy_price, scaled_quantity)
 
                 actions_list.append(
-                    {
-                        "CreateOrder": {
-                            "side": "Buy",
-                            "price": str(scaled_buy_price),
-                            "quantity": str(scaled_quantity),
-                            "order_type": "Spot",
-                        }
-                    }
+                    CreateOrderAction(
+                        side=OrderSide.BUY,
+                        price=str(scaled_buy_price),
+                        quantity=str(scaled_quantity),
+                        order_type=OrderType.SPOT,
+                    )
                 )
 
                 scaled_sell_qty = market.adjust_quantity(scaled_sell_price, scaled_quantity)
                 actions_list.append(
-                    {
-                        "CreateOrder": {
-                            "side": "Sell",
-                            "price": str(scaled_sell_price),
-                            "quantity": str(scaled_sell_qty),
-                            "order_type": "Spot",
-                        }
-                    }
+                    CreateOrderAction(
+                        side=OrderSide.SELL,
+                        price=str(scaled_sell_price),
+                        quantity=str(scaled_sell_qty),
+                        order_type=OrderType.SPOT,
+                    )
                 )
 
                 # Limit to 5 actions
@@ -148,7 +151,7 @@ async def main():
                 # 5. Submit
                 result = await client.batch_actions(
                     session=session,
-                    actions=[{"market_id": market.market_id, "actions": actions_list}],
+                    actions=[MarketActions(market_id=market.market_id, actions=actions_list)],
                     collect_orders=True,
                 )
 

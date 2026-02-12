@@ -59,7 +59,7 @@ The O2 Exchange uses a **session-based signing model** to avoid requiring
 the owner's private key for every trade. When you create a session:
 
 1. A temporary session keypair is generated.
-2. The owner wallet signs a delegation that authorises the session key to
+2. The owner wallet signs a delegation that authorizes the session key to
    act on specific markets for a set duration.
 3. Subsequent trade actions are signed with the lightweight session key.
 
@@ -83,7 +83,7 @@ auto-increments the nonce, but there is an important caveat:
 
    The nonce increments on-chain **even when a transaction reverts**. If an
    action fails, the SDK automatically calls
-   :meth:`~o2_sdk.client.O2Client.refresh_nonce` to resynchronise.
+   :meth:`~o2_sdk.client.O2Client.refresh_nonce` to resynchronize.
 
 You can also manually refresh the nonce:
 
@@ -129,57 +129,68 @@ floats and on-chain integers automatically:
 Order types
 -----------
 
+The ``order_type`` parameter accepts :class:`~o2_sdk.models.OrderType` enum
+values for simple types, or typed dataclasses for ``Limit`` and
+``BoundedMarket``:
+
 .. list-table::
    :header-rows: 1
-   :widths: 20 80
+   :widths: 30 70
 
    * - Type
      - Description
-   * - ``Spot``
+   * - ``OrderType.SPOT``
      - Standard limit order. Rests on the book if not immediately matched.
-   * - ``Market``
+   * - ``OrderType.MARKET``
      - Executes immediately at the best available price. Fails if the book
        is empty.
-   * - ``PostOnly``
+   * - ``OrderType.POST_ONLY``
      - Guaranteed to be a maker order. Rejected if it would cross the spread
        and match immediately.
-   * - ``FillOrKill``
+   * - ``OrderType.FILL_OR_KILL``
      - Must be filled entirely or not at all.
-   * - ``Limit``
+   * - ``LimitOrder(price, timestamp)``
      - Like Spot but includes a limit price and a timestamp for
        time-in-force semantics.
-   * - ``BoundedMarket``
-     - Market order with price bounds (``max_price`` / ``min_price``).
+   * - ``BoundedMarketOrder(max_price, min_price)``
+     - Market order with price bounds.
 
 Batch actions
 -------------
 
 The O2 Exchange supports submitting up to **5 actions** in a single
-transaction via :meth:`~o2_sdk.client.O2Client.batch_actions`. Supported
-action types:
+transaction via :meth:`~o2_sdk.client.O2Client.batch_actions`. Actions are
+strongly typed using dataclasses and grouped by market using
+:class:`~o2_sdk.models.MarketActions`:
 
-- ``CreateOrder`` — Place a new order.
-- ``CancelOrder`` — Cancel an existing order.
-- ``SettleBalance`` — Settle filled order proceeds back to your trading
-  account.
+- :class:`~o2_sdk.models.CreateOrderAction` — Place a new order.
+- :class:`~o2_sdk.models.CancelOrderAction` — Cancel an existing order.
+- :class:`~o2_sdk.models.SettleBalanceAction` — Settle filled order
+  proceeds back to your trading account.
+- :class:`~o2_sdk.models.RegisterRefererAction` — Register a referer.
 
 A common pattern is to settle + cancel + place in one batch:
 
 .. code-block:: python
 
+   from o2_sdk import (
+       CancelOrderAction, CreateOrderAction, SettleBalanceAction,
+       MarketActions, OrderSide, OrderType,
+   )
+
    actions = [
-       {"SettleBalance": {"to": {"ContractId": session.trade_account_id}}},
-       {"CancelOrder": {"order_id": old_order_id}},
-       {"CreateOrder": {
-           "side": "Buy",
-           "price": str(scaled_price),
-           "quantity": str(scaled_qty),
-           "order_type": "Spot",
-       }},
+       SettleBalanceAction(to=session.trade_account_id),
+       CancelOrderAction(order_id=old_order_id),
+       CreateOrderAction(
+           side=OrderSide.BUY,
+           price=str(scaled_price),
+           quantity=str(scaled_qty),
+           order_type=OrderType.SPOT,
+       ),
    ]
    result = await client.batch_actions(
        session,
-       [{"market_id": market.market_id, "actions": actions}],
+       [MarketActions(market_id=market.market_id, actions=actions)],
    )
 
 Signing model

@@ -56,7 +56,7 @@ Monitor your orders in real time:
            filled = f"{order.quantity_fill}/{order.quantity}"
            print(f"[{status}] {order.side} {order.order_id}: {filled}")
            if order.cancel:
-               print(f"  Cancelled")
+               print(f"  Canceled")
 
 
 Trade feed

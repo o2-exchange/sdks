@@ -12,14 +12,20 @@ Order types
 -----------
 
 The O2 Exchange supports six order types, specified via the ``order_type``
-parameter of :meth:`~o2_sdk.client.O2Client.create_order`:
+parameter of :meth:`~o2_sdk.client.O2Client.create_order`. Simple types use
+the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
+``BoundedMarket`` use dedicated dataclasses.
+
+.. code-block:: python
+
+   from o2_sdk import OrderSide, OrderType, LimitOrder, BoundedMarketOrder
 
 **Spot** (default)
    A standard limit order that rests on the book if not immediately filled.
 
    .. code-block:: python
 
-      await client.create_order(session, "fFUEL/fUSDC", "Buy", 0.02, 100.0)
+      await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
 
 **PostOnly**
    Guaranteed to be a maker order. Rejected immediately if it would cross
@@ -28,8 +34,8 @@ parameter of :meth:`~o2_sdk.client.O2Client.create_order`:
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.02, 100.0,
-          order_type="PostOnly",
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          order_type=OrderType.POST_ONLY,
       )
 
 **Market**
@@ -39,8 +45,8 @@ parameter of :meth:`~o2_sdk.client.O2Client.create_order`:
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.03, 100.0,
-          order_type="Market",
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
+          order_type=OrderType.MARKET,
       )
 
 **FillOrKill**
@@ -50,34 +56,33 @@ parameter of :meth:`~o2_sdk.client.O2Client.create_order`:
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.03, 100.0,
-          order_type="FillOrKill",
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
+          order_type=OrderType.FILL_OR_KILL,
       )
 
 **Limit**
    Like Spot, but includes a limit price and timestamp for time-in-force
-   semantics.
+   semantics. Use the :class:`~o2_sdk.models.LimitOrder` class:
 
    .. code-block:: python
 
       import time
 
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.02, 100.0,
-          order_type="Limit",
-          order_type_data={"price": 0.025, "timestamp": int(time.time())},
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          order_type=LimitOrder(price=0.025, timestamp=int(time.time())),
       )
 
 **BoundedMarket**
    A market order with price bounds — executes at market price but only
-   within the specified range.
+   within the specified range. Use the
+   :class:`~o2_sdk.models.BoundedMarketOrder` class:
 
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.025, 100.0,
-          order_type="BoundedMarket",
-          order_type_data={"max_price": 0.03, "min_price": 0.01},
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
+          order_type=BoundedMarketOrder(max_price=0.03, min_price=0.01),
       )
 
 
@@ -95,32 +100,38 @@ To cancel an existing order and place a new one:
    await client.cancel_all_orders(session, "fFUEL/fUSDC")
 
 To atomically cancel-and-replace in a single transaction, use
-:meth:`~o2_sdk.client.O2Client.batch_actions`:
+:meth:`~o2_sdk.client.O2Client.batch_actions` with typed action objects:
 
 .. code-block:: python
 
+   from o2_sdk import (
+       CancelOrderAction, CreateOrderAction, SettleBalanceAction,
+       MarketActions, OrderSide, OrderType,
+   )
+
    result = await client.batch_actions(
        session,
-       actions=[{
-           "market_id": market.market_id,
-           "actions": [
-               {"CancelOrder": {"order_id": old_order_id}},
-               {"SettleBalance": {"to": {"ContractId": session.trade_account_id}}},
-               {"CreateOrder": {
-                   "side": "Buy",
-                   "price": str(new_price),
-                   "quantity": str(new_qty),
-                   "order_type": "Spot",
-               }},
+       actions=[MarketActions(
+           market_id=market.market_id,
+           actions=[
+               CancelOrderAction(order_id=old_order_id),
+               SettleBalanceAction(to=session.trade_account_id),
+               CreateOrderAction(
+                   side=OrderSide.BUY,
+                   price=str(new_price),
+                   quantity=str(new_qty),
+                   order_type=OrderType.SPOT,
+               ),
            ],
-       }],
+       )],
        collect_orders=True,
    )
 
 .. important::
 
    When using :meth:`~o2_sdk.client.O2Client.batch_actions`, prices and
-   quantities must be **pre-scaled on-chain integers** (as strings). Use
+   quantities in :class:`~o2_sdk.models.CreateOrderAction` must be
+   **pre-scaled on-chain integers** (as strings). Use
    :meth:`~o2_sdk.models.Market.scale_price` and
    :meth:`~o2_sdk.models.Market.scale_quantity` to convert from
    human-readable values.
@@ -143,11 +154,15 @@ when ``settle_first=True`` (the default). You can also settle manually:
 Market maker pattern
 ---------------------
 
-A simple two-sided quoting loop:
+A simple two-sided quoting loop using typed actions:
 
 .. code-block:: python
 
    import asyncio
+   from o2_sdk import (
+       CancelOrderAction, CreateOrderAction, SettleBalanceAction,
+       MarketActions, OrderSide, OrderType,
+   )
 
    market = await client.get_market("fFUEL/fUSDC")
    spread = 0.001
@@ -171,26 +186,26 @@ A simple two-sided quoting loop:
        # Build batch: cancel old + settle + place new
        actions = []
        if active_buy:
-           actions.append({"CancelOrder": {"order_id": active_buy}})
+           actions.append(CancelOrderAction(order_id=active_buy))
        if active_sell:
-           actions.append({"CancelOrder": {"order_id": active_sell}})
-       actions.append({"SettleBalance": {"to": {"ContractId": session.trade_account_id}}})
-       actions.append({"CreateOrder": {
-           "side": "Buy",
-           "price": str(market.scale_price(buy_price)),
-           "quantity": str(market.scale_quantity(qty)),
-           "order_type": "PostOnly",
-       }})
-       actions.append({"CreateOrder": {
-           "side": "Sell",
-           "price": str(market.scale_price(sell_price)),
-           "quantity": str(market.scale_quantity(qty)),
-           "order_type": "PostOnly",
-       }})
+           actions.append(CancelOrderAction(order_id=active_sell))
+       actions.append(SettleBalanceAction(to=session.trade_account_id))
+       actions.append(CreateOrderAction(
+           side=OrderSide.BUY,
+           price=str(market.scale_price(buy_price)),
+           quantity=str(market.scale_quantity(qty)),
+           order_type=OrderType.POST_ONLY,
+       ))
+       actions.append(CreateOrderAction(
+           side=OrderSide.SELL,
+           price=str(market.scale_price(sell_price)),
+           quantity=str(market.scale_quantity(qty)),
+           order_type=OrderType.POST_ONLY,
+       ))
 
        result = await client.batch_actions(
            session,
-           [{"market_id": market.market_id, "actions": actions}],
+           [MarketActions(market_id=market.market_id, actions=actions)],
            collect_orders=True,
        )
 

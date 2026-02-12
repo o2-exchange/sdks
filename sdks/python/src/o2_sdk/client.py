@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import AsyncIterator
-from typing import Any
 
 from .api import O2Api
 from .config import Network, NetworkConfig, get_config
@@ -32,18 +31,28 @@ from .encoding import (
 from .errors import O2Error, SessionExpired
 from .models import (
     AccountInfo,
+    Action,
     ActionsResponse,
     Balance,
     BalanceUpdate,
     Bar,
+    BoundedMarketOrder,
+    CancelOrderAction,
+    CreateOrderAction,
     DepthSnapshot,
     DepthUpdate,
+    Id,
+    LimitOrder,
     Market,
+    MarketActions,
     MarketsResponse,
     NonceUpdate,
     Order,
+    OrderSide,
+    OrderType,
     OrderUpdate,
     SessionInfo,
+    SettleBalanceAction,
     Trade,
     TradeUpdate,
     WithdrawResponse,
@@ -261,11 +270,10 @@ class O2Client:
         self,
         session: SessionInfo,
         market: str,
-        side: str,
+        side: OrderSide,
         price: float,
         quantity: float,
-        order_type: str = "Spot",
-        order_type_data: dict | None = None,
+        order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT,
         settle_first: bool = True,
         collect_orders: bool = True,
     ) -> ActionsResponse:
@@ -274,21 +282,28 @@ class O2Client:
         Args:
             session: Active trading session
             market: Market pair (e.g., "FUEL/USDC") or market_id
-            side: "Buy" or "Sell"
+            side: OrderSide.BUY or OrderSide.SELL
             price: Human-readable price (auto-scaled)
             quantity: Human-readable quantity (auto-scaled)
-            order_type: "Spot", "Market", "Limit", "FillOrKill", "PostOnly", "BoundedMarket"
-            order_type_data: Extra data for Limit/BoundedMarket types
+            order_type: OrderType.SPOT, OrderType.MARKET, OrderType.FILL_OR_KILL,
+                OrderType.POST_ONLY, LimitOrder(...), or BoundedMarketOrder(...)
             settle_first: If True, prepend SettleBalance action
             collect_orders: If True, return created order details
 
         Returns:
             ActionsResponse with tx_id and optional orders
         """
+        if isinstance(order_type, OrderType):
+            ot_label = order_type.value
+        elif isinstance(order_type, LimitOrder):
+            ot_label = "Limit"
+        else:
+            ot_label = "BoundedMarket"
+
         logger.info(
             "Creating %s %s order: market=%s price=%s qty=%s",
-            side,
-            order_type,
+            side.value,
+            ot_label,
             market,
             price,
             quantity,
@@ -314,39 +329,39 @@ class O2Client:
         # Validate
         market_obj.validate_order(scaled_price, scaled_quantity)
 
-        # Build order type for the API
-        ot: Any
-        if order_type in ("Spot", "Market", "FillOrKill", "PostOnly"):
-            ot = order_type
-        elif order_type == "Limit" and order_type_data:
-            limit_price = market_obj.scale_price(order_type_data.get("price", price))
-            timestamp = int(order_type_data.get("timestamp", int(time.time())))
-            ot = {"Limit": [str(limit_price), str(timestamp)]}
-        elif order_type == "BoundedMarket" and order_type_data:
-            max_price = market_obj.scale_price(order_type_data["max_price"])
-            min_price = market_obj.scale_price(order_type_data["min_price"])
-            ot = {"BoundedMarket": {"max_price": str(max_price), "min_price": str(min_price)}}
+        # Build the order type for the action
+        action_ot: OrderType | LimitOrder | BoundedMarketOrder
+        if isinstance(order_type, LimitOrder):
+            action_ot = LimitOrder(
+                price=float(market_obj.scale_price(order_type.price)),
+                timestamp=order_type.timestamp
+                if order_type.timestamp is not None
+                else int(time.time()),
+            )
+        elif isinstance(order_type, BoundedMarketOrder):
+            action_ot = BoundedMarketOrder(
+                max_price=float(market_obj.scale_price(order_type.max_price)),
+                min_price=float(market_obj.scale_price(order_type.min_price)),
+            )
         else:
-            ot = order_type
+            action_ot = order_type
 
         # Build actions
-        actions_list: list[dict] = []
+        typed_actions: list[Action] = []
         if settle_first:
-            actions_list.append({"SettleBalance": {"to": {"ContractId": session.trade_account_id}}})
-        actions_list.append(
-            {
-                "CreateOrder": {
-                    "side": side,
-                    "price": str(scaled_price),
-                    "quantity": str(scaled_quantity),
-                    "order_type": ot,
-                }
-            }
+            typed_actions.append(SettleBalanceAction(to=session.trade_account_id))
+        typed_actions.append(
+            CreateOrderAction(
+                side=side,
+                price=str(scaled_price),
+                quantity=str(scaled_quantity),
+                order_type=action_ot,
+            )
         )
 
         return await self.batch_actions(
             session=session,
-            actions=[{"market_id": market_obj.market_id, "actions": actions_list}],
+            actions=[MarketActions(market_id=market_obj.market_id, actions=typed_actions)],
             collect_orders=collect_orders,
         )
 
@@ -367,10 +382,10 @@ class O2Client:
             market_id = market_obj.market_id
 
         actions = [
-            {
-                "market_id": market_id,
-                "actions": [{"CancelOrder": {"order_id": order_id}}],
-            }
+            MarketActions(
+                market_id=market_id,
+                actions=[CancelOrderAction(order_id=Id(order_id))],
+            )
         ]
         return await self.batch_actions(session=session, actions=actions)
 
@@ -400,8 +415,8 @@ class O2Client:
         # Cancel in chunks of 5
         for i in range(0, len(orders_resp.orders), 5):
             chunk = orders_resp.orders[i : i + 5]
-            cancel_actions = [{"CancelOrder": {"order_id": o.order_id}} for o in chunk]
-            actions = [{"market_id": market_obj.market_id, "actions": cancel_actions}]
+            cancel_actions: list[Action] = [CancelOrderAction(order_id=o.order_id) for o in chunk]
+            actions = [MarketActions(market_id=market_obj.market_id, actions=cancel_actions)]
             resp = await self.batch_actions(session=session, actions=actions)
             results.append(resp)
 
@@ -413,24 +428,24 @@ class O2Client:
         market_obj = self._resolve_market(markets_resp, market)
 
         actions = [
-            {
-                "market_id": market_obj.market_id,
-                "actions": [{"SettleBalance": {"to": {"ContractId": session.trade_account_id}}}],
-            }
+            MarketActions(
+                market_id=market_obj.market_id,
+                actions=[SettleBalanceAction(to=session.trade_account_id)],
+            )
         ]
         return await self.batch_actions(session=session, actions=actions)
 
     async def batch_actions(
         self,
         session: SessionInfo,
-        actions: list[dict],
+        actions: list[MarketActions],
         collect_orders: bool = False,
     ) -> ActionsResponse:
         """Submit a batch of actions with automatic signing and nonce management.
 
         Args:
             session: Active trading session
-            actions: List of market-grouped actions
+            actions: List of MarketActions (market-grouped typed actions)
             collect_orders: If True, return created order details
         """
         # Check session expiry before submitting on-chain
@@ -446,13 +461,16 @@ class O2Client:
 
         markets_resp = await self._get_markets_cached()
 
+        # Convert typed actions to dicts once
+        actions_dicts = [ma.to_dict() for ma in actions]
+
         # Get current nonce
         nonce = await self._get_nonce(session.trade_account_id)
-        logger.debug("Submitting actions with nonce=%d, actions=%s", nonce, actions)
+        logger.debug("Submitting actions with nonce=%d, actions=%s", nonce, actions_dicts)
 
         # Convert actions to calls
         calls: list[dict] = []
-        for market_group in actions:
+        for market_group in actions_dicts:
             m_id = market_group["market_id"]
             market_info = self._get_market_info_by_id(markets_resp, m_id)
             for action in market_group["actions"]:
@@ -470,7 +488,7 @@ class O2Client:
 
         # Submit
         request = {
-            "actions": actions,
+            "actions": actions_dicts,
             "signature": {"Secp256k1": "0x" + signature.hex()},
             "nonce": str(nonce),
             "trade_account_id": session.trade_account_id,

@@ -8,6 +8,75 @@ All API response types are implemented as Python dataclasses with
 ``from_dict()`` class methods for JSON parsing.
 
 
+Enums
+-----
+
+.. class:: OrderSide
+
+   Side of an order.
+
+   .. attribute:: BUY
+      :value: "Buy"
+
+   .. attribute:: SELL
+      :value: "Sell"
+
+.. class:: OrderType
+
+   Type of an order (simple types without additional parameters).
+
+   .. attribute:: SPOT
+      :value: "Spot"
+
+   .. attribute:: MARKET
+      :value: "Market"
+
+   .. attribute:: LIMIT
+      :value: "Limit"
+
+   .. attribute:: FILL_OR_KILL
+      :value: "FillOrKill"
+
+   .. attribute:: POST_ONLY
+      :value: "PostOnly"
+
+   .. attribute:: BOUNDED_MARKET
+      :value: "BoundedMarket"
+
+
+Order type parameter classes
+----------------------------
+
+.. class:: LimitOrder(price, timestamp=None)
+
+   Limit order with expiry. In :meth:`~o2_sdk.client.O2Client.create_order`,
+   *price* is human-readable and auto-scaled. In
+   :class:`CreateOrderAction`, *price* should be the pre-scaled chain
+   integer.
+
+   .. attribute:: price
+      :type: float
+
+   .. attribute:: timestamp
+      :type: int | None
+
+      Unix timestamp for time-in-force. ``None`` defaults to the current
+      time.
+
+.. class:: BoundedMarketOrder(max_price, min_price)
+
+   Bounded market order with price bounds. In
+   :meth:`~o2_sdk.client.O2Client.create_order`, prices are
+   human-readable and auto-scaled. In :class:`CreateOrderAction`, prices
+   should be pre-scaled chain integers.
+
+   .. attribute:: max_price
+      :type: float
+
+   .. attribute:: min_price
+      :type: float
+
+
 Scalar types
 ------------
 
@@ -16,7 +85,7 @@ Scalar types
    A hex identifier that always displays with a ``0x`` prefix.
 
    The O2 API returns hex identifiers inconsistently — sometimes with the
-   ``0x`` prefix and sometimes without. ``Id`` normalises the value on
+   ``0x`` prefix and sometimes without. ``Id`` normalizes the value on
    construction so that ``str(id)`` always starts with ``0x``, and
    compares case-insensitively.
 
@@ -217,34 +286,61 @@ Account models
 
 .. class:: Identity
 
-   A Fuel identity — either an ``Address`` or a ``ContractId``.
-
-   .. attribute:: variant
-      :type: str
-
-      Either ``"Address"`` or ``"ContractId"``.
+   Base identity type — either an ``Address`` or a ``ContractId``. Use
+   :class:`AddressIdentity` or :class:`ContractIdentity` to construct
+   instances directly, or :meth:`from_dict` to parse from API responses.
 
    .. attribute:: value
       :type: str
 
       The ``0x``-prefixed hex string.
 
-   .. method:: to_dict()
+   .. classmethod:: from_dict(d)
 
-      Serialise to the API's JSON format: ``{"Address": "0x..."}`` or
-      ``{"ContractId": "0x..."}``.
+      Factory method that returns the appropriate subclass.
 
-      :rtype: dict
+      :param d: A dict like ``{"Address": "0x..."}`` or
+          ``{"ContractId": "0x..."}``.
+      :type d: dict
+      :returns: An :class:`AddressIdentity` or :class:`ContractIdentity`.
+      :rtype: Identity
+      :raises ValueError: If the dict format is not recognized.
 
    .. property:: address_bytes
       :type: bytes
 
       The address as raw bytes (32 bytes).
 
+   .. method:: to_dict()
+
+      Serialize to the API's JSON format. Implemented by subclasses.
+
+      :rtype: dict
+
    .. property:: discriminant
       :type: int
 
-      ``0`` for Address, ``1`` for ContractId.
+      ``0`` for Address, ``1`` for ContractId. Implemented by subclasses.
+
+.. class:: AddressIdentity(value)
+
+   Identity for a Fuel Address. Subclass of :class:`Identity`.
+
+   .. code-block:: python
+
+      addr = AddressIdentity("0xabc...")
+      addr.to_dict()      # {"Address": "0xabc..."}
+      addr.discriminant    # 0
+
+.. class:: ContractIdentity(value)
+
+   Identity for a Fuel ContractId. Subclass of :class:`Identity`.
+
+   .. code-block:: python
+
+      contract = ContractIdentity("0xdef...")
+      contract.to_dict()      # {"ContractId": "0xdef..."}
+      contract.discriminant    # 1
 
 .. class:: AccountInfo
 
@@ -403,7 +499,7 @@ Order models
    .. attribute:: close
       :type: bool
 
-      ``True`` if the order is closed (fully filled or cancelled).
+      ``True`` if the order is closed (fully filled or canceled).
 
    .. attribute:: partially_filled
       :type: bool
@@ -413,7 +509,7 @@ Order models
    .. attribute:: cancel
       :type: bool
 
-      ``True`` if the order was cancelled.
+      ``True`` if the order was canceled.
 
    .. property:: is_open
       :type: bool
@@ -682,6 +778,110 @@ Action response models
       :type: bool
 
       ``True`` if the action succeeded (``tx_id`` is not ``None``).
+
+
+Action input models
+-------------------
+
+These dataclasses are the typed inputs for
+:meth:`~o2_sdk.client.O2Client.batch_actions`. Each has a ``to_dict()``
+method that serializes to the wire format expected by the API.
+
+.. class:: CreateOrderAction(side, price, quantity, order_type=OrderType.SPOT)
+
+   Create a new order. Prices and quantities must be **pre-scaled on-chain
+   integers** passed as strings.
+
+   .. attribute:: side
+      :type: OrderSide
+
+   .. attribute:: price
+      :type: str
+
+      Pre-scaled chain integer as string.
+
+   .. attribute:: quantity
+      :type: str
+
+      Pre-scaled chain integer as string.
+
+   .. attribute:: order_type
+      :type: OrderType | LimitOrder | BoundedMarketOrder
+
+      Defaults to ``OrderType.SPOT``.
+
+.. class:: CancelOrderAction(order_id)
+
+   Cancel an existing order.
+
+   .. attribute:: order_id
+      :type: Id
+
+      The normalised hex order ID.
+
+.. class:: SettleBalanceAction(to)
+
+   Settle balance to an identity. Accepts an :class:`Identity` subclass
+   (e.g. :class:`ContractIdentity`) or an :class:`Id`, which is
+   auto-wrapped as :class:`ContractIdentity` during serialisation.
+
+   .. attribute:: to
+      :type: Identity | Id
+
+   .. code-block:: python
+
+      # Pass session.trade_account_id directly (an Id):
+      SettleBalanceAction(to=session.trade_account_id)
+
+      # Or pass an explicit Identity:
+      SettleBalanceAction(to=ContractIdentity("0xabc..."))
+
+.. class:: RegisterRefererAction(to)
+
+   Register a referer. Same auto-wrapping behaviour as
+   :class:`SettleBalanceAction`.
+
+   .. attribute:: to
+      :type: Identity | Id
+
+.. data:: Action
+
+   Type alias: ``CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction``
+
+.. class:: MarketActions(market_id, actions)
+
+   Groups a list of actions for a specific market. This is the input
+   type for :meth:`~o2_sdk.client.O2Client.batch_actions`.
+
+   .. attribute:: market_id
+      :type: str
+
+      The market's hex ID.
+
+   .. attribute:: actions
+      :type: list[Action]
+
+      The actions to execute on this market (max 5 per request).
+
+   .. code-block:: python
+
+      from o2_sdk import (
+          CancelOrderAction, CreateOrderAction, SettleBalanceAction,
+          MarketActions, OrderSide, OrderType,
+      )
+
+      batch = MarketActions(
+          market_id=market.market_id,
+          actions=[
+              SettleBalanceAction(to=session.trade_account_id),
+              CreateOrderAction(
+                  side=OrderSide.BUY,
+                  price=str(scaled_price),
+                  quantity=str(scaled_qty),
+              ),
+          ],
+      )
+      result = await client.batch_actions(session, [batch], collect_orders=True)
 
 
 WebSocket update models

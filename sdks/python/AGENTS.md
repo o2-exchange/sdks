@@ -12,14 +12,16 @@ pip install -e sdks/python
 
 ```python
 import asyncio
-from o2_sdk import O2Client, Network
+from o2_sdk import O2Client, Network, OrderSide, OrderType
 
 async def main():
     client = O2Client(network=Network.TESTNET)
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order(session, "fFUEL/fUSDC", "Buy", price=0.02, quantity=100.0)
+    result = await client.create_order(
+        session, "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0
+    )
     print(result.tx_id)
     await client.close()
 
@@ -43,7 +45,7 @@ asyncio.run(main())
 | `cancel_order(session, order_id, market=None, market_id=None)` | - | `ActionsResponse` | Cancel an order |
 | `cancel_all_orders(session, market)` | - | `ActionsResponse` | Cancel all open orders |
 | `settle_balance(session, market)` | - | `ActionsResponse` | Settle filled order proceeds |
-| `batch_actions(session, actions, collect_orders=False)` | raw actions list | `ActionsResponse` | Submit batch actions |
+| `batch_actions(session, actions, collect_orders=False)` | `list[MarketActions]` | `ActionsResponse` | Submit batch actions |
 | `get_markets()` | - | `list[Market]` | List all markets |
 | `get_market(symbol_pair)` | `"FUEL/USDC"` | `Market` | Get specific market |
 | `get_depth(market, precision=10)` | - | `DepthSnapshot` | Order book depth |
@@ -69,13 +71,33 @@ asyncio.run(main())
 |-------|------|---------|-------------|
 | `session` | `SessionInfo` | required | Active session |
 | `market` | `str` | required | Market pair or ID |
-| `side` | `str` | required | `"Buy"` or `"Sell"` |
+| `side` | `OrderSide` | required | `OrderSide.BUY` or `OrderSide.SELL` |
 | `price` | `float` | required | Human-readable price |
 | `quantity` | `float` | required | Human-readable quantity |
-| `order_type` | `str` | `"Spot"` | `Spot\|Market\|Limit\|FillOrKill\|PostOnly\|BoundedMarket` |
-| `order_type_data` | `dict\|None` | `None` | Extra data for Limit/BoundedMarket |
+| `order_type` | `OrderType \| LimitOrder \| BoundedMarketOrder` | `OrderType.SPOT` | Simple enum or typed class |
 | `settle_first` | `bool` | `True` | Auto-prepend SettleBalance |
 | `collect_orders` | `bool` | `True` | Return order details |
+
+#### Enums & Order Type Parameters
+
+| Type | Values / Fields | Description |
+|------|-----------------|-------------|
+| `OrderSide` | `BUY`, `SELL` | Side of an order |
+| `OrderType` | `SPOT`, `MARKET`, `LIMIT`, `FILL_OR_KILL`, `POST_ONLY`, `BOUNDED_MARKET` | Simple order type enum |
+| `LimitOrder` | `price: float, timestamp: int \| None` | Limit order with expiry (prices auto-scaled in `create_order`) |
+| `BoundedMarketOrder` | `max_price: float, min_price: float` | Bounded market order (prices auto-scaled in `create_order`) |
+
+#### Action Types (for `batch_actions`)
+
+| Type | Fields | Description |
+|------|--------|-------------|
+| `CreateOrderAction` | `side: OrderSide, price: str, quantity: str, order_type: OrderType \| LimitOrder \| BoundedMarketOrder` | Pre-scaled order |
+| `CancelOrderAction` | `order_id: Id` | Cancel an order |
+| `SettleBalanceAction` | `to: Identity \| Id` | Settle balance (`Id` auto-wraps as `ContractIdentity`) |
+| `RegisterRefererAction` | `to: Identity \| Id` | Register a referer |
+| `MarketActions` | `market_id: str, actions: list[Action]` | Group of actions for a market |
+
+`Action = CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction`
 
 ### Low-Level Modules
 
@@ -111,24 +133,40 @@ client = O2Client(network=Network.TESTNET)
 owner = client.generate_wallet()
 account = await client.setup_account(owner)
 session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-result = await client.create_order(session, "fFUEL/fUSDC", "Buy", 0.02, 100.0)
+result = await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
 ```
 
 ### 2. Market Maker Loop
 
 ```python
+from o2_sdk import CancelOrderAction, CreateOrderAction, SettleBalanceAction, MarketActions, OrderSide, OrderType
+
 while True:
     actions = []
     if active_buy_id:
-        actions.append({"CancelOrder": {"order_id": active_buy_id}})
-    actions.append({"SettleBalance": {"to": {"ContractId": session.trade_account_id}}})
-    actions.append({"CreateOrder": {"side": "Buy", "price": str(buy_price), "quantity": str(qty), "order_type": "Spot"}})
-    actions.append({"CreateOrder": {"side": "Sell", "price": str(sell_price), "quantity": str(qty), "order_type": "Spot"}})
-    result = await client.batch_actions(session, [{"market_id": market.market_id, "actions": actions}], collect_orders=True)
+        actions.append(CancelOrderAction(order_id=active_buy_id))
+    actions.append(SettleBalanceAction(to=session.trade_account_id))
+    actions.append(CreateOrderAction(side=OrderSide.BUY, price=str(buy_price), quantity=str(qty), order_type=OrderType.SPOT))
+    actions.append(CreateOrderAction(side=OrderSide.SELL, price=str(sell_price), quantity=str(qty), order_type=OrderType.SPOT))
+    result = await client.batch_actions(session, [MarketActions(market_id=market.market_id, actions=actions)], collect_orders=True)
     await asyncio.sleep(15)
 ```
 
-### 3. Real-Time Depth Monitoring
+### 3. Taker Bot (BoundedMarket Order)
+
+```python
+from o2_sdk import BoundedMarketOrder, OrderSide
+
+result = await client.create_order(
+    session, "fFUEL/fUSDC",
+    side=OrderSide.BUY,
+    price=ask_price,
+    quantity=quantity,
+    order_type=BoundedMarketOrder(max_price=ask_price * 1.005, min_price=0.0),
+)
+```
+
+### 4. Real-Time Depth Monitoring
 
 ```python
 async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
@@ -136,7 +174,7 @@ async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
         print(f"Best bid: {update.changes.best_bid.price}")
 ```
 
-### 4. Order Management
+### 5. Order Management
 
 ```python
 # Cancel specific order
@@ -149,7 +187,23 @@ await client.cancel_all_orders(session, "fFUEL/fUSDC")
 await client.settle_balance(session, "fFUEL/fUSDC")
 ```
 
-### 5. Balance Tracking & Withdrawals
+### 6. Identity Construction
+
+```python
+from o2_sdk import AddressIdentity, ContractIdentity, Identity
+
+# Construct directly
+addr = AddressIdentity("0xabc...")
+contract = ContractIdentity("0xdef...")
+
+# Parse from API response dict
+identity = Identity.from_dict({"Address": "0xabc..."})   # returns AddressIdentity
+identity = Identity.from_dict({"ContractId": "0xdef..."}) # returns ContractIdentity
+
+# Both are subtypes of Identity and work wherever Identity is expected
+```
+
+### 7. Balance Tracking & Withdrawals
 
 ```python
 balances = await client.get_balances(account.trade_account_id)
@@ -190,6 +244,18 @@ On-chain reverts (no code field) raise `OnChainRevert` with `.reason` (e.g., `"N
 
 | Type | Key Fields | Description |
 |------|------------|-------------|
+| `OrderSide` | `BUY`, `SELL` | Enum for order side |
+| `OrderType` | `SPOT`, `MARKET`, `LIMIT`, `FILL_OR_KILL`, `POST_ONLY`, `BOUNDED_MARKET` | Enum for order type |
+| `LimitOrder` | `price: float, timestamp: int \| None` | Limit order params |
+| `BoundedMarketOrder` | `max_price: float, min_price: float` | Bounded market params |
+| `CreateOrderAction` | `side, price, quantity, order_type` | Typed create order action |
+| `CancelOrderAction` | `order_id: Id` | Typed cancel action |
+| `SettleBalanceAction` | `to: Identity \| Id` | Typed settle action |
+| `RegisterRefererAction` | `to: Identity \| Id` | Typed referer action |
+| `MarketActions` | `market_id: str, actions: list[Action]` | Actions grouped by market |
+| `Identity` | `value` | Base identity (use subclasses) |
+| `AddressIdentity` | `value: str` | Address identity |
+| `ContractIdentity` | `value: str` | ContractId identity |
 | `Wallet` | `private_key, public_key, b256_address` | Fuel-native wallet |
 | `EvmWallet` | `private_key, evm_address, b256_address` | EVM wallet |
 | `Market` | `contract_id, market_id, base, quote, pair` | Market config |

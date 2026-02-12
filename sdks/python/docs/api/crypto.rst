@@ -330,7 +330,7 @@ enclaves, use the external signer classes.
 
    :param r: 32-byte ``r`` component.
    :type r: bytes
-   :param s: 32-byte ``s`` component (must be low-s normalised).
+   :param s: 32-byte ``s`` component (must be low-s normalized).
    :type s: bytes
    :param recovery_id: Recovery ID (``0`` or ``1``).
    :type recovery_id: int

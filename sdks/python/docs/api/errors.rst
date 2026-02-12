@@ -90,7 +90,7 @@ Error code reference
    * - 3001
      - :class:`OrderNotActive`
      - Order
-     - The order is already closed or cancelled.
+     - The order is already closed or canceled.
    * - 3002
      - :class:`InvalidOrderParams`
      - Order

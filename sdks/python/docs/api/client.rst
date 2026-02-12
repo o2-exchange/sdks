@@ -157,7 +157,7 @@ Session management
    :type markets: list[str]
    :param expiry_days: Session expiry in days (default 30).
    :type expiry_days: int
-   :returns: Session info with the session key, account ID, and authorised
+   :returns: Session info with the session key, account ID, and authorized
        contract IDs.
    :rtype: :class:`~o2_sdk.models.SessionInfo`
    :raises O2Error: If the account does not exist (call
@@ -175,7 +175,7 @@ Session management
 Trading
 -------
 
-.. method:: O2Client.create_order(session, market, side, price, quantity, order_type="Spot", order_type_data=None, settle_first=True, collect_orders=True)
+.. method:: O2Client.create_order(session, market, side, price, quantity, order_type=OrderType.SPOT, settle_first=True, collect_orders=True)
    :async:
 
    Place an order with automatic encoding, signing, and nonce management.
@@ -189,19 +189,18 @@ Trading
    :type session: :class:`~o2_sdk.models.SessionInfo`
    :param market: Market pair (e.g., ``"FUEL/USDC"``) or ``market_id``.
    :type market: str
-   :param side: ``"Buy"`` or ``"Sell"``.
-   :type side: str
+   :param side: The order side.
+   :type side: :class:`~o2_sdk.models.OrderSide`
    :param price: Human-readable price.
    :type price: float
    :param quantity: Human-readable quantity.
    :type quantity: float
-   :param order_type: Order type. One of ``"Spot"``, ``"Market"``,
-       ``"Limit"``, ``"FillOrKill"``, ``"PostOnly"``, ``"BoundedMarket"``.
-   :type order_type: str
-   :param order_type_data: Additional data required for ``"Limit"``
-       (``{"price": float, "timestamp": int}``) and ``"BoundedMarket"``
-       (``{"max_price": float, "min_price": float}``).
-   :type order_type_data: dict | None
+   :param order_type: The order type. Use :class:`~o2_sdk.models.OrderType`
+       enum for simple types (``SPOT``, ``MARKET``, ``FILL_OR_KILL``,
+       ``POST_ONLY``), :class:`~o2_sdk.models.LimitOrder` for limit
+       orders, or :class:`~o2_sdk.models.BoundedMarketOrder` for bounded
+       market orders.
+   :type order_type: :class:`~o2_sdk.models.OrderType` | :class:`~o2_sdk.models.LimitOrder` | :class:`~o2_sdk.models.BoundedMarketOrder`
    :param settle_first: If ``True`` (default), prepend a
        ``SettleBalance`` action to reclaim filled proceeds before placing
        the order.
@@ -216,20 +215,28 @@ Trading
 
    .. code-block:: python
 
+      from o2_sdk import OrderSide, OrderType, LimitOrder, BoundedMarketOrder
+
       # Spot (default) — rests on the book
-      await client.create_order(session, "fFUEL/fUSDC", "Buy", 0.02, 100.0)
+      await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
 
       # PostOnly — rejected if it would match immediately
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.02, 100.0,
-          order_type="PostOnly",
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          order_type=OrderType.POST_ONLY,
       )
 
       # BoundedMarket — market order with price bounds
       await client.create_order(
-          session, "fFUEL/fUSDC", "Buy", 0.025, 100.0,
-          order_type="BoundedMarket",
-          order_type_data={"max_price": 0.03, "min_price": 0.01},
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
+          order_type=BoundedMarketOrder(max_price=0.03, min_price=0.01),
+      )
+
+      # Limit — with expiry timestamp
+      import time
+      await client.create_order(
+          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          order_type=LimitOrder(price=0.025, timestamp=int(time.time())),
       )
 
 .. method:: O2Client.cancel_order(session, order_id, market=None, market_id=None)
@@ -290,18 +297,18 @@ Trading
 .. method:: O2Client.batch_actions(session, actions, collect_orders=False)
    :async:
 
-   Submit a batch of raw actions with automatic signing and nonce
+   Submit a batch of typed actions with automatic signing and nonce
    management.
 
-   This is the lowest-level trading method. Actions are grouped by market
+   Actions are grouped by market using :class:`~o2_sdk.models.MarketActions`
    and signed as a single transaction. The O2 Exchange supports a maximum
    of **5 actions** per request.
 
    :param session: An active trading session.
    :type session: :class:`~o2_sdk.models.SessionInfo`
-   :param actions: A list of market-grouped action dicts. Each entry
-       has a ``"market_id"`` key and an ``"actions"`` list.
-   :type actions: list[dict]
+   :param actions: A list of :class:`~o2_sdk.models.MarketActions`
+       objects, each grouping actions for a specific market.
+   :type actions: list[:class:`~o2_sdk.models.MarketActions`]
    :param collect_orders: If ``True``, return created order details.
    :type collect_orders: bool
    :returns: The action result.
@@ -310,21 +317,26 @@ Trading
 
    .. code-block:: python
 
+      from o2_sdk import (
+          CancelOrderAction, CreateOrderAction, SettleBalanceAction,
+          MarketActions, OrderSide, OrderType,
+      )
+
       result = await client.batch_actions(
           session,
-          actions=[{
-              "market_id": market.market_id,
-              "actions": [
-                  {"SettleBalance": {"to": {"ContractId": session.trade_account_id}}},
-                  {"CancelOrder": {"order_id": "0xabc..."}},
-                  {"CreateOrder": {
-                      "side": "Buy",
-                      "price": "25000",
-                      "quantity": "100000000000",
-                      "order_type": "Spot",
-                  }},
+          actions=[MarketActions(
+              market_id=market.market_id,
+              actions=[
+                  SettleBalanceAction(to=session.trade_account_id),
+                  CancelOrderAction(order_id=Id("0xabc...")),
+                  CreateOrderAction(
+                      side=OrderSide.BUY,
+                      price="25000",
+                      quantity="100000000000",
+                      order_type=OrderType.SPOT,
+                  ),
               ],
-          }],
+          )],
           collect_orders=True,
       )
 

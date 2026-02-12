@@ -9,7 +9,7 @@ on the O2 Exchange using the Python SDK.
    For background on how the O2 Exchange works, see the
    `O2 Exchange documentation <https://docs.o2.app>`_.
 
-Step 1: Initialise the client
+Step 1: Initialize the client
 -----------------------------
 
 .. code-block:: python
@@ -92,13 +92,15 @@ Step 5: Place an order
 
 .. code-block:: python
 
+   from o2_sdk import OrderSide, OrderType
+
    result = await client.create_order(
        session=session,
        market="fFUEL/fUSDC",
-       side="Buy",
+       side=OrderSide.BUY,
        price=0.02,
        quantity=100.0,
-       order_type="Spot",
+       order_type=OrderType.SPOT,
    )
 
    if result.success:
@@ -107,7 +109,7 @@ Step 5: Place an order
            print(f"Order ID: {result.orders[0].order_id}")
 
 Prices and quantities are specified as **human-readable floats**. The SDK
-scales them to on-chain integer representation automatically, honouring the
+scales them to on-chain integer representation automatically, honoring the
 market's precision and dust constraints.
 
 Cleanup
@@ -133,7 +135,7 @@ Complete example
 .. code-block:: python
 
    import asyncio
-   from o2_sdk import O2Client, Network
+   from o2_sdk import O2Client, Network, OrderSide
 
    async def main():
        async with O2Client(network=Network.TESTNET) as client:
@@ -149,7 +151,7 @@ Complete example
 
            # Place order
            result = await client.create_order(
-               session, "fFUEL/fUSDC", "Buy",
+               session, "fFUEL/fUSDC", OrderSide.BUY,
                price=0.02, quantity=100.0,
            )
            print(f"tx_id={result.tx_id}")
