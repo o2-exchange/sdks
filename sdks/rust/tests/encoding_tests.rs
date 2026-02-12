@@ -3,6 +3,7 @@
 /// Tests Fuel ABI encoding primitives, function selectors, session signing bytes,
 /// and action signing bytes.
 use o2_sdk::encoding::*;
+use o2_sdk::models::{Market, MarketAsset};
 
 #[test]
 fn test_u64_be_zero() {
@@ -422,4 +423,112 @@ fn test_precomputed_function_selectors_match() {
             0x65, 0x72, 0x5F, 0x72, 0x65, 0x66, 0x65, 0x72, 0x65, 0x72
         ]
     );
+}
+
+// ---------------------------------------------------------------------------
+// Market::adjust_quantity tests
+// ---------------------------------------------------------------------------
+
+fn test_market() -> Market {
+    Market {
+        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001".into(),
+        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002".into(),
+        maker_fee: "0".into(),
+        taker_fee: "0".into(),
+        min_order: "1000000".into(),
+        dust: "0".into(),
+        price_window: 0,
+        base: MarketAsset {
+            symbol: "FUEL".into(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000003".into(),
+            decimals: 9,
+            max_precision: 3,
+        },
+        quote: MarketAsset {
+            symbol: "USDC".into(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000004".into(),
+            decimals: 9,
+            max_precision: 3,
+        },
+    }
+}
+
+#[test]
+fn test_adjust_quantity_already_valid() {
+    let market = test_market();
+    // price=100_000_000, quantity=5_000_000_000
+    // product = 500_000_000_000_000_000, % 10^9 = 0 → valid
+    let adjusted = market.adjust_quantity(100_000_000, 5_000_000_000);
+    assert_eq!(adjusted, 5_000_000_000);
+}
+
+#[test]
+fn test_adjust_quantity_needs_adjustment() {
+    let market = test_market();
+    // price=100_000_001, quantity=1 → product=100_000_001, % 10^9 != 0
+    let adjusted = market.adjust_quantity(100_000_001, 1);
+    // adjusted_product = 100_000_001 - 100_000_001 = 0 → quantity = 0
+    assert_eq!(adjusted, 0);
+
+    // price=100_000_000, quantity=3 → product=300_000_000, % 10^9 != 0
+    let adjusted = market.adjust_quantity(100_000_000, 3);
+    // adjusted_product = 300_000_000 - 300_000_000 = 0 → quantity = 0
+    assert_eq!(adjusted, 0);
+
+    // price=500_000_000, quantity=3 → product=1_500_000_000, % 10^9 != 0
+    let adjusted = market.adjust_quantity(500_000_000, 3);
+    // remainder = 500_000_000, adjusted_product = 1_000_000_000 → quantity = 2
+    assert_eq!(adjusted, 2);
+}
+
+// ---------------------------------------------------------------------------
+// OrderType::to_encoding tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_order_type_spot_to_encoding() {
+    let market = test_market();
+    let (enc, json) = o2_sdk::OrderType::Spot.to_encoding(&market);
+    assert!(matches!(enc, OrderTypeEncoding::Spot));
+    assert_eq!(json, serde_json::json!("Spot"));
+}
+
+#[test]
+fn test_order_type_limit_to_encoding() {
+    let market = test_market();
+    let (enc, json) = o2_sdk::OrderType::Limit {
+        price: 0.05,
+        timestamp: 1700000000,
+    }
+    .to_encoding(&market);
+    match enc {
+        OrderTypeEncoding::Limit { price, timestamp } => {
+            assert_eq!(price, market.scale_price(0.05));
+            assert_eq!(timestamp, 1700000000);
+        }
+        _ => panic!("Expected Limit encoding"),
+    }
+    // JSON should have Limit array with [price_str, timestamp_str]
+    assert!(json.get("Limit").is_some());
+}
+
+#[test]
+fn test_order_type_bounded_market_to_encoding() {
+    let market = test_market();
+    let (enc, json) = o2_sdk::OrderType::BoundedMarket {
+        max_price: 1.0,
+        min_price: 0.5,
+    }
+    .to_encoding(&market);
+    match enc {
+        OrderTypeEncoding::BoundedMarket {
+            max_price,
+            min_price,
+        } => {
+            assert_eq!(max_price, market.scale_price(1.0));
+            assert_eq!(min_price, market.scale_price(0.5));
+        }
+        _ => panic!("Expected BoundedMarket encoding"),
+    }
+    assert!(json.get("BoundedMarket").is_some());
 }

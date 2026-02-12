@@ -148,6 +148,38 @@ export function buildSessionSigningBytes(
   return concat(parts);
 }
 
+// ── Withdraw Signing Bytes ──────────────────────────────────────────
+
+/**
+ * Build the signing bytes for a withdrawal.
+ *
+ * Layout:
+ *   u64(nonce) + u64(chain_id) + u64(len("withdraw")) + "withdraw"
+ *   + u64(to_discriminant) + to_address(32)
+ *   + asset_id(32) + u64(amount)
+ */
+export function buildWithdrawSigningBytes(
+  nonce: bigint,
+  chainId: bigint,
+  toDiscriminant: 0 | 1,
+  toAddress: Uint8Array,
+  assetId: Uint8Array,
+  amount: bigint,
+): Uint8Array {
+  const funcName = new TextEncoder().encode("withdraw");
+  const parts: Uint8Array[] = [
+    u64BE(nonce),
+    u64BE(chainId),
+    u64BE(funcName.length),
+    funcName,
+    u64BE(toDiscriminant),
+    toAddress,
+    assetId,
+    u64BE(amount),
+  ];
+  return concat(parts);
+}
+
 // ── Action Signing Bytes ────────────────────────────────────────────
 
 /** Gas value: u64::MAX */

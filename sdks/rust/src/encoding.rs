@@ -286,6 +286,99 @@ pub fn build_withdraw_signing_bytes(
     result
 }
 
+/// Convert a high-level `Action` to a low-level `CallArg` and JSON representation.
+///
+/// This is the typed counterpart to building calls manually. It handles
+/// price/quantity scaling internally using the `Market`.
+pub fn action_to_call(
+    action: &crate::models::Action,
+    market: &crate::models::Market,
+    trade_account_id: &str,
+    accounts_registry_id: Option<&[u8; 32]>,
+) -> Result<(CallArg, serde_json::Value), crate::errors::O2Error> {
+    use crate::crypto::parse_hex_32;
+    use crate::models::{Action, Identity};
+
+    let contract_id = parse_hex_32(&market.contract_id)?;
+
+    match action {
+        Action::CreateOrder {
+            side,
+            price,
+            quantity,
+            order_type,
+        } => {
+            let base_asset = parse_hex_32(&market.base.asset)?;
+            let quote_asset = parse_hex_32(&market.quote.asset)?;
+            let scaled_price = market.scale_price(*price);
+            let scaled_quantity = market.scale_quantity(*quantity);
+            let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity);
+
+            market
+                .validate_order(scaled_price, scaled_quantity)
+                .map_err(crate::errors::O2Error::InvalidOrderParams)?;
+
+            let (ot_encoding, ot_json) = order_type.to_encoding(market);
+            let side_str = side.as_str();
+
+            let call = create_order_to_call(
+                &contract_id,
+                side_str,
+                scaled_price,
+                scaled_quantity,
+                &ot_encoding,
+                market.base.decimals,
+                &base_asset,
+                &quote_asset,
+            );
+
+            let json = serde_json::json!({
+                "CreateOrder": {
+                    "side": side_str,
+                    "price": scaled_price.to_string(),
+                    "quantity": scaled_quantity.to_string(),
+                    "order_type": ot_json
+                }
+            });
+
+            Ok((call, json))
+        }
+        Action::CancelOrder { order_id } => {
+            let order_id_bytes = parse_hex_32(order_id)?;
+            let call = cancel_order_to_call(&contract_id, &order_id_bytes);
+            let json = serde_json::json!({
+                "CancelOrder": { "order_id": order_id }
+            });
+            Ok((call, json))
+        }
+        Action::SettleBalance => {
+            let trade_account_bytes = parse_hex_32(trade_account_id)?;
+            let call = settle_balance_to_call(&contract_id, 1, &trade_account_bytes);
+            let json = serde_json::json!({
+                "SettleBalance": { "to": { "ContractId": trade_account_id } }
+            });
+            Ok((call, json))
+        }
+        Action::RegisterReferer { to } => {
+            let registry_id = accounts_registry_id.ok_or_else(|| {
+                crate::errors::O2Error::Other(
+                    "accounts_registry_id required for RegisterReferer".into(),
+                )
+            })?;
+            let (disc, addr_hex) = match to {
+                Identity::Address(a) => (0u64, a.as_str()),
+                Identity::ContractId(c) => (1u64, c.as_str()),
+            };
+            let addr_bytes = parse_hex_32(addr_hex)?;
+            let call = register_referer_to_call(registry_id, disc, &addr_bytes);
+            let json = serde_json::json!({
+                "RegisterReferer": { "to": serde_json::to_value(to).unwrap_or_default() }
+            });
+            Ok((call, json))
+        }
+    }
+}
+
 /// Convert a RegisterReferer action to a low-level CallArg.
 pub fn register_referer_to_call(
     accounts_registry_id: &[u8; 32],

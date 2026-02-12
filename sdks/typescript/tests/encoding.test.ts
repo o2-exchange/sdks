@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildActionsSigningBytes,
   buildSessionSigningBytes,
+  buildWithdrawSigningBytes,
   bytesToHex,
   type ContractCall,
   concat,
@@ -353,6 +354,62 @@ describe("Encoding Module", () => {
 
       // (200000000 * 5000000000) / 10^9 = 1000000000 >= 1000000000 -> valid
       expect(validateMinOrder(200000000n, 5000000000n, 9, 1000000000n)).toBe(true);
+    });
+  });
+
+  describe("buildWithdrawSigningBytes", () => {
+    it("produces correct byte layout", () => {
+      const nonce = 5n;
+      const chainId = 0n;
+      const toAddress = new Uint8Array(32).fill(0xaa);
+      const assetId = new Uint8Array(32).fill(0xbb);
+      const amount = 1000000000n;
+
+      const result = buildWithdrawSigningBytes(nonce, chainId, 0, toAddress, assetId, amount);
+
+      // Layout: u64(nonce) + u64(chain_id) + u64(8) + "withdraw"
+      //       + u64(0) + to_address(32) + asset_id(32) + u64(amount)
+      const expectedLen = 8 + 8 + 8 + 8 + 8 + 32 + 32 + 8; // = 112
+      expect(result.length).toBe(expectedLen);
+
+      let offset = 0;
+      // nonce
+      expect(bytesToHex(result.slice(offset, offset + 8))).toBe("0x0000000000000005");
+      offset += 8;
+      // chain_id
+      expect(bytesToHex(result.slice(offset, offset + 8))).toBe("0x0000000000000000");
+      offset += 8;
+      // func name length = 8
+      expect(bytesToHex(result.slice(offset, offset + 8))).toBe("0x0000000000000008");
+      offset += 8;
+      // "withdraw"
+      const funcName = new TextDecoder().decode(result.slice(offset, offset + 8));
+      expect(funcName).toBe("withdraw");
+      offset += 8;
+      // to discriminant = 0 (Address)
+      expect(bytesToHex(result.slice(offset, offset + 8))).toBe("0x0000000000000000");
+      offset += 8;
+      // to_address
+      expect(result.slice(offset, offset + 32)).toEqual(toAddress);
+      offset += 32;
+      // asset_id
+      expect(result.slice(offset, offset + 32)).toEqual(assetId);
+      offset += 32;
+      // amount
+      expect(bytesToHex(result.slice(offset, offset + 8))).toBe("0x000000003b9aca00");
+    });
+
+    it("handles ContractId discriminant", () => {
+      const result = buildWithdrawSigningBytes(
+        0n,
+        0n,
+        1, // ContractId
+        new Uint8Array(32),
+        new Uint8Array(32),
+        0n,
+      );
+      // Check discriminant at offset 8 + 8 + 8 + 8 = 32
+      expect(bytesToHex(result.slice(32, 40))).toBe("0x0000000000000001");
     });
   });
 

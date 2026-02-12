@@ -36,6 +36,7 @@ export {
   actionToCall,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
+  buildWithdrawSigningBytes,
   bytesToHex,
   type CancelOrderAction,
   type ContractCall,

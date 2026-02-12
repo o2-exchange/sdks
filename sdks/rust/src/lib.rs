@@ -40,4 +40,5 @@ pub use crypto::{EvmWallet, Wallet};
 pub use encoding::{CallArg, OrderTypeEncoding, GAS_MAX};
 pub use errors::O2Error;
 pub use models::*;
-pub use websocket::{O2WebSocket, TypedStream};
+pub use models::{Action, OrderType, Side};
+pub use websocket::{O2WebSocket, TypedStream, WsConfig};

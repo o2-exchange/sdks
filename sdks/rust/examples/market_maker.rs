@@ -161,7 +161,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }];
 
         let result = client
-            .batch_actions(&mut session, market_actions, calls, true)
+            .batch_actions_raw(&mut session, market_actions, calls, true)
             .await;
 
         match result {

@@ -58,10 +58,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .create_order(
                             &mut session,
                             &market_pair,
-                            "Buy",
+                            Side::Buy,
                             ask_human * 1.005,
                             max_quantity,
-                            "Spot",
+                            OrderType::Spot,
                             true,
                             true,
                         )

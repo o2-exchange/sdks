@@ -23,6 +23,7 @@ import {
   actionToCall,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
+  buildWithdrawSigningBytes,
   type ContractCall,
   type MarketInfo,
   scalePrice,
@@ -253,23 +254,20 @@ export class O2Client {
 
     // Scale price and quantity
     const scaledPrice = scalePrice(price, resolved.quote.decimals, resolved.quote.max_precision);
-    const scaledQuantity = scaleQuantity(
+    let scaledQuantity = scaleQuantity(
       quantity,
       resolved.base.decimals,
       resolved.base.max_precision,
     );
 
-    // Validate FractionalPrice
+    // Auto-adjust quantity to satisfy FractionalPrice constraint
     if (!validateFractionalPrice(scaledPrice, scaledQuantity, resolved.base.decimals)) {
-      // Adjust quantity to satisfy constraint
       const factor = BigInt(10 ** resolved.base.decimals);
       const product = scaledPrice * scaledQuantity;
       const remainder = product % factor;
       if (remainder !== 0n) {
-        throw new O2Error(
-          `FractionalPrice: (price * quantity) % 10^${resolved.base.decimals} != 0. ` +
-            `Adjust quantity to satisfy this constraint.`,
-        );
+        const adjustedProduct = product - remainder;
+        scaledQuantity = adjustedProduct / scaledPrice;
       }
     }
 
@@ -339,11 +337,11 @@ export class O2Client {
     );
   }
 
-  /** Cancel all open orders for a market. */
+  /** Cancel all open orders for a market. Returns one result per chunk, or null if no orders. */
   async cancelAllOrders(
     session: SessionState,
     market: string | Market,
-  ): Promise<{ response: SessionActionsResponse; session: SessionState } | null> {
+  ): Promise<Array<{ response: SessionActionsResponse; session: SessionState }> | null> {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
@@ -357,17 +355,27 @@ export class O2Client {
 
     if (orders.orders.length === 0) return null;
 
-    // Max 5 actions per batch
-    const cancelActions: ActionPayload[] = orders.orders.slice(0, 5).map((o) => ({
-      CancelOrder: { order_id: o.order_id },
-    }));
+    const results: Array<{ response: SessionActionsResponse; session: SessionState }> = [];
+    let currentSession = session;
 
-    return this.batchActions(
-      session,
-      [{ market_id: resolved.market_id, actions: cancelActions }],
-      resolved,
-      marketsData.accounts_registry_id,
-    );
+    // Process in chunks of 5 (max actions per batch)
+    for (let i = 0; i < orders.orders.length; i += 5) {
+      const chunk = orders.orders.slice(i, i + 5);
+      const cancelActions: ActionPayload[] = chunk.map((o) => ({
+        CancelOrder: { order_id: o.order_id },
+      }));
+
+      const result = await this.batchActions(
+        currentSession,
+        [{ market_id: resolved.market_id, actions: cancelActions }],
+        resolved,
+        marketsData.accounts_registry_id,
+      );
+      currentSession = result.session;
+      results.push(result);
+    }
+
+    return results;
   }
 
   /** Settle balance for a market. */
@@ -632,28 +640,35 @@ export class O2Client {
     amount: string,
     to?: Identity,
   ) {
-    // Get current nonce
+    // Get current nonce and chain_id
     const info = await this.api.getAccount({ tradeAccountId });
     const nonce = BigInt(info.trade_account?.nonce ?? "0");
 
-    // Build withdraw signing bytes (same as set_session pattern)
-    const destination = to ?? { Address: wallet.b256Address };
+    const marketsData = await this.fetchMarkets();
+    const chainIdRaw = marketsData.chain_id;
+    const chainId = BigInt(
+      chainIdRaw.startsWith("0x") ? Number.parseInt(chainIdRaw, 16) : chainIdRaw,
+    );
 
-    // Sign with owner wallet
-    // NOTE: The withdraw signing uses personalSign for Fuel, evmPersonalSign for EVM
-    const signingMessage = new TextEncoder().encode(
-      JSON.stringify({
-        trade_account_id: tradeAccountId,
-        nonce: nonce.toString(),
-        to: destination,
-        asset_id: assetId,
-        amount,
-      }),
+    const destination = to ?? { Address: wallet.b256Address };
+    const toDiscriminant: 0 | 1 = "ContractId" in destination ? 1 : 0;
+    const toAddressHex = (
+      "ContractId" in destination ? destination.ContractId : destination.Address
+    ) as string;
+
+    // Build binary signing bytes matching Rust layout
+    const signingBytes = buildWithdrawSigningBytes(
+      nonce,
+      chainId,
+      toDiscriminant,
+      hexToBytes(toAddressHex),
+      hexToBytes(assetId),
+      BigInt(amount),
     );
 
     const signature = wallet.isEvm
-      ? evmPersonalSign(wallet.privateKey, signingMessage)
-      : personalSign(wallet.privateKey, signingMessage);
+      ? evmPersonalSign(wallet.privateKey, signingBytes)
+      : personalSign(wallet.privateKey, signingBytes);
 
     return this.api.withdraw(wallet.b256Address, {
       trade_account_id: tradeAccountId,

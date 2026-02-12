@@ -28,22 +28,42 @@ logger = logging.getLogger("o2_sdk.websocket")
 
 
 class O2WebSocket:
-    """Async WebSocket client for O2 Exchange real-time data."""
+    """Async WebSocket client for O2 Exchange real-time data.
 
-    def __init__(self, config: NetworkConfig):
+    Features:
+    - Auto-reconnect with exponential backoff
+    - Subscription tracking and automatic re-subscribe on reconnect
+    - Heartbeat ping/pong to detect silent disconnections
+    - Configurable max reconnect attempts
+    """
+
+    def __init__(
+        self,
+        config: NetworkConfig,
+        ping_interval: float = 30.0,
+        pong_timeout: float = 60.0,
+        max_reconnect_attempts: int = 10,
+    ):
         self._config = config
         self._ws: ClientConnection | None = None
         self._subscriptions: list[dict] = []
         self._message_queues: dict[str, asyncio.Queue] = {}
         self._listener_task: asyncio.Task | None = None
+        self._ping_task: asyncio.Task | None = None
         self._connected = False
         self._reconnect_delay = 1.0
         self._max_reconnect_delay = 60.0
         self._should_run = False
+        self._ping_interval = ping_interval
+        self._pong_timeout = pong_timeout
+        self._max_reconnect_attempts = max_reconnect_attempts
+        self._reconnect_attempts = 0
+        self._last_pong: float = 0.0
 
     async def connect(self) -> O2WebSocket:
         """Connect to the WebSocket endpoint."""
         self._should_run = True
+        self._reconnect_attempts = 0
         await self._do_connect()
         return self
 
@@ -52,6 +72,8 @@ class O2WebSocket:
             self._ws = await websockets.connect(self._config.ws_url)
             self._connected = True
             self._reconnect_delay = 1.0
+            self._reconnect_attempts = 0
+            self._last_pong = asyncio.get_event_loop().time()
             logger.info("WebSocket connected to %s", self._config.ws_url)
 
             # Re-subscribe on reconnect
@@ -61,15 +83,62 @@ class O2WebSocket:
             # Start listener
             if self._listener_task is None or self._listener_task.done():
                 self._listener_task = asyncio.create_task(self._listen())
+
+            # Start ping task
+            if self._ping_task is None or self._ping_task.done():
+                self._ping_task = asyncio.create_task(self._ping_loop())
         except Exception as e:
             logger.error("WebSocket connection failed: %s", e)
             if self._should_run:
                 await self._reconnect()
 
+    async def _ping_loop(self) -> None:
+        """Send periodic pings and trigger reconnect on pong timeout."""
+        try:
+            while self._should_run and self._connected:
+                await asyncio.sleep(self._ping_interval)
+                if not self._should_run or not self._connected:
+                    return
+
+                # Check pong timeout
+                now = asyncio.get_event_loop().time()
+                if now - self._last_pong > self._pong_timeout:
+                    logger.warning("Pong timeout (%.1fs), triggering reconnect", self._pong_timeout)
+                    if self._ws:
+                        await self._ws.close()
+                    return
+
+                # Send ping
+                if self._ws:
+                    try:
+                        await self._ws.ping()
+                        logger.debug("Sent ping")
+                    except Exception:
+                        return
+        except asyncio.CancelledError:
+            return
+
     async def _reconnect(self) -> None:
         self._connected = False
         while self._should_run:
-            logger.info("Reconnecting in %.1fs...", self._reconnect_delay)
+            if (
+                self._max_reconnect_attempts > 0
+                and self._reconnect_attempts >= self._max_reconnect_attempts
+            ):
+                logger.error(
+                    "Max reconnect attempts (%d) reached, stopping",
+                    self._max_reconnect_attempts,
+                )
+                # Signal all queues to stop
+                for q in self._message_queues.values():
+                    await q.put(None)
+                return
+            self._reconnect_attempts += 1
+            logger.info(
+                "Reconnecting in %.1fs (attempt %d)...",
+                self._reconnect_delay,
+                self._reconnect_attempts,
+            )
             await asyncio.sleep(self._reconnect_delay)
             self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
             try:
@@ -82,6 +151,10 @@ class O2WebSocket:
         """Disconnect from the WebSocket."""
         self._should_run = False
         self._connected = False
+        if self._ping_task and not self._ping_task.done():
+            self._ping_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._ping_task
         if self._listener_task and not self._listener_task.done():
             self._listener_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -102,6 +175,8 @@ class O2WebSocket:
             while self._should_run and self._ws:
                 try:
                     raw = await self._ws.recv()
+                    # Any data received counts as proof of liveness
+                    self._last_pong = asyncio.get_event_loop().time()
                     data = json.loads(raw)
                     action = data.get("action", "")
                     self._dispatch(action, data)

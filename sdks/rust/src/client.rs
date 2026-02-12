@@ -15,7 +15,7 @@ use crate::crypto::{
 };
 use crate::encoding::{
     build_actions_signing_bytes, build_session_signing_bytes, build_withdraw_signing_bytes,
-    cancel_order_to_call, create_order_to_call, settle_balance_to_call, CallArg, OrderTypeEncoding,
+    cancel_order_to_call, create_order_to_call, settle_balance_to_call, CallArg,
 };
 use crate::errors::O2Error;
 use crate::models::*;
@@ -380,15 +380,16 @@ impl O2Client {
     /// Place a new order. Handles encoding, signing, and nonce management.
     ///
     /// If `settle_first` is true, a SettleBalance action is prepended.
+    /// Uses typed `Side` and `OrderType` enums for compile-time safety.
     #[allow(clippy::too_many_arguments)]
     pub async fn create_order(
         &mut self,
         session: &mut Session,
         market_name: &str,
-        side: &str,
+        side: Side,
         price: f64,
         quantity: f64,
-        order_type: &str,
+        order_type: OrderType,
         settle_first: bool,
         collect_orders: bool,
     ) -> Result<SessionActionsResponse, O2Error> {
@@ -402,26 +403,18 @@ impl O2Client {
         let scaled_price = market.scale_price(price);
         let scaled_quantity = market.scale_quantity(quantity);
 
+        // Adjust quantity for FractionalPrice constraint
+        let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity);
+
         // Validate order constraints
         market
             .validate_order(scaled_price, scaled_quantity)
             .map_err(O2Error::InvalidOrderParams)?;
 
-        let ot_encoding = match order_type {
-            "Spot" => OrderTypeEncoding::Spot,
-            "Market" => OrderTypeEncoding::Market,
-            "FillOrKill" => OrderTypeEncoding::FillOrKill,
-            "PostOnly" => OrderTypeEncoding::PostOnly,
-            _ => OrderTypeEncoding::Spot,
-        };
+        // Convert OrderType to encoding and JSON representations
+        let (ot_encoding, ot_json) = order_type.to_encoding(&market);
 
-        let ot_json: serde_json::Value = match order_type {
-            "Spot" => json!("Spot"),
-            "Market" => json!("Market"),
-            "FillOrKill" => json!("FillOrKill"),
-            "PostOnly" => json!("PostOnly"),
-            _ => json!("Spot"),
-        };
+        let side_str = side.as_str();
 
         // Build calls for signing
         let mut calls: Vec<CallArg> = Vec::new();
@@ -444,7 +437,7 @@ impl O2Client {
 
         calls.push(create_order_to_call(
             &contract_id,
-            side,
+            side_str,
             scaled_price,
             scaled_quantity,
             &ot_encoding,
@@ -454,7 +447,7 @@ impl O2Client {
         ));
         actions_json.push(json!({
             "CreateOrder": {
-                "side": side,
+                "side": side_str,
                 "price": scaled_price.to_string(),
                 "quantity": scaled_quantity.to_string(),
                 "order_type": ot_json
@@ -481,10 +474,18 @@ impl O2Client {
             variable_outputs: None,
         };
 
-        let result = self.api.submit_actions(&owner_hex, &request).await;
-        // Increment nonce regardless (on-chain nonce increments even on reverts)
-        session.nonce += 1;
-        result
+        match self.api.submit_actions(&owner_hex, &request).await {
+            Ok(resp) => {
+                session.nonce += 1;
+                Ok(resp)
+            }
+            Err(e) => {
+                session.nonce += 1;
+                // Re-fetch nonce on error for resync (best-effort)
+                let _ = self.refresh_nonce(session).await;
+                Err(e)
+            }
+        }
     }
 
     /// Cancel an order by order_id.
@@ -522,9 +523,17 @@ impl O2Client {
             variable_outputs: None,
         };
 
-        let result = self.api.submit_actions(&owner_hex, &request).await;
-        session.nonce += 1;
-        result
+        match self.api.submit_actions(&owner_hex, &request).await {
+            Ok(resp) => {
+                session.nonce += 1;
+                Ok(resp)
+            }
+            Err(e) => {
+                session.nonce += 1;
+                let _ = self.refresh_nonce(session).await;
+                Err(e)
+            }
+        }
     }
 
     /// Cancel all open orders for a market.
@@ -599,8 +608,55 @@ impl O2Client {
         Ok(results)
     }
 
-    /// Submit a batch of raw actions for advanced use.
+    /// Submit a batch of typed actions for a single market.
+    ///
+    /// Handles price/quantity scaling, encoding, signing, and nonce management.
     pub async fn batch_actions(
+        &mut self,
+        session: &mut Session,
+        market_name: &str,
+        actions: Vec<Action>,
+        collect_orders: bool,
+    ) -> Result<SessionActionsResponse, O2Error> {
+        Self::check_session_expiry(session)?;
+        let market = self.get_market(market_name).await?;
+        let markets_resp = self.ensure_markets().await?;
+        let accounts_registry_id = markets_resp
+            .accounts_registry_id
+            .as_deref()
+            .map(parse_hex_32)
+            .transpose()?;
+
+        let mut calls: Vec<CallArg> = Vec::new();
+        let mut actions_json: Vec<serde_json::Value> = Vec::new();
+
+        for action in &actions {
+            let (call, json) = crate::encoding::action_to_call(
+                action,
+                &market,
+                &session.trade_account_id,
+                accounts_registry_id.as_ref(),
+            )?;
+            calls.push(call);
+            actions_json.push(json);
+        }
+
+        self.batch_actions_raw(
+            session,
+            vec![MarketActions {
+                market_id: market.market_id.clone(),
+                actions: actions_json,
+            }],
+            calls,
+            collect_orders,
+        )
+        .await
+    }
+
+    /// Submit a batch of raw pre-built actions for advanced use.
+    ///
+    /// Use this when you need full control over the `CallArg` and JSON payloads.
+    pub async fn batch_actions_raw(
         &mut self,
         session: &mut Session,
         market_actions: Vec<MarketActions>,
@@ -622,9 +678,17 @@ impl O2Client {
             variable_outputs: None,
         };
 
-        let result = self.api.submit_actions(&owner_hex, &request).await;
-        session.nonce += 1;
-        result
+        match self.api.submit_actions(&owner_hex, &request).await {
+            Ok(resp) => {
+                session.nonce += 1;
+                Ok(resp)
+            }
+            Err(e) => {
+                session.nonce += 1;
+                let _ = self.refresh_nonce(session).await;
+                Err(e)
+            }
+        }
     }
 
     /// Settle balance for a market.
@@ -666,9 +730,17 @@ impl O2Client {
             variable_outputs: None,
         };
 
-        let result = self.api.submit_actions(&owner_hex, &request).await;
-        session.nonce += 1;
-        result
+        match self.api.submit_actions(&owner_hex, &request).await {
+            Ok(resp) => {
+                session.nonce += 1;
+                Ok(resp)
+            }
+            Err(e) => {
+                session.nonce += 1;
+                let _ = self.refresh_nonce(session).await;
+                Err(e)
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

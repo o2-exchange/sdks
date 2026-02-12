@@ -28,6 +28,7 @@ from .encoding import (
     action_to_call,
     build_actions_signing_bytes,
     build_session_signing_bytes,
+    build_withdraw_signing_bytes,
 )
 from .errors import O2Error, SessionExpired
 from .models import (
@@ -346,8 +347,12 @@ class O2Client:
         ]
         return await self.batch_actions(session=session, actions=actions)
 
-    async def cancel_all_orders(self, session: SessionInfo, market: str) -> ActionsResponse:
-        """Cancel all open orders for a market (up to 5 per batch)."""
+    async def cancel_all_orders(self, session: SessionInfo, market: str) -> list[ActionsResponse]:
+        """Cancel all open orders for a market.
+
+        Fetches up to 200 open orders and cancels them in batches of 5.
+        Returns a list of ActionsResponse (one per batch).
+        """
         markets_resp = await self._get_markets_cached()
         market_obj = self._resolve_market(markets_resp, market)
 
@@ -355,16 +360,23 @@ class O2Client:
             market_id=market_obj.market_id,
             contract=session.trade_account_id,
             direction="desc",
-            count=5,
+            count=200,
             is_open=True,
         )
 
         if not orders_resp.orders:
-            return ActionsResponse(tx_id=None, message="No open orders")
+            return []
 
-        cancel_actions = [{"CancelOrder": {"order_id": o.order_id}} for o in orders_resp.orders]
-        actions = [{"market_id": market_obj.market_id, "actions": cancel_actions}]
-        return await self.batch_actions(session=session, actions=actions)
+        results: list[ActionsResponse] = []
+        # Cancel in chunks of 5
+        for i in range(0, len(orders_resp.orders), 5):
+            chunk = orders_resp.orders[i : i + 5]
+            cancel_actions = [{"CancelOrder": {"order_id": o.order_id}} for o in chunk]
+            actions = [{"market_id": market_obj.market_id, "actions": cancel_actions}]
+            resp = await self.batch_actions(session=session, actions=actions)
+            results.append(resp)
+
+        return results
 
     async def settle_balance(self, session: SessionInfo, market: str) -> ActionsResponse:
         """Settle balance for a market."""
@@ -622,30 +634,22 @@ class O2Client:
         asset_id, decimals = self._resolve_asset(markets_resp, asset)
         scaled_amount = int(amount * (10**decimals))
 
-        # Build withdraw signing bytes
-        # Withdraw uses personalSign like session creation
-        from .encoding import u64_be
-
-        func_name = b"withdraw"
-        signing_bytes = bytearray()
-        signing_bytes += u64_be(nonce)
-        signing_bytes += u64_be(markets_resp.chain_id_int)
-        signing_bytes += u64_be(len(func_name))
-        signing_bytes += func_name
-        # to identity
-        signing_bytes += u64_be(0)  # Address discriminant
-        signing_bytes += bytes.fromhex(destination[2:])
-        # asset_id
-        signing_bytes += bytes.fromhex(asset_id[2:])
-        # amount
-        signing_bytes += u64_be(scaled_amount)
+        # Build withdraw signing bytes using shared encoding function
+        signing_bytes = build_withdraw_signing_bytes(
+            nonce=nonce,
+            chain_id=markets_resp.chain_id_int,
+            to_discriminant=0,  # Address discriminant
+            to_address=bytes.fromhex(destination[2:]),
+            asset_id=bytes.fromhex(asset_id[2:]),
+            amount=scaled_amount,
+        )
 
         if isinstance(owner, EvmWallet):
             from .crypto import evm_personal_sign as sign_fn
         else:
             from .crypto import personal_sign as sign_fn
 
-        signature = sign_fn(owner.private_key, bytes(signing_bytes))
+        signature = sign_fn(owner.private_key, signing_bytes)
 
         withdraw_request = {
             "trade_account_id": account.trade_account_id,

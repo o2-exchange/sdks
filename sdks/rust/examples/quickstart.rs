@@ -2,7 +2,7 @@
 ///
 /// Demonstrates: generate wallet, setup account, create session, place order,
 /// check order status, cancel order.
-use o2_sdk::{crypto, Network, O2Client};
+use o2_sdk::{crypto, Network, O2Client, OrderType, Side};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -42,10 +42,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create_order(
             &mut session,
             &market_pair,
-            "Buy",
+            Side::Buy,
             0.001, // price (human-readable)
             100.0, // quantity (human-readable)
-            "Spot",
+            OrderType::Spot,
             true, // settle first
             true, // collect orders
         )

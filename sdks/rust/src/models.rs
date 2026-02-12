@@ -45,6 +45,106 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Public trading enums
+// ---------------------------------------------------------------------------
+
+/// Order side: Buy or Sell.
+#[derive(Debug, Clone)]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+impl Side {
+    /// Returns the API string representation.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Side::Buy => "Buy",
+            Side::Sell => "Sell",
+        }
+    }
+}
+
+/// High-level order type with associated data.
+///
+/// Used in `create_order` and `Action::CreateOrder` to provide compile-time
+/// safety instead of raw `&str` matching. Limit and BoundedMarket variants
+/// carry their required parameters.
+#[derive(Debug, Clone)]
+pub enum OrderType {
+    Spot,
+    Market,
+    FillOrKill,
+    PostOnly,
+    Limit { price: f64, timestamp: u64 },
+    BoundedMarket { max_price: f64, min_price: f64 },
+}
+
+/// High-level action for use with `batch_actions`.
+///
+/// Converts to the low-level `CallArg` and JSON representations internally.
+#[derive(Debug, Clone)]
+pub enum Action {
+    CreateOrder {
+        side: Side,
+        price: f64,
+        quantity: f64,
+        order_type: OrderType,
+    },
+    CancelOrder {
+        order_id: String,
+    },
+    SettleBalance,
+    RegisterReferer {
+        to: Identity,
+    },
+}
+
+impl OrderType {
+    /// Convert to the low-level `OrderTypeEncoding` and JSON representation
+    /// used by the encoding and API layers.
+    pub fn to_encoding(
+        &self,
+        market: &Market,
+    ) -> (crate::encoding::OrderTypeEncoding, serde_json::Value) {
+        use crate::encoding::OrderTypeEncoding;
+        match self {
+            OrderType::Spot => (OrderTypeEncoding::Spot, serde_json::json!("Spot")),
+            OrderType::Market => (OrderTypeEncoding::Market, serde_json::json!("Market")),
+            OrderType::FillOrKill => (
+                OrderTypeEncoding::FillOrKill,
+                serde_json::json!("FillOrKill"),
+            ),
+            OrderType::PostOnly => (OrderTypeEncoding::PostOnly, serde_json::json!("PostOnly")),
+            OrderType::Limit { price, timestamp } => {
+                let scaled_price = market.scale_price(*price);
+                (
+                    OrderTypeEncoding::Limit {
+                        price: scaled_price,
+                        timestamp: *timestamp,
+                    },
+                    serde_json::json!({ "Limit": [scaled_price.to_string(), timestamp.to_string()] }),
+                )
+            }
+            OrderType::BoundedMarket {
+                max_price,
+                min_price,
+            } => {
+                let scaled_max = market.scale_price(*max_price);
+                let scaled_min = market.scale_price(*min_price);
+                (
+                    OrderTypeEncoding::BoundedMarket {
+                        max_price: scaled_max,
+                        min_price: scaled_min,
+                    },
+                    serde_json::json!({ "BoundedMarket": { "max_price": scaled_max.to_string(), "min_price": scaled_min.to_string() } }),
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
 
@@ -126,6 +226,19 @@ impl Market {
     /// The symbol pair string, e.g. "FUEL/USDC".
     pub fn symbol_pair(&self) -> String {
         format!("{}/{}", self.base.symbol, self.quote.symbol)
+    }
+
+    /// Adjust quantity downward so that `(price * quantity) % 10^base_decimals == 0`.
+    /// Returns the original quantity if already valid.
+    pub fn adjust_quantity(&self, price: u64, quantity: u64) -> u64 {
+        let base_factor = 10u128.pow(self.base.decimals);
+        let product = price as u128 * quantity as u128;
+        let remainder = product % base_factor;
+        if remainder == 0 {
+            return quantity;
+        }
+        let adjusted_product = product - remainder;
+        (adjusted_product / price as u128) as u64
     }
 
     /// Validate that a price*quantity satisfies min_order and FractionalPrice constraints.

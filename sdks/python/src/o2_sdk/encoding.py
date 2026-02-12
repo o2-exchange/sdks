@@ -181,6 +181,39 @@ def build_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
     return bytes(result)
 
 
+def build_withdraw_signing_bytes(
+    nonce: int,
+    chain_id: int,
+    to_discriminant: int,
+    to_address: bytes,
+    asset_id: bytes,
+    amount: int,
+) -> bytes:
+    """Build the signing bytes for a withdrawal.
+
+    Layout:
+      u64(nonce) + u64(chain_id) + u64(len("withdraw")) + "withdraw"
+      + u64(to_discriminant) + to_address(32)
+      + asset_id(32) + u64(amount)
+    """
+    func_name = b"withdraw"
+
+    result = bytearray()
+    result += u64_be(nonce)
+    result += u64_be(chain_id)
+    result += u64_be(len(func_name))
+    result += func_name
+    # to identity
+    result += u64_be(to_discriminant)
+    result += to_address
+    # asset_id
+    result += asset_id
+    # amount
+    result += u64_be(amount)
+
+    return bytes(result)
+
+
 def action_to_call(action: dict, market_info: dict) -> dict:
     """Convert a high-level action to a low-level contract call.
 
