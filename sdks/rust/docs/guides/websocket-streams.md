@@ -2,18 +2,19 @@
 
 This guide covers real-time data streaming using the O2 Rust SDK.
 
-The SDK provides WebSocket streaming through `TypedStream<T>`, which
+The SDK provides WebSocket streaming through [`TypedStream<T>`](crate::TypedStream), which
 implements `tokio_stream::Stream` and can be consumed with
 `while let Some(item) = stream.next().await`.
 
-> For complete method signatures, see [AGENTS.md](../../AGENTS.md).
+> See also: [`O2Client`](crate::client::O2Client) streaming methods,
+> [`O2WebSocket`](crate::O2WebSocket) for standalone usage.
 
 ## Overview
 
 All streaming methods:
 
-- Return a `TypedStream<T>` that yields `Result<T, O2Error>` items.
-- Share a single WebSocket connection managed by the `O2Client`.
+- Return a [`TypedStream<T>`](crate::TypedStream) that yields `Result<T, O2Error>` items.
+- Share a single WebSocket connection managed by the [`O2Client`](crate::client::O2Client).
 - Support automatic reconnection with exponential backoff.
 - Re-subscribe to channels on reconnect.
 
@@ -30,7 +31,7 @@ ignores lifecycle signals and stops on any error.
 
 Stream real-time order book updates:
 
-```rust
+```rust,ignore
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
@@ -61,13 +62,13 @@ while let Some(Ok(update)) = stream.next().await {
 ```
 
 The `precision` parameter controls price aggregation, matching the
-REST `get_depth` endpoint.
+REST [`O2Client::get_depth`](crate::client::O2Client::get_depth) endpoint.
 
 ## Order Updates
 
 Monitor your orders in real time:
 
-```rust
+```rust,ignore
 use o2_sdk::Identity;
 use tokio_stream::StreamExt;
 
@@ -102,7 +103,7 @@ while let Some(Ok(update)) = stream.next().await {
 
 Stream all trades for a market:
 
-```rust
+```rust,ignore
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
@@ -126,7 +127,7 @@ while let Some(Ok(update)) = stream.next().await {
 
 Monitor balance changes in real time:
 
-```rust
+```rust,ignore
 use o2_sdk::Identity;
 use tokio_stream::StreamExt;
 
@@ -152,7 +153,7 @@ while let Some(Ok(update)) = stream.next().await {
 Useful for detecting nonce changes from other sessions or external
 transactions:
 
-```rust
+```rust,ignore
 use o2_sdk::Identity;
 use tokio_stream::StreamExt;
 
@@ -172,7 +173,7 @@ while let Some(Ok(update)) = stream.next().await {
 
 Use `tokio::join!` or `tokio::spawn` to run multiple streams concurrently:
 
-```rust
+```rust,ignore
 use o2_sdk::Identity;
 use tokio_stream::StreamExt;
 
@@ -208,7 +209,11 @@ let trade_task = tokio::spawn(async move {
     while let Some(Ok(update)) = trade_stream.next().await {
         if let Some(ref trades) = update.trades {
             for trade in trades {
-                println!("Trade: {} @ {}", trade.quantity.as_deref().unwrap_or("0"), trade.price.as_deref().unwrap_or("0"));
+                println!(
+                    "Trade: {} @ {}",
+                    trade.quantity.as_deref().unwrap_or("0"),
+                    trade.price.as_deref().unwrap_or("0"),
+                );
             }
         }
     }
@@ -219,14 +224,14 @@ tokio::join!(depth_task, order_task, trade_task);
 ```
 
 > **Note:** All streams share a single WebSocket connection, managed
-> internally by the `O2WebSocket` client within `O2Client`.
+> internally by the [`O2WebSocket`](crate::O2WebSocket) client within `O2Client`.
 
 ## Handling Reconnections
 
 For non-snapshot streams, handle reconnection signals to re-fetch
 current state:
 
-```rust
+```rust,ignore
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
@@ -255,9 +260,9 @@ while let Some(result) = stream.next().await {
 
 ## Configuration
 
-Customize reconnection behavior via `WsConfig`:
+Customize reconnection behavior via [`WsConfig`](crate::WsConfig):
 
-```rust
+```rust,ignore
 use o2_sdk::{O2WebSocket, WsConfig};
 use std::time::Duration;
 
@@ -278,12 +283,12 @@ Reconnection uses exponential backoff to avoid thundering herd effects.
 
 Always disconnect the WebSocket when done to cleanly release resources:
 
-```rust
+```rust,ignore
 client.disconnect_ws().await?;
 ```
 
-For standalone `O2WebSocket` instances:
+For standalone [`O2WebSocket`](crate::O2WebSocket) instances:
 
-```rust
+```rust,ignore
 ws.disconnect().await?;
 ```

@@ -3,12 +3,12 @@
 This guide covers how to fetch market data from the O2 Exchange using
 the Rust SDK.
 
-> For real-time streaming, see the [WebSocket Streams](websocket-streams.md)
-> guide. For complete method signatures, see [AGENTS.md](../../AGENTS.md).
+> See also: [WebSocket Streams](crate::guides::websocket_streams) for real-time streaming,
+> [`O2Client`](crate::client::O2Client) API reference.
 
 ## Listing Markets
 
-```rust
+```rust,ignore
 let markets = client.get_markets().await?;
 for market in &markets {
     println!(
@@ -26,13 +26,13 @@ println!("Maker fee: {}", market.maker_fee);
 
 The market pair lookup is case-sensitive and supports the `f`-prefix
 convention used on testnet (e.g., `"fFUEL/fUSDC"`). You can also look up
-by hex market ID using `get_market_by_id`.
+by hex market ID using [`O2Client::get_market_by_id`](crate::client::O2Client::get_market_by_id).
 
 ## Order Book Depth
 
 Fetch a snapshot of the order book:
 
-```rust
+```rust,ignore
 let depth = client.get_depth("fFUEL/fUSDC", 10).await?;
 
 let buys = depth.buys.as_deref().unwrap_or_default();
@@ -59,7 +59,7 @@ produce fewer, wider price levels.
 
 ## Recent Trades
 
-```rust
+```rust,ignore
 let trades_resp = client.get_trades("fFUEL/fUSDC", 20).await?;
 if let Some(trades) = &trades_resp.trades {
     for trade in trades {
@@ -76,7 +76,7 @@ if let Some(trades) = &trades_resp.trades {
 
 ## OHLCV Candles
 
-```rust
+```rust,ignore
 use std::time::{SystemTime, UNIX_EPOCH};
 
 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -100,7 +100,7 @@ Supported resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`,
 
 ## Ticker Data
 
-```rust
+```rust,ignore
 let ticker = client.get_ticker("fFUEL/fUSDC").await?;
 println!("Last: {}", ticker.last_price.as_deref().unwrap_or("?"));
 println!("Bid: {} / Ask: {}",
@@ -111,10 +111,10 @@ println!("Bid: {} / Ask: {}",
 
 ## Price Conversion
 
-Market data is returned in on-chain integer format. Use the `Market`
+Market data is returned in on-chain integer format. Use the [`Market`](crate::Market)
 helper methods to convert to/from human-readable values:
 
-```rust
+```rust,ignore
 let market = client.get_market("fFUEL/fUSDC").await?;
 let depth = client.get_depth("fFUEL/fUSDC", 10).await?;
 
@@ -131,7 +131,7 @@ let chain_qty = market.scale_quantity(&100.0.into());
 
 ## Balances
 
-```rust
+```rust,ignore
 let balances = client.get_balances(&session.trade_account_id).await?;
 for (symbol, bal) in &balances {
     println!("{}:", symbol);
@@ -146,10 +146,10 @@ for (symbol, bal) in &balances {
 
 ## Low-Level API Access
 
-For advanced use cases, you can access the underlying `O2Api` directly
+For advanced use cases, you can access the underlying [`O2Api`](crate::api::O2Api) directly
 through the `api` field:
 
-```rust
+```rust,ignore
 // Aggregated assets
 let assets = client.api.get_aggregated_assets().await?;
 

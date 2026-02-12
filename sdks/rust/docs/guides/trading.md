@@ -2,15 +2,14 @@
 
 This guide covers common trading patterns using the O2 Rust SDK.
 
-> For complete method signatures, see the `O2Client` documentation in
-> [AGENTS.md](../../AGENTS.md).
+> See also: [`O2Client`](crate::client::O2Client) API reference.
 
 ## Order Types
 
-The O2 Exchange supports six order types, specified via the `OrderType` enum
-passed to `O2Client::create_order`.
+The O2 Exchange supports six order types, specified via the [`OrderType`](crate::OrderType) enum
+passed to [`O2Client::create_order`](crate::client::O2Client::create_order).
 
-```rust
+```rust,ignore
 use o2_sdk::{O2Client, Network, Side, OrderType};
 ```
 
@@ -18,7 +17,7 @@ use o2_sdk::{O2Client, Network, Side, OrderType};
 
 A standard limit order that rests on the book if not immediately filled.
 
-```rust
+```rust,ignore
 client.create_order(
     &mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0,
     OrderType::Spot, true, true,
@@ -30,7 +29,7 @@ client.create_order(
 Guaranteed to be a maker order. Rejected immediately if it would cross
 the spread and match an existing order.
 
-```rust
+```rust,ignore
 client.create_order(
     &mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0,
     OrderType::PostOnly, true, true,
@@ -42,7 +41,7 @@ client.create_order(
 Executes immediately at the best available price. Fails if the order
 book is empty.
 
-```rust
+```rust,ignore
 client.create_order(
     &mut session, "fFUEL/fUSDC", Side::Buy, 0.03, 100.0,
     OrderType::Market, true, true,
@@ -54,7 +53,7 @@ client.create_order(
 Must be filled entirely in a single match, or the entire order is
 rejected.
 
-```rust
+```rust,ignore
 client.create_order(
     &mut session, "fFUEL/fUSDC", Side::Buy, 0.03, 100.0,
     OrderType::FillOrKill, true, true,
@@ -66,7 +65,7 @@ client.create_order(
 Like Spot, but includes a limit price and timestamp for time-in-force
 semantics:
 
-```rust
+```rust,ignore
 use std::time::{SystemTime, UNIX_EPOCH};
 
 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
@@ -83,7 +82,7 @@ client.create_order(
 A market order with price bounds — executes at market price but only
 within the specified range:
 
-```rust
+```rust,ignore
 client.create_order(
     &mut session, "fFUEL/fUSDC", Side::Buy, 0.025, 100.0,
     OrderType::BoundedMarket { max_price: 0.03.into(), min_price: 0.01.into() },
@@ -95,7 +94,7 @@ client.create_order(
 
 Cancel an existing order:
 
-```rust
+```rust,ignore
 // Cancel by order ID
 client.cancel_order(&mut session, "0xabc...", "fFUEL/fUSDC").await?;
 
@@ -104,9 +103,9 @@ client.cancel_all_orders(&mut session, "fFUEL/fUSDC").await?;
 ```
 
 To atomically cancel-and-replace in a single transaction, use
-`O2Client::batch_actions` with typed `Action` variants:
+[`O2Client::batch_actions`](crate::client::O2Client::batch_actions) with typed [`Action`](crate::Action) variants:
 
-```rust
+```rust,ignore
 use o2_sdk::{Action, Side, OrderType};
 
 let actions = vec![
@@ -123,20 +122,21 @@ let actions = vec![
 let result = client.batch_actions(&mut session, "fFUEL/fUSDC", actions, true).await?;
 ```
 
-> **Important:** Prices and quantities in `Action::CreateOrder` are
+> **Important:** Prices and quantities in [`Action::CreateOrder`](crate::Action::CreateOrder) are
 > human-readable values. The SDK automatically scales them to on-chain
 > integers using the market's decimal configuration. For manual scaling,
-> use `Market::scale_price` and `Market::scale_quantity`.
+> use [`Market::scale_price`](crate::Market::scale_price) and
+> [`Market::scale_quantity`](crate::Market::scale_quantity).
 
 ## Settling Balances
 
 When your orders are filled, the proceeds remain locked in the order book
 contract until they are settled back to your trading account.
 
-`O2Client::create_order` handles this automatically when `settle_first`
+[`O2Client::create_order`](crate::client::O2Client::create_order) handles this automatically when `settle_first`
 is `true` (the default). You can also settle manually:
 
-```rust
+```rust,ignore
 client.settle_balance(&mut session, "fFUEL/fUSDC").await?;
 ```
 
@@ -144,7 +144,7 @@ client.settle_balance(&mut session, "fFUEL/fUSDC").await?;
 
 A simple two-sided quoting loop using typed actions:
 
-```rust
+```rust,ignore
 use o2_sdk::{O2Client, Network, Action, Side, OrderType};
 use std::time::Duration;
 
@@ -215,7 +215,7 @@ loop {
 
 Query order status:
 
-```rust
+```rust,ignore
 // All orders for an account
 let orders = client.get_orders(
     &session.trade_account_id, "fFUEL/fUSDC", None, 20,
@@ -237,9 +237,9 @@ println!(
 );
 ```
 
-For real-time order updates, use `O2Client::stream_orders`:
+For real-time order updates, use [`O2Client::stream_orders`](crate::client::O2Client::stream_orders):
 
-```rust
+```rust,ignore
 use o2_sdk::Identity;
 use tokio_stream::StreamExt;
 
@@ -260,7 +260,7 @@ while let Some(Ok(update)) = stream.next().await {
 
 Withdraw funds from the trading account to the owner wallet:
 
-```rust
+```rust,ignore
 let result = client.withdraw(
     &wallet,
     &session,
@@ -279,12 +279,12 @@ println!("Withdrawal tx: {}", result.tx_id.unwrap_or_default());
 The SDK automatically manages nonces during trading. If you encounter nonce
 errors after a failed transaction, refresh the nonce:
 
-```rust
+```rust,ignore
 client.refresh_nonce(&mut session).await?;
 ```
 
 You can also fetch the current nonce directly:
 
-```rust
+```rust,ignore
 let nonce = client.get_nonce(&session.trade_account_id).await?;
 ```

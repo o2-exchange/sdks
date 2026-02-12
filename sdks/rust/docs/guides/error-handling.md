@@ -2,12 +2,14 @@
 
 This guide covers error handling patterns for the O2 Rust SDK.
 
+> See also: [`O2Error`](crate::O2Error) API reference.
+
 ## Error Type
 
-All SDK errors are represented by the `O2Error` enum, which implements
+All SDK errors are represented by the [`O2Error`](crate::O2Error) enum, which implements
 `std::error::Error` and `Display` via `thiserror`:
 
-```rust
+```rust,ignore
 use o2_sdk::O2Error;
 
 match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, OrderType::Spot, true, true).await {
@@ -89,7 +91,7 @@ match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, O
 
 Use Rust's `match` expression to handle specific error variants:
 
-```rust
+```rust,ignore
 use o2_sdk::{O2Error, O2Client, Side, OrderType};
 
 match client.create_order(
@@ -131,10 +133,10 @@ match client.create_order(
 ## On-Chain Reverts
 
 On-chain reverts occur when a transaction is submitted but fails during
-execution. These are returned as `O2Error::OnChainRevert` with `message`
+execution. These are returned as [`O2Error::OnChainRevert`](crate::O2Error::OnChainRevert) with `message`
 and `reason` fields:
 
-```rust
+```rust,ignore
 match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, OrderType::Spot, true, true).await {
     Err(O2Error::OnChainRevert { reason, message, .. }) => {
         match reason.as_str() {
@@ -168,10 +170,10 @@ Common revert reasons:
 
 ## Response-Level Error Detection
 
-The `SessionActionsResponse` provides helper methods to distinguish
+The [`SessionActionsResponse`](crate::SessionActionsResponse) provides helper methods to distinguish
 between success and different error types:
 
-```rust
+```rust,ignore
 let resp = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, OrderType::Spot, true, true).await?;
 
 if resp.is_success() {
@@ -188,9 +190,9 @@ if resp.is_success() {
 
 ## Error Utility Methods
 
-The `O2Error` enum provides helper methods:
+The [`O2Error`](crate::O2Error) enum provides helper methods:
 
-```rust
+```rust,ignore
 // Get the numeric error code (if applicable)
 if let Some(code) = error.error_code() {
     println!("Error code: {}", code);
@@ -205,12 +207,12 @@ if error.is_retryable() {
 ## Nonce Errors
 
 The on-chain nonce increments **even on reverted transactions**. The SDK
-handles this automatically by calling `refresh_nonce` after any action
+handles this automatically by calling [`O2Client::refresh_nonce`](crate::client::O2Client::refresh_nonce) after any action
 failure.
 
 If you manage nonces manually, always re-fetch after errors:
 
-```rust
+```rust,ignore
 match client.batch_actions(&mut session, "fFUEL/fUSDC", actions, true).await {
     Err(_) => {
         // Nonce was already refreshed by the SDK
@@ -224,7 +226,7 @@ match client.batch_actions(&mut session, "fFUEL/fUSDC", actions, true).await {
 
 A production-grade pattern with error recovery:
 
-```rust
+```rust,ignore
 use o2_sdk::{O2Client, Network, O2Error, Side, OrderType};
 use std::time::Duration;
 
