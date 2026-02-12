@@ -1,5 +1,5 @@
 {
-  "name": "o2-sdk",
+  "name": "@o2exchange/sdk",
   "version": "0.1.0",
   "description": "TypeScript SDK for the O2 Exchange — a fully on-chain order book DEX on the Fuel Network",
   "type": "module",
@@ -16,6 +16,10 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/o2-exchange/sdks.git"
+  },
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
