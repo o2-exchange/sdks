@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/o2-exchange/contracts/actions/workflows/ci.yml"><img src="https://github.com/o2-exchange/contracts/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/o2-exchange/sdks/actions/workflows/ci.yml"><img src="https://github.com/o2-exchange/sdks/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
