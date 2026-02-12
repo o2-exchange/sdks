@@ -179,6 +179,8 @@ class O2Client:
         Returns:
             SessionInfo with session keys and trading state
         """
+        logger.info("Creating session for markets=%s, expiry_days=%d", markets, expiry_days)
+
         # Resolve markets
         markets_resp = await self._get_markets_cached()
         contract_ids: list[str] = []
@@ -194,6 +196,7 @@ class O2Client:
         if not account.exists:
             raise O2Error(message="Account not found. Call setup_account() first.")
         nonce = account.nonce
+        logger.debug("Session nonce=%d, chain_id=%d", nonce, chain_id)
 
         # Generate session wallet
         session_wallet = generate_wallet()
@@ -212,8 +215,12 @@ class O2Client:
 
         # Sign with owner (personalSign for Fuel, evm_personal_sign for EVM)
         if isinstance(owner, EvmWallet):
+            logger.debug(
+                "Signing session with evm_personal_sign, payload=%d bytes", len(signing_bytes)
+            )
             signature = evm_personal_sign(owner.private_key, signing_bytes)
         else:
+            logger.debug("Signing session with personal_sign, payload=%d bytes", len(signing_bytes))
             signature = personal_sign(owner.private_key, signing_bytes)
 
         # Submit session request
@@ -232,6 +239,12 @@ class O2Client:
         if account.trade_account_id is None:
             raise O2Error(message="Account must have a trade_account_id")
         self._nonce_cache[account.trade_account_id] = nonce + 1
+
+        logger.info(
+            "Session created: session_id=%s, account=%s",
+            resp.session_id,
+            resp.trade_account_id,
+        )
 
         return SessionInfo(
             session_id=resp.session_id,
@@ -275,6 +288,15 @@ class O2Client:
         Returns:
             ActionsResponse with tx_id and optional orders
         """
+        logger.info(
+            "Creating %s %s order: market=%s price=%s qty=%s",
+            side,
+            order_type,
+            market,
+            price,
+            quantity,
+        )
+
         markets_resp = await self._get_markets_cached()
         market_obj = self._resolve_market(markets_resp, market)
 
@@ -284,6 +306,13 @@ class O2Client:
 
         # Adjust quantity for FractionalPrice constraint
         scaled_quantity = market_obj.adjust_quantity(scaled_price, scaled_quantity)
+
+        logger.debug(
+            "Scaled order: price=%d qty=%d (market_id=%s)",
+            scaled_price,
+            scaled_quantity,
+            market_obj.market_id,
+        )
 
         # Validate
         market_obj.validate_order(scaled_price, scaled_quantity)
@@ -332,6 +361,7 @@ class O2Client:
         market_id: str | None = None,
     ) -> ActionsResponse:
         """Cancel an order."""
+        logger.info("Cancelling order %s", order_id)
         if market_id is None:
             if market is None:
                 raise ValueError("Either market or market_id must be provided")
@@ -353,6 +383,7 @@ class O2Client:
         Fetches up to 200 open orders and cancels them in batches of 5.
         Returns a list of ActionsResponse (one per batch).
         """
+        logger.info("Cancelling all open orders for market=%s", market)
         markets_resp = await self._get_markets_cached()
         market_obj = self._resolve_market(markets_resp, market)
 
@@ -365,6 +396,7 @@ class O2Client:
         )
 
         if not orders_resp.orders:
+            logger.info("No open orders to cancel")
             return []
 
         results: list[ActionsResponse] = []
@@ -419,6 +451,7 @@ class O2Client:
 
         # Get current nonce
         nonce = await self._get_nonce(session.trade_account_id)
+        logger.debug("Submitting actions with nonce=%d, actions=%s", nonce, actions)
 
         # Convert actions to calls
         calls: list[dict] = []
@@ -433,6 +466,9 @@ class O2Client:
         signing_bytes = build_actions_signing_bytes(nonce, calls)
         if session.session_private_key is None:
             raise O2Error(message="Session must have a private key")
+        logger.debug(
+            "Signing %d actions (%d bytes) with session key", len(calls), len(signing_bytes)
+        )
         signature = raw_sign(session.session_private_key, signing_bytes)
 
         # Submit
@@ -452,8 +488,10 @@ class O2Client:
             # Increment nonce on success
             self._nonce_cache[session.trade_account_id] = nonce + 1
             session.nonce = nonce + 1
+            logger.info("Actions submitted: tx_id=%s, nonce=%d->%d", result.tx_id, nonce, nonce + 1)
             return result
-        except O2Error:
+        except O2Error as e:
+            logger.warning("Actions failed (nonce=%d): %s", nonce, e)
             # Nonce increments even on revert, so re-fetch
             await self.refresh_nonce(session)
             raise
@@ -622,6 +660,8 @@ class O2Client:
             amount: Human-readable amount to withdraw
             to: Destination address (defaults to owner address)
         """
+        logger.info("Withdrawing %s %s", amount, asset)
+
         markets_resp = await self._get_markets_cached()
         account = await self.api.get_account(owner=owner.b256_address)
         if not account.exists:
@@ -633,6 +673,9 @@ class O2Client:
         # Resolve asset
         asset_id, decimals = self._resolve_asset(markets_resp, asset)
         scaled_amount = int(amount * (10**decimals))
+        logger.debug(
+            "Withdraw: asset_id=%s, scaled_amount=%d, nonce=%d", asset_id, scaled_amount, nonce
+        )
 
         # Build withdraw signing bytes using shared encoding function
         signing_bytes = build_withdraw_signing_bytes(
@@ -649,7 +692,8 @@ class O2Client:
         else:
             from .crypto import personal_sign as sign_fn
 
-        signature = sign_fn(owner.private_key, signing_bytes)
+        logger.debug("Signing withdrawal, payload=%d bytes", len(signing_bytes))
+        signature = sign_fn(owner.private_key, bytes(signing_bytes))
 
         withdraw_request = {
             "trade_account_id": account.trade_account_id,
@@ -672,10 +716,14 @@ class O2Client:
 
     async def refresh_nonce(self, session: SessionInfo) -> int:
         """Re-fetch nonce from the API (manual resync)."""
+        old_nonce = self._nonce_cache.get(session.trade_account_id)
         account = await self.api.get_account(trade_account_id=session.trade_account_id)
         nonce = account.nonce
         self._nonce_cache[session.trade_account_id] = nonce
         session.nonce = nonce
+        logger.debug(
+            "Nonce refreshed: %s -> %s (account=%s)", old_nonce, nonce, session.trade_account_id
+        )
         return nonce
 
     async def _get_nonce(self, trade_account_id: str) -> int:

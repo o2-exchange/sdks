@@ -11,11 +11,14 @@ Implements:
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 from dataclasses import dataclass
 
 from coincurve import PrivateKey
 from Crypto.Hash import keccak
+
+logger = logging.getLogger("o2_sdk.crypto")
 
 
 @dataclass
@@ -166,6 +169,7 @@ def personal_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     length_str = str(len(message_bytes)).encode("utf-8")
     full_message = prefix + length_str + message_bytes
     digest = hashlib.sha256(full_message).digest()
+    logger.debug("personal_sign: payload=%d bytes, digest=%s", len(message_bytes), digest.hex())
     return fuel_compact_sign(private_key_bytes, digest)
 
 
@@ -175,6 +179,7 @@ def raw_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     digest = sha256(message_bytes)
     """
     digest = hashlib.sha256(message_bytes).digest()
+    logger.debug("raw_sign: payload=%d bytes, digest=%s", len(message_bytes), digest.hex())
     return fuel_compact_sign(private_key_bytes, digest)
 
 
@@ -188,4 +193,5 @@ def evm_personal_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     k = keccak.new(digest_bits=256)
     k.update(prefix + message_bytes)
     digest = k.digest()
+    logger.debug("evm_personal_sign: payload=%d bytes, digest=%s", len(message_bytes), digest.hex())
     return fuel_compact_sign(private_key_bytes, digest)

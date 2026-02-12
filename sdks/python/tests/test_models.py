@@ -9,12 +9,14 @@ from o2_sdk.models import (
     DepthSnapshot,
     DepthUpdate,
     FaucetResponse,
+    Id,
     Identity,
     Market,
     MarketsResponse,
     Order,
     Trade,
     WhitelistResponse,
+    WithdrawResponse,
 )
 
 
@@ -43,6 +45,8 @@ class TestMarket:
 
     def test_from_dict(self):
         m = Market.from_dict(self.MARKET_JSON)
+        assert isinstance(m.contract_id, Id)
+        assert isinstance(m.market_id, Id)
         assert m.contract_id == self.MARKET_JSON["contract_id"]
         assert m.market_id == self.MARKET_JSON["market_id"]
         assert m.base.symbol == "FUEL"
@@ -144,6 +148,7 @@ class TestAccountInfo:
         }
         info = AccountInfo.from_dict(data)
         assert info.exists
+        assert isinstance(info.trade_account_id, Id)
         assert info.nonce == 5
 
     def test_not_exists(self):
@@ -172,6 +177,7 @@ class TestOrder:
             "cancel": False,
         }
         order = Order.from_dict(data)
+        assert isinstance(order.order_id, Id)
         assert order.order_id == "0x1122"
         assert order.side == "Buy"
         assert order.is_open
@@ -261,6 +267,34 @@ class TestDepthUpdate:
         assert len(update.changes.sells) == 1
 
 
+class TestId:
+    def test_with_prefix(self):
+        i = Id("0xabc123")
+        assert str(i) == "0xabc123"
+        assert i == "0xabc123"
+
+    def test_without_prefix(self):
+        i = Id("97edbbf570b2ea405939441e020df4f63fe51acba7e6083ea5e19ab9494fd5c0")
+        assert str(i) == "0x97edbbf570b2ea405939441e020df4f63fe51acba7e6083ea5e19ab9494fd5c0"
+        assert i.startswith("0x")
+
+    def test_already_prefixed_no_double(self):
+        i = Id("0xdeadbeef")
+        assert str(i) == "0xdeadbeef"
+        assert not i.startswith("0x0x")
+
+    def test_isinstance_str(self):
+        i = Id("abc")
+        assert isinstance(i, str)
+
+    def test_fstring(self):
+        i = Id("fed")
+        assert f"id: {i}" == "id: 0xfed"
+
+    def test_equality_normalized(self):
+        assert Id("abc") == Id("0xabc")
+
+
 class TestActionsResponse:
     def test_success(self):
         data = {
@@ -283,7 +317,18 @@ class TestActionsResponse:
         }
         resp = ActionsResponse.from_dict(data)
         assert resp.success
+        assert isinstance(resp.tx_id, Id)
+        assert str(resp.tx_id) == "0xfed"
         assert len(resp.orders) == 1
+
+    def test_success_without_prefix(self):
+        """tx_id values without a 0x prefix are normalised."""
+        data = {
+            "tx_id": "97edbbf570b2ea405939441e020df4f63fe51acba7e6083ea5e19ab9494fd5c0",
+        }
+        resp = ActionsResponse.from_dict(data)
+        assert resp.success
+        assert str(resp.tx_id).startswith("0x")
 
     def test_error_with_code(self):
         data = {
@@ -305,6 +350,21 @@ class TestActionsResponse:
         assert resp.reason == "NotEnoughBalance"
 
 
+class TestWithdrawResponse:
+    def test_success(self):
+        data = {"tx_id": "deadbeef"}
+        resp = WithdrawResponse.from_dict(data)
+        assert resp.success
+        assert isinstance(resp.tx_id, Id)
+        assert str(resp.tx_id) == "0xdeadbeef"
+
+    def test_no_tx_id(self):
+        data = {"message": "error"}
+        resp = WithdrawResponse.from_dict(data)
+        assert not resp.success
+        assert resp.tx_id is None
+
+
 class TestTrade:
     def test_from_dict(self):
         data = {
@@ -316,7 +376,8 @@ class TestTrade:
             "timestamp": "1734876543",
         }
         trade = Trade.from_dict(data)
-        assert trade.trade_id == "12345"
+        assert isinstance(trade.trade_id, Id)
+        assert trade.trade_id == "0x12345"
         assert trade.side == "Buy"
 
 

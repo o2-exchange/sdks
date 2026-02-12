@@ -48,7 +48,7 @@ async def main():
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
     result = await client.create_order(session, "fFUEL/fUSDC", "Buy", price=0.02, quantity=100.0)
-    print(result.tx_id)
+    print(f"Created order with transaction ID {result.tx_id}")
     await client.close()
 
 asyncio.run(main())

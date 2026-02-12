@@ -10,6 +10,42 @@ from dataclasses import dataclass
 from typing import Any
 
 # ---------------------------------------------------------------------------
+# Scalar wrappers
+# ---------------------------------------------------------------------------
+
+
+class Id(str):
+    """Identifier that always displays with a ``0x`` prefix.
+
+    The API returns hex identifiers inconsistently — sometimes with the
+    ``0x`` prefix and sometimes without.  ``Id`` normalises the value on
+    construction so that ``str(id)`` always starts with ``0x``.
+
+    Because ``Id`` is a ``str`` subclass it is fully backward-compatible:
+    comparisons, f-strings, logging, ``is not None`` checks, etc. all work
+    unchanged.
+
+    >>> Id("97edbbf5")
+    Id('0x97edbbf5')
+    >>> Id("0x97edbbf5")
+    Id('0x97edbbf5')
+    """
+
+    def __new__(cls, value: str) -> Id:
+        if not value.startswith("0x"):
+            value = f"0x{value}"
+        return super().__new__(cls, value.lower())
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return f"Id({super().__repr__()})"
+
+
+def _parse_id(raw: str | None) -> Id | None:
+    """Convert an optional raw string to an :class:`Id`, or ``None``."""
+    return Id(raw) if raw is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Market models
 # ---------------------------------------------------------------------------
 
@@ -33,8 +69,8 @@ class MarketAsset:
 
 @dataclass
 class Market:
-    contract_id: str
-    market_id: str
+    contract_id: Id
+    market_id: Id
     maker_fee: str
     taker_fee: str
     min_order: str
@@ -46,8 +82,8 @@ class Market:
     @classmethod
     def from_dict(cls, d: dict) -> Market:
         return cls(
-            contract_id=d["contract_id"],
-            market_id=d["market_id"],
+            contract_id=Id(d["contract_id"]),
+            market_id=Id(d["market_id"]),
             maker_fee=d.get("maker_fee", "0"),
             taker_fee=d.get("taker_fee", "0"),
             min_order=d.get("min_order", "0"),
@@ -122,27 +158,27 @@ class Market:
 
 @dataclass
 class MarketsResponse:
-    books_registry_id: str
-    accounts_registry_id: str
-    trade_account_oracle_id: str
-    chain_id: str
-    base_asset_id: str
+    books_registry_id: Id
+    accounts_registry_id: Id
+    trade_account_oracle_id: Id
+    chain_id: Id
+    base_asset_id: Id
     markets: list[Market]
 
     @classmethod
     def from_dict(cls, d: dict) -> MarketsResponse:
         return cls(
-            books_registry_id=d.get("books_registry_id", ""),
-            accounts_registry_id=d.get("accounts_registry_id", ""),
-            trade_account_oracle_id=d.get("trade_account_oracle_id", ""),
-            chain_id=d.get("chain_id", "0x0000000000000000"),
-            base_asset_id=d.get("base_asset_id", ""),
+            books_registry_id=Id(d.get("books_registry_id", "")),
+            accounts_registry_id=Id(d.get("accounts_registry_id", "")),
+            trade_account_oracle_id=Id(d.get("trade_account_oracle_id", "")),
+            chain_id=Id(d.get("chain_id", "0x0000000000000000")),
+            base_asset_id=Id(d.get("base_asset_id", "")),
             markets=[Market.from_dict(m) for m in d.get("markets", [])],
         )
 
     @property
     def chain_id_int(self) -> int:
-        return int(self.chain_id, 16) if self.chain_id.startswith("0x") else int(self.chain_id)
+        return int(self.chain_id, 16)
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +193,9 @@ class Identity:
 
     def to_dict(self) -> dict:
         return {self.variant: self.value}
+
+    def __repr__(self) -> str:  # pragma: no cover - cosmetic
+        return f"Identity({self.variant}={self.value})"
 
     @classmethod
     def from_dict(cls, d: dict) -> Identity:
@@ -194,7 +233,7 @@ class TradeAccount:
 
 @dataclass
 class AccountInfo:
-    trade_account_id: str | None
+    trade_account_id: Id | None
     trade_account: TradeAccount | None
     session: dict | None = None
 
@@ -202,7 +241,7 @@ class AccountInfo:
     def from_dict(cls, d: dict) -> AccountInfo:
         ta = d.get("trade_account")
         return cls(
-            trade_account_id=d.get("trade_account_id"),
+            trade_account_id=_parse_id(d.get("trade_account_id")),
             trade_account=TradeAccount.from_dict(ta) if ta else None,
             session=d.get("session"),
         )
@@ -220,13 +259,13 @@ class AccountInfo:
 
 @dataclass
 class AccountCreateResponse:
-    trade_account_id: str
+    trade_account_id: Id
     nonce: str
 
     @classmethod
     def from_dict(cls, d: dict) -> AccountCreateResponse:
         return cls(
-            trade_account_id=d["trade_account_id"],
+            trade_account_id=Id(d["trade_account_id"]),
             nonce=d.get("nonce", "0x0"),
         )
 
@@ -239,8 +278,8 @@ class AccountCreateResponse:
 @dataclass
 class SessionInfo:
     session_id: Identity
-    trade_account_id: str
-    contract_ids: list[str]
+    trade_account_id: Id
+    contract_ids: list[Id]
     session_expiry: str
     session_private_key: bytes | None = None
     owner_address: str | None = None
@@ -250,8 +289,8 @@ class SessionInfo:
     def from_response(cls, d: dict, **kwargs: Any) -> SessionInfo:
         return cls(
             session_id=Identity.from_dict(d["session_id"]),
-            trade_account_id=d["trade_account_id"],
-            contract_ids=d.get("contract_ids", []),
+            trade_account_id=Id(d["trade_account_id"]),
+            contract_ids=[Id(c) for c in d.get("contract_ids", [])],
             session_expiry=d.get("session_expiry", ""),
             **kwargs,
         )
@@ -259,18 +298,18 @@ class SessionInfo:
 
 @dataclass
 class SessionResponse:
-    tx_id: str
-    trade_account_id: str
-    contract_ids: list[str]
+    tx_id: Id
+    trade_account_id: Id
+    contract_ids: list[Id]
     session_id: Identity
     session_expiry: str
 
     @classmethod
     def from_dict(cls, d: dict) -> SessionResponse:
         return cls(
-            tx_id=d["tx_id"],
-            trade_account_id=d["trade_account_id"],
-            contract_ids=d.get("contract_ids", []),
+            tx_id=Id(d["tx_id"]),
+            trade_account_id=Id(d["trade_account_id"]),
+            contract_ids=[Id(c) for c in d.get("contract_ids", [])],
             session_id=Identity.from_dict(d["session_id"]),
             session_expiry=d.get("session_expiry", ""),
         )
@@ -283,7 +322,7 @@ class SessionResponse:
 
 @dataclass
 class Order:
-    order_id: str
+    order_id: Id
     side: str
     order_type: Any
     quantity: str
@@ -299,7 +338,7 @@ class Order:
     fill: dict | None = None
     order_tx_history: list | None = None
     base_decimals: int | None = None
-    market_id: str | None = None
+    market_id: Id | None = None
     owner: Identity | None = None
     history: list | None = None
     fills: list | None = None
@@ -313,7 +352,7 @@ class Order:
         if d.get("owner"):
             owner = Identity.from_dict(d["owner"])
         return cls(
-            order_id=d["order_id"],
+            order_id=Id(d["order_id"]),
             side=d.get("side", ""),
             order_type=d.get("order_type", ""),
             quantity=str(d.get("quantity", "0")),
@@ -329,7 +368,7 @@ class Order:
             fill=d.get("fill"),
             order_tx_history=d.get("order_tx_history"),
             base_decimals=d.get("base_decimals"),
-            market_id=d.get("market_id"),
+            market_id=_parse_id(d.get("market_id")),
             owner=owner,
             history=d.get("history"),
             fills=d.get("fills"),
@@ -343,7 +382,7 @@ class Order:
 @dataclass
 class OrdersResponse:
     identity: Identity | None
-    market_id: str
+    market_id: Id
     orders: list[Order]
 
     @classmethod
@@ -353,7 +392,7 @@ class OrdersResponse:
             identity = Identity.from_dict(d["identity"])
         return cls(
             identity=identity,
-            market_id=d.get("market_id", ""),
+            market_id=Id(d.get("market_id", "")),
             orders=[Order.from_dict(o) for o in d.get("orders", [])],
         )
 
@@ -365,7 +404,7 @@ class OrdersResponse:
 
 @dataclass
 class Trade:
-    trade_id: str
+    trade_id: Id
     side: str
     total: str
     quantity: str
@@ -373,14 +412,14 @@ class Trade:
     timestamp: str
     maker: Identity | None = None
     taker: Identity | None = None
-    market_id: str | None = None
+    market_id: Id | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> Trade:
         maker = Identity.from_dict(d["maker"]) if d.get("maker") else None
         taker = Identity.from_dict(d["taker"]) if d.get("taker") else None
         return cls(
-            trade_id=str(d.get("trade_id", "")),
+            trade_id=Id(str(d.get("trade_id", ""))),
             side=d.get("side", ""),
             total=str(d.get("total", "0")),
             quantity=str(d.get("quantity", "0")),
@@ -388,7 +427,7 @@ class Trade:
             timestamp=str(d.get("timestamp", "0")),
             maker=maker,
             taker=taker,
-            market_id=d.get("market_id"),
+            market_id=_parse_id(d.get("market_id")),
         )
 
 
@@ -451,7 +490,7 @@ class DepthLevel:
 class DepthSnapshot:
     buys: list[DepthLevel]
     sells: list[DepthLevel]
-    market_id: str | None = None
+    market_id: Id | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> DepthSnapshot:
@@ -459,7 +498,7 @@ class DepthSnapshot:
         return cls(
             buys=[DepthLevel.from_dict(x) for x in view.get("buys", [])],
             sells=[DepthLevel.from_dict(x) for x in view.get("sells", [])],
-            market_id=d.get("market_id"),
+            market_id=_parse_id(d.get("market_id")),
         )
 
     @property
@@ -474,7 +513,7 @@ class DepthSnapshot:
 @dataclass
 class DepthUpdate:
     changes: DepthSnapshot
-    market_id: str
+    market_id: Id
     onchain_timestamp: str | None = None
     seen_timestamp: str | None = None
     is_snapshot: bool = False
@@ -493,7 +532,7 @@ class DepthUpdate:
             )
         return cls(
             changes=changes,
-            market_id=d.get("market_id", ""),
+            market_id=Id(d.get("market_id", "")),
             onchain_timestamp=d.get("onchain_timestamp"),
             seen_timestamp=d.get("seen_timestamp"),
             is_snapshot=is_snapshot,
@@ -533,7 +572,7 @@ class Bar:
 
 @dataclass
 class ActionsResponse:
-    tx_id: str | None = None
+    tx_id: Id | None = None
     orders: list[Order] | None = None
     message: str | None = None
     reason: str | None = None
@@ -546,7 +585,7 @@ class ActionsResponse:
         if d.get("orders"):
             orders = [Order.from_dict(o) for o in d["orders"]]
         return cls(
-            tx_id=d.get("tx_id"),
+            tx_id=_parse_id(d.get("tx_id")),
             orders=orders,
             message=d.get("message"),
             reason=d.get("reason"),
@@ -566,14 +605,14 @@ class ActionsResponse:
 
 @dataclass
 class AggregatedAsset:
-    id: str
+    id: Id
     symbol: str
     name: str
 
     @classmethod
     def from_dict(cls, d: dict) -> AggregatedAsset:
         return cls(
-            id=d.get("id", ""),
+            id=Id(d.get("id", "")),
             symbol=d.get("symbol", ""),
             name=d.get("name", ""),
         )
@@ -581,22 +620,22 @@ class AggregatedAsset:
 
 @dataclass
 class MarketSummary:
-    market_id: str
+    market_id: Id
     data: dict
 
     @classmethod
     def from_dict(cls, d: dict) -> MarketSummary:
-        return cls(market_id=d.get("market_id", ""), data=d)
+        return cls(market_id=Id(d.get("market_id", "")), data=d)
 
 
 @dataclass
 class MarketTicker:
-    market_id: str
+    market_id: Id
     data: dict
 
     @classmethod
     def from_dict(cls, d: dict) -> MarketTicker:
-        return cls(market_id=d.get("market_id", ""), data=d)
+        return cls(market_id=Id(d.get("market_id", "")), data=d)
 
 
 # ---------------------------------------------------------------------------
@@ -622,7 +661,7 @@ class OrderUpdate:
 @dataclass
 class TradeUpdate:
     trades: list[Trade]
-    market_id: str
+    market_id: Id
     onchain_timestamp: str | None = None
     seen_timestamp: str | None = None
 
@@ -630,7 +669,7 @@ class TradeUpdate:
     def from_dict(cls, d: dict) -> TradeUpdate:
         return cls(
             trades=[Trade.from_dict(t) for t in d.get("trades", [])],
-            market_id=d.get("market_id", ""),
+            market_id=Id(d.get("market_id", "")),
             onchain_timestamp=d.get("onchain_timestamp"),
             seen_timestamp=d.get("seen_timestamp"),
         )
@@ -653,7 +692,7 @@ class BalanceUpdate:
 
 @dataclass
 class NonceUpdate:
-    contract_id: str
+    contract_id: Id
     nonce: str
     onchain_timestamp: str | None = None
     seen_timestamp: str | None = None
@@ -661,7 +700,7 @@ class NonceUpdate:
     @classmethod
     def from_dict(cls, d: dict) -> NonceUpdate:
         return cls(
-            contract_id=d.get("contract_id", ""),
+            contract_id=Id(d.get("contract_id", "")),
             nonce=d.get("nonce", "0"),
             onchain_timestamp=d.get("onchain_timestamp"),
             seen_timestamp=d.get("seen_timestamp"),
@@ -675,12 +714,12 @@ class NonceUpdate:
 
 @dataclass
 class WithdrawResponse:
-    tx_id: str | None = None
+    tx_id: Id | None = None
     message: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> WithdrawResponse:
-        return cls(tx_id=d.get("tx_id"), message=d.get("message"))
+        return cls(tx_id=_parse_id(d.get("tx_id")), message=d.get("message"))
 
     @property
     def success(self) -> bool:
