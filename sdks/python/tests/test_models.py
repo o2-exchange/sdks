@@ -441,8 +441,8 @@ class TestTrade:
             "timestamp": "1734876543",
         }
         trade = Trade.from_dict(data)
-        assert isinstance(trade.trade_id, Id)
-        assert trade.trade_id == "0x12345"
+        assert isinstance(trade.trade_id, str)
+        assert trade.trade_id == "12345"
         assert trade.side == "Buy"
 
 

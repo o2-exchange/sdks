@@ -30,6 +30,7 @@ Thumbs.db
 # Build artifacts
 .bin
 
-# Sphinx documentation
+# Documentation builds
 sdks/python/docs/_build/
+sdks/typescript/docs/_build/
 _site/

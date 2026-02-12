@@ -42,7 +42,7 @@ class LimitOrder:
     In ``CreateOrderAction``: *price* should be the pre-scaled chain integer.
     """
 
-    price: float
+    price: int | float
     timestamp: int | None = None  # unix timestamp; None = current time
 
 
@@ -54,8 +54,8 @@ class BoundedMarketOrder:
     In ``CreateOrderAction``: prices should be pre-scaled chain integers.
     """
 
-    max_price: float
-    min_price: float
+    max_price: int | float
+    min_price: int | float
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +498,7 @@ class OrdersResponse:
 
 @dataclass
 class Trade:
-    trade_id: Id
+    trade_id: str
     side: str
     total: str
     quantity: str
@@ -513,7 +513,7 @@ class Trade:
         maker = Identity.from_dict(d["maker"]) if d.get("maker") else None
         taker = Identity.from_dict(d["taker"]) if d.get("taker") else None
         return cls(
-            trade_id=Id(str(d.get("trade_id", ""))),
+            trade_id=str(d.get("trade_id", "")),
             side=d.get("side", ""),
             total=str(d.get("total", "0")),
             quantity=str(d.get("quantity", "0")),

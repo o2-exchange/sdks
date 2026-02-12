@@ -333,15 +333,15 @@ class O2Client:
         action_ot: OrderType | LimitOrder | BoundedMarketOrder
         if isinstance(order_type, LimitOrder):
             action_ot = LimitOrder(
-                price=float(market_obj.scale_price(order_type.price)),
+                price=market_obj.scale_price(order_type.price),
                 timestamp=order_type.timestamp
                 if order_type.timestamp is not None
                 else int(time.time()),
             )
         elif isinstance(order_type, BoundedMarketOrder):
             action_ot = BoundedMarketOrder(
-                max_price=float(market_obj.scale_price(order_type.max_price)),
-                min_price=float(market_obj.scale_price(order_type.min_price)),
+                max_price=market_obj.scale_price(order_type.max_price),
+                min_price=market_obj.scale_price(order_type.min_price),
             )
         else:
             action_ot = order_type
