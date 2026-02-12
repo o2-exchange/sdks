@@ -32,3 +32,4 @@ Thumbs.db
 
 # Sphinx documentation
 sdks/python/docs/_build/
+_site/

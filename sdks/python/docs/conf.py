@@ -64,9 +64,9 @@ html_title = "O2 SDK for Python"
 html_static_path = ["_static"]
 
 html_theme_options = {
-    "light_logo": "logo-light.svg",
-    "dark_logo": "logo-dark.svg",
-    "sidebar_hide_name": True,
+    #"light_logo": "logo.svg",
+    #"dark_logo": "logo.svg",
+    "sidebar_hide_name": False,
     "navigation_with_keys": True,
     "footer_icons": [
         {
@@ -89,11 +89,10 @@ html_theme_options = {
     ],
 }
 
-# If logos don't exist, fall back gracefully
-html_logo = None
-
 # Suppress missing-reference warnings for optional type annotations
 nitpicky = False
+
+html_logo = None
 
 # -- Options for linkcheck ----------------------------------------------------
 
