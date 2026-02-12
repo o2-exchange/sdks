@@ -29,3 +29,6 @@ Thumbs.db
 
 # Build artifacts
 .bin
+
+# Sphinx documentation
+sdks/python/docs/_build/

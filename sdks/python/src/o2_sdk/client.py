@@ -15,13 +15,12 @@ from .api import O2Api
 from .config import Network, NetworkConfig, get_config
 from .crypto import (
     EvmWallet,
+    Signer,
     Wallet,
-    evm_personal_sign,
     generate_evm_wallet,
     generate_wallet,
     load_evm_wallet,
     load_wallet,
-    personal_sign,
     raw_sign,
 )
 from .encoding import (
@@ -113,7 +112,7 @@ class O2Client:
     # Account lifecycle (idempotent)
     # -----------------------------------------------------------------------
 
-    async def setup_account(self, wallet: Wallet | EvmWallet) -> AccountInfo:
+    async def setup_account(self, wallet: Signer) -> AccountInfo:
         """Set up a trading account idempotently.
 
         1. Check if account exists (GET /v1/accounts)
@@ -165,14 +164,15 @@ class O2Client:
 
     async def create_session(
         self,
-        owner: Wallet | EvmWallet,
+        owner: Signer,
         markets: list[str],
         expiry_days: int = 30,
     ) -> SessionInfo:
         """Create a trading session.
 
         Args:
-            owner: The owner wallet (Fuel or EVM)
+            owner: A signer for the owner account (Wallet, EvmWallet,
+                ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
             markets: List of market pair strings (e.g., ["FUEL/USDC"]) or contract IDs
             expiry_days: Session expiry in days (default 30)
 
@@ -213,15 +213,12 @@ class O2Client:
             expiry=expiry,
         )
 
-        # Sign with owner (personalSign for Fuel, evm_personal_sign for EVM)
-        if isinstance(owner, EvmWallet):
-            logger.debug(
-                "Signing session with evm_personal_sign, payload=%d bytes", len(signing_bytes)
-            )
-            signature = evm_personal_sign(owner.private_key, signing_bytes)
-        else:
-            logger.debug("Signing session with personal_sign, payload=%d bytes", len(signing_bytes))
-            signature = personal_sign(owner.private_key, signing_bytes)
+        # Sign with owner (delegates to Signer.personal_sign which handles
+        # Fuel vs EVM message framing internally)
+        logger.debug(
+            "Signing session with owner.personal_sign, payload=%d bytes", len(signing_bytes)
+        )
+        signature = owner.personal_sign(signing_bytes)
 
         # Submit session request
         session_request = {
@@ -647,7 +644,7 @@ class O2Client:
 
     async def withdraw(
         self,
-        owner: Wallet | EvmWallet,
+        owner: Signer,
         asset: str,
         amount: float,
         to: str | None = None,
@@ -655,7 +652,8 @@ class O2Client:
         """Withdraw funds from the trading account.
 
         Args:
-            owner: Owner wallet (required for signing)
+            owner: A signer for the owner account (Wallet, EvmWallet,
+                ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
             asset: Asset symbol (e.g., "USDC") or asset_id
             amount: Human-readable amount to withdraw
             to: Destination address (defaults to owner address)
@@ -687,13 +685,8 @@ class O2Client:
             amount=scaled_amount,
         )
 
-        if isinstance(owner, EvmWallet):
-            from .crypto import evm_personal_sign as sign_fn
-        else:
-            from .crypto import personal_sign as sign_fn
-
         logger.debug("Signing withdrawal, payload=%d bytes", len(signing_bytes))
-        signature = sign_fn(owner.private_key, bytes(signing_bytes))
+        signature = owner.personal_sign(bytes(signing_bytes))
 
         withdraw_request = {
             "trade_account_id": account.trade_account_id,

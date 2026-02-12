@@ -6,6 +6,7 @@ Implements:
 - rawSign (sha256(message) then fuel_compact_sign)
 - evm_personal_sign (Ethereum prefix + keccak256)
 - fuel_compact_sign with low-s normalization and recovery ID in MSB of byte 32
+- External signer support (hardware wallets, KMS, HSMs)
 """
 
 from __future__ import annotations
@@ -13,17 +14,80 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from coincurve import PrivateKey
 from Crypto.Hash import keccak
 
 logger = logging.getLogger("o2_sdk.crypto")
 
+# ---------------------------------------------------------------------------
+# Types
+# ---------------------------------------------------------------------------
+
+SignDigestFn = Callable[[bytes], bytes]
+"""Callback type for external signing functions.
+
+Receives a 32-byte digest and must return a 64-byte Fuel compact signature
+(r[32] + s[32] with recovery ID embedded in the MSB of s[0]).
+
+See :func:`to_fuel_compact_signature` for a helper to build this format
+from standard (r, s, recovery_id) components.
+"""
+
+
+# ---------------------------------------------------------------------------
+# Signer protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class Signer(Protocol):
+    """Protocol for objects that can sign messages for the O2 Exchange.
+
+    Both :class:`Wallet` and :class:`EvmWallet` satisfy this protocol.
+    For external signing (hardware wallets, AWS KMS, HSMs, etc.), use
+    :class:`ExternalSigner` or :class:`ExternalEvmSigner`, or implement
+    this protocol directly.
+    """
+
+    @property
+    def b256_address(self) -> str:
+        """The Fuel B256 address (``0x``-prefixed, 66-char hex string)."""
+        ...
+
+    @property
+    def address_bytes(self) -> bytes:
+        """The address as raw bytes (32 bytes)."""
+        ...
+
+    def personal_sign(self, message: bytes) -> bytes:
+        """Sign a message using the appropriate personal_sign format.
+
+        For Fuel-native accounts: Fuel personalSign
+        (``\\x19Fuel Signed Message:\\n`` prefix + SHA-256).
+
+        For EVM accounts: Ethereum personalSign
+        (``\\x19Ethereum Signed Message:\\n`` prefix + keccak256).
+
+        Returns a 64-byte Fuel compact signature.
+        """
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Wallet dataclasses
+# ---------------------------------------------------------------------------
+
 
 @dataclass
 class Wallet:
-    """A Fuel-native wallet."""
+    """A Fuel-native wallet.
+
+    Satisfies the :class:`Signer` protocol.
+    """
 
     private_key: bytes
     public_key: bytes
@@ -33,10 +97,24 @@ class Wallet:
     def address_bytes(self) -> bytes:
         return bytes.fromhex(self.b256_address[2:])
 
+    def personal_sign(self, message: bytes) -> bytes:
+        """Sign using Fuel's personalSign format (prefix + SHA-256 + secp256k1)."""
+        prefix = b"\x19Fuel Signed Message:\n"
+        length_str = str(len(message)).encode("utf-8")
+        full_message = prefix + length_str + message
+        digest = hashlib.sha256(full_message).digest()
+        logger.debug(
+            "Wallet.personal_sign: payload=%d bytes, digest=%s", len(message), digest.hex()
+        )
+        return fuel_compact_sign(self.private_key, digest)
+
 
 @dataclass
 class EvmWallet:
-    """An EVM-compatible wallet with B256 zero-padded address."""
+    """An EVM-compatible wallet with B256 zero-padded address.
+
+    Satisfies the :class:`Signer` protocol.
+    """
 
     private_key: bytes
     public_key: bytes
@@ -46,6 +124,17 @@ class EvmWallet:
     @property
     def address_bytes(self) -> bytes:
         return bytes.fromhex(self.b256_address[2:])
+
+    def personal_sign(self, message: bytes) -> bytes:
+        """Sign using Ethereum's personal_sign prefix + keccak256."""
+        prefix = f"\x19Ethereum Signed Message:\n{len(message)}".encode()
+        k = keccak.new(digest_bits=256)
+        k.update(prefix + message)
+        digest = k.digest()
+        logger.debug(
+            "EvmWallet.personal_sign: payload=%d bytes, digest=%s", len(message), digest.hex()
+        )
+        return fuel_compact_sign(self.private_key, digest)
 
 
 def generate_keypair() -> tuple[str, bytes, str]:
@@ -195,3 +284,155 @@ def evm_personal_sign(private_key_bytes: bytes, message_bytes: bytes) -> bytes:
     digest = k.digest()
     logger.debug("evm_personal_sign: payload=%d bytes, digest=%s", len(message_bytes), digest.hex())
     return fuel_compact_sign(private_key_bytes, digest)
+
+
+# ---------------------------------------------------------------------------
+# External signer support
+# ---------------------------------------------------------------------------
+
+
+def to_fuel_compact_signature(r: bytes, s: bytes, recovery_id: int) -> bytes:
+    """Convert standard (r, s, recovery_id) components to a 64-byte Fuel compact signature.
+
+    This is a convenience helper for implementing :data:`SignDigestFn` callbacks
+    when your external signing service (KMS, HSM, hardware wallet) returns
+    standard secp256k1 signature components.
+
+    The Fuel compact format stores the recovery ID in the MSB of the first
+    byte of ``s``:  ``s[0] = (recovery_id << 7) | (s[0] & 0x7F)``.
+
+    Args:
+        r: 32-byte r component of the ECDSA signature.
+        s: 32-byte s component of the ECDSA signature (must be low-s normalised).
+        recovery_id: Recovery ID (0 or 1).
+
+    Returns:
+        64-byte Fuel compact signature (``r || s'``).
+
+    Example::
+
+        def my_kms_sign(digest: bytes) -> bytes:
+            r, s, v = kms_client.sign(digest)
+            return to_fuel_compact_signature(r, s, v)
+    """
+    if len(r) != 32:
+        raise ValueError(f"r must be 32 bytes, got {len(r)}")
+    if len(s) != 32:
+        raise ValueError(f"s must be 32 bytes, got {len(s)}")
+    if recovery_id not in (0, 1):
+        raise ValueError(f"recovery_id must be 0 or 1, got {recovery_id}")
+
+    s_modified = bytearray(s)
+    s_modified[0] = (recovery_id << 7) | (s_modified[0] & 0x7F)
+    return r + bytes(s_modified)
+
+
+class ExternalSigner:
+    """A Fuel-native signer backed by an external signing function.
+
+    Use this for hardware wallets, AWS KMS, or other secure enclaves
+    that manage private keys externally.  The SDK handles Fuel-specific
+    message framing (prefix + SHA-256 hashing); your callback only needs
+    to sign a raw 32-byte digest.
+
+    The ``sign_digest`` callback receives a 32-byte SHA-256 digest and must
+    return a 64-byte Fuel compact signature.  Use :func:`to_fuel_compact_signature`
+    to convert from standard ``(r, s, recovery_id)`` components.
+
+    Example::
+
+        from o2_sdk import ExternalSigner, to_fuel_compact_signature
+
+        def kms_sign(digest: bytes) -> bytes:
+            r, s, v = my_kms.sign(key_id="...", digest=digest)
+            return to_fuel_compact_signature(r, s, v)
+
+        signer = ExternalSigner(
+            b256_address="0x1234...abcd",
+            sign_digest=kms_sign,
+        )
+        session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
+    """
+
+    def __init__(self, b256_address: str, sign_digest: SignDigestFn) -> None:
+        self._b256_address = b256_address
+        self._sign_digest = sign_digest
+
+    @property
+    def b256_address(self) -> str:
+        """The Fuel B256 address (``0x``-prefixed hex string)."""
+        return self._b256_address
+
+    @property
+    def address_bytes(self) -> bytes:
+        """The address as raw bytes (32 bytes)."""
+        return bytes.fromhex(self._b256_address[2:])
+
+    def personal_sign(self, message: bytes) -> bytes:
+        """Sign using Fuel's personalSign format, delegating to the external signer."""
+        prefix = b"\x19Fuel Signed Message:\n"
+        length_str = str(len(message)).encode("utf-8")
+        full_message = prefix + length_str + message
+        digest = hashlib.sha256(full_message).digest()
+        logger.debug(
+            "ExternalSigner.personal_sign: payload=%d bytes, digest=%s",
+            len(message),
+            digest.hex(),
+        )
+        return self._sign_digest(digest)
+
+
+class ExternalEvmSigner:
+    """An EVM signer backed by an external signing function.
+
+    Same as :class:`ExternalSigner` but uses Ethereum personal_sign message
+    framing (``\\x19Ethereum Signed Message:\\n`` prefix + keccak256 hashing).
+
+    Example::
+
+        from o2_sdk import ExternalEvmSigner, to_fuel_compact_signature
+
+        def kms_sign(digest: bytes) -> bytes:
+            r, s, v = my_kms.sign(key_id="...", digest=digest)
+            return to_fuel_compact_signature(r, s, v)
+
+        signer = ExternalEvmSigner(
+            b256_address="0x000000000000000000000000abcd...1234",
+            evm_address="0xabcd...1234",
+            sign_digest=kms_sign,
+        )
+        session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
+    """
+
+    def __init__(self, b256_address: str, evm_address: str, sign_digest: SignDigestFn) -> None:
+        self._b256_address = b256_address
+        self._evm_address = evm_address
+        self._sign_digest = sign_digest
+
+    @property
+    def b256_address(self) -> str:
+        """The Fuel B256 address (``0x``-prefixed hex string)."""
+        return self._b256_address
+
+    @property
+    def evm_address(self) -> str:
+        """The EVM address (``0x``-prefixed, 42-char hex string)."""
+        return self._evm_address
+
+    @property
+    def address_bytes(self) -> bytes:
+        """The address as raw bytes (32 bytes)."""
+        return bytes.fromhex(self._b256_address[2:])
+
+    def personal_sign(self, message: bytes) -> bytes:
+        """Sign using Ethereum's personal_sign format, delegating to the external signer."""
+        prefix = f"\x19Ethereum Signed Message:\n{len(message)}".encode()
+        k = keccak.new(digest_bits=256)
+        k.update(prefix + message)
+        digest = k.digest()
+        logger.debug(
+            "ExternalEvmSigner.personal_sign: payload=%d bytes, digest=%s",
+            len(message),
+            digest.hex(),
+        )
+        return self._sign_digest(digest)

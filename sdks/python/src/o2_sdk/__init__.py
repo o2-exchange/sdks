@@ -8,6 +8,10 @@ from .client import O2Client
 from .config import Network, NetworkConfig, get_config
 from .crypto import (
     EvmWallet,
+    ExternalEvmSigner,
+    ExternalSigner,
+    SignDigestFn,
+    Signer,
     Wallet,
     evm_personal_sign,
     fuel_compact_sign,
@@ -19,6 +23,7 @@ from .crypto import (
     load_wallet,
     personal_sign,
     raw_sign,
+    to_fuel_compact_signature,
 )
 from .encoding import (
     GAS_MAX,
@@ -116,6 +121,8 @@ __all__ = [
     "DepthUpdate",
     "EventsNotFound",
     "EvmWallet",
+    "ExternalEvmSigner",
+    "ExternalSigner",
     "FaucetResponse",
     "GeoRestricted",
     "Id",
@@ -131,21 +138,17 @@ __all__ = [
     "InvalidTradeCount",
     "Market",
     "MarketAlreadyExists",
-    # Models
     "MarketAsset",
     "MarketNotFound",
     "MarketPaused",
     "MarketSummary",
     "MarketTicker",
     "MarketsResponse",
-    # Config
     "Network",
     "NetworkConfig",
     "NoActionsProvided",
     "NonceUpdate",
-    # Client
     "O2Client",
-    # Errors
     "O2Error",
     "OnChainRevert",
     "Order",
@@ -160,13 +163,14 @@ __all__ = [
     "SessionExpired",
     "SessionInfo",
     "SessionResponse",
+    "SignDigestFn",
+    "Signer",
     "SubscriptionError",
     "TooManyActions",
     "TooManySubscriptions",
     "Trade",
     "TradeNotFound",
     "TradeUpdate",
-    # Crypto
     "Wallet",
     "WhitelistNotConfigured",
     "WhitelistResponse",
@@ -192,6 +196,6 @@ __all__ = [
     "load_wallet",
     "personal_sign",
     "raw_sign",
-    # Encoding
+    "to_fuel_compact_signature",
     "u64_be",
 ]

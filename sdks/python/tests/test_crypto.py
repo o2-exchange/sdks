@@ -5,6 +5,9 @@ import hashlib
 from coincurve import PrivateKey
 
 from o2_sdk.crypto import (
+    ExternalEvmSigner,
+    ExternalSigner,
+    Signer,
     evm_personal_sign,
     fuel_compact_sign,
     generate_evm_wallet,
@@ -14,6 +17,7 @@ from o2_sdk.crypto import (
     load_wallet,
     personal_sign,
     raw_sign,
+    to_fuel_compact_signature,
 )
 
 # Known test private key for deterministic tests
@@ -175,3 +179,215 @@ class TestEvmPersonalSign:
         fuel_sig = personal_sign(TEST_PRIVATE_KEY, msg)
         evm_sig = evm_personal_sign(TEST_PRIVATE_KEY, msg)
         assert fuel_sig != evm_sig
+
+
+class TestToFuelCompactSignature:
+    def test_roundtrip(self):
+        """to_fuel_compact_signature matches fuel_compact_sign output."""
+        digest = hashlib.sha256(b"roundtrip test").digest()
+        # Sign with fuel_compact_sign to get reference output
+        expected = fuel_compact_sign(TEST_PRIVATE_KEY, digest)
+
+        # Manually sign to get (r, s, recovery_id) components
+        pk = PrivateKey(TEST_PRIVATE_KEY)
+        sig = pk.sign_recoverable(digest, hasher=None)
+        r = sig[0:32]
+        s = sig[32:64]
+        recovery_id = sig[64]
+
+        result = to_fuel_compact_signature(r, s, recovery_id)
+        assert result == expected
+
+    def test_invalid_r_length(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="r must be 32 bytes"):
+            to_fuel_compact_signature(b"\x00" * 31, b"\x00" * 32, 0)
+
+    def test_invalid_s_length(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="s must be 32 bytes"):
+            to_fuel_compact_signature(b"\x00" * 32, b"\x00" * 33, 0)
+
+    def test_invalid_recovery_id(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="recovery_id must be 0 or 1"):
+            to_fuel_compact_signature(b"\x00" * 32, b"\x00" * 32, 2)
+
+
+class TestWalletPersonalSign:
+    """Test Wallet.personal_sign method matches module-level personal_sign."""
+
+    def test_matches_module_function(self):
+        wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+        msg = b"test personal sign method"
+        expected = personal_sign(TEST_PRIVATE_KEY, msg)
+        assert wallet.personal_sign(msg) == expected
+
+    def test_deterministic(self):
+        wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+        msg = b"deterministic"
+        assert wallet.personal_sign(msg) == wallet.personal_sign(msg)
+
+    def test_different_messages_differ(self):
+        wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+        sig1 = wallet.personal_sign(b"message1")
+        sig2 = wallet.personal_sign(b"message2")
+        assert sig1 != sig2
+
+
+class TestEvmWalletPersonalSign:
+    """Test EvmWallet.personal_sign method matches module-level evm_personal_sign."""
+
+    def test_matches_module_function(self):
+        wallet = load_evm_wallet(TEST_PRIVATE_KEY_HEX)
+        msg = b"test evm personal sign method"
+        expected = evm_personal_sign(TEST_PRIVATE_KEY, msg)
+        assert wallet.personal_sign(msg) == expected
+
+    def test_fuel_vs_evm_differ(self):
+        """Wallet.personal_sign and EvmWallet.personal_sign produce different results."""
+        fuel_wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+        evm_wallet = load_evm_wallet(TEST_PRIVATE_KEY_HEX)
+        msg = b"same message"
+        assert fuel_wallet.personal_sign(msg) != evm_wallet.personal_sign(msg)
+
+
+class TestSignerProtocol:
+    """Test that Wallet and EvmWallet satisfy the Signer protocol."""
+
+    def test_wallet_is_signer(self):
+        wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+        assert isinstance(wallet, Signer)
+
+    def test_evm_wallet_is_signer(self):
+        wallet = load_evm_wallet(TEST_PRIVATE_KEY_HEX)
+        assert isinstance(wallet, Signer)
+
+    def test_external_signer_is_signer(self):
+        signer = ExternalSigner(
+            b256_address="0x" + "ab" * 32,
+            sign_digest=lambda digest: b"\x00" * 64,
+        )
+        assert isinstance(signer, Signer)
+
+    def test_external_evm_signer_is_signer(self):
+        signer = ExternalEvmSigner(
+            b256_address="0x" + "ab" * 32,
+            evm_address="0x" + "cd" * 20,
+            sign_digest=lambda digest: b"\x00" * 64,
+        )
+        assert isinstance(signer, Signer)
+
+
+class TestExternalSigner:
+    """Test ExternalSigner with fuel_compact_sign as the backing function."""
+
+    def test_matches_wallet(self):
+        """ExternalSigner using fuel_compact_sign should match Wallet.personal_sign."""
+        wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+
+        def local_sign(digest: bytes) -> bytes:
+            return fuel_compact_sign(TEST_PRIVATE_KEY, digest)
+
+        signer = ExternalSigner(
+            b256_address=wallet.b256_address,
+            sign_digest=local_sign,
+        )
+
+        msg = b"test external signer"
+        assert signer.personal_sign(msg) == wallet.personal_sign(msg)
+
+    def test_b256_address(self):
+        addr = "0x" + "ab" * 32
+        signer = ExternalSigner(b256_address=addr, sign_digest=lambda d: b"\x00" * 64)
+        assert signer.b256_address == addr
+
+    def test_address_bytes(self):
+        addr = "0x" + "ab" * 32
+        signer = ExternalSigner(b256_address=addr, sign_digest=lambda d: b"\x00" * 64)
+        assert signer.address_bytes == bytes.fromhex("ab" * 32)
+
+    def test_callback_receives_correct_digest(self):
+        """Verify that the sign_digest callback receives the correct SHA-256 digest."""
+        received_digests: list[bytes] = []
+
+        def capture_digest(digest: bytes) -> bytes:
+            received_digests.append(digest)
+            return b"\x00" * 64
+
+        signer = ExternalSigner(
+            b256_address="0x" + "00" * 32,
+            sign_digest=capture_digest,
+        )
+
+        msg = b"hello"
+        signer.personal_sign(msg)
+
+        # Manually compute expected digest
+        prefix = b"\x19Fuel Signed Message:\n"
+        length_str = str(len(msg)).encode("utf-8")
+        full_message = prefix + length_str + msg
+        expected_digest = hashlib.sha256(full_message).digest()
+
+        assert len(received_digests) == 1
+        assert received_digests[0] == expected_digest
+
+
+class TestExternalEvmSigner:
+    """Test ExternalEvmSigner with fuel_compact_sign as the backing function."""
+
+    def test_matches_evm_wallet(self):
+        """ExternalEvmSigner using fuel_compact_sign should match EvmWallet.personal_sign."""
+        wallet = load_evm_wallet(TEST_PRIVATE_KEY_HEX)
+
+        def local_sign(digest: bytes) -> bytes:
+            return fuel_compact_sign(TEST_PRIVATE_KEY, digest)
+
+        signer = ExternalEvmSigner(
+            b256_address=wallet.b256_address,
+            evm_address=wallet.evm_address,
+            sign_digest=local_sign,
+        )
+
+        msg = b"test external evm signer"
+        assert signer.personal_sign(msg) == wallet.personal_sign(msg)
+
+    def test_evm_address(self):
+        evm_addr = "0x" + "cd" * 20
+        signer = ExternalEvmSigner(
+            b256_address="0x" + "00" * 32,
+            evm_address=evm_addr,
+            sign_digest=lambda d: b"\x00" * 64,
+        )
+        assert signer.evm_address == evm_addr
+
+    def test_callback_receives_keccak_digest(self):
+        """Verify that the sign_digest callback receives a keccak256 digest."""
+        from Crypto.Hash import keccak
+
+        received_digests: list[bytes] = []
+
+        def capture_digest(digest: bytes) -> bytes:
+            received_digests.append(digest)
+            return b"\x00" * 64
+
+        signer = ExternalEvmSigner(
+            b256_address="0x" + "00" * 32,
+            evm_address="0x" + "00" * 20,
+            sign_digest=capture_digest,
+        )
+
+        msg = b"hello"
+        signer.personal_sign(msg)
+
+        # Manually compute expected keccak256 digest
+        prefix = f"\x19Ethereum Signed Message:\n{len(msg)}".encode()
+        k = keccak.new(digest_bits=256)
+        k.update(prefix + msg)
+        expected_digest = k.digest()
+
+        assert len(received_digests) == 1
+        assert received_digests[0] == expected_digest
