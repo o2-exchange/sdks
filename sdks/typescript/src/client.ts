@@ -467,6 +467,7 @@ export class O2Client {
 
     if (typeof quantity === "bigint") {
       scaledQuantity = quantity;
+      this.ensureBigIntQuantityPrecision(scaledQuantity, resolved);
     } else {
       scaledQuantity = scaleQuantityString(
         quantity,
@@ -1073,6 +1074,24 @@ export class O2Client {
     );
   }
 
+  /**
+   * Validate bigint quantities against the market precision step.
+   *
+   * Bigint quantities are treated as already-scaled chain integers.
+   * They must still align to `max_precision` to avoid on-chain rejects.
+   */
+  private ensureBigIntQuantityPrecision(quantity: bigint, market: Market): void {
+    const precisionDelta = market.base.decimals - market.base.max_precision;
+    const quantityStep = precisionDelta <= 0 ? 1n : BigInt(10 ** precisionDelta);
+    if (quantity % quantityStep !== 0n) {
+      throw new O2Error(
+        `Invalid bigint quantity precision for ${market.base.symbol}/${market.quote.symbol}. ` +
+          `Quantity must be a multiple of ${quantityStep.toString()}. ` +
+          `Pass quantity as a decimal string to auto-scale.`,
+      );
+    }
+  }
+
   /** Convert a type-safe Action to the wire-format ActionPayload. */
   private actionToPayload(action: Action, market: Market): ActionPayload {
     const session = this.ensureSession();
@@ -1093,6 +1112,7 @@ export class O2Client {
 
         if (typeof action.quantity === "bigint") {
           scaledQuantity = action.quantity;
+          this.ensureBigIntQuantityPrecision(scaledQuantity, market);
         } else {
           scaledQuantity = scaleQuantityString(
             action.quantity,

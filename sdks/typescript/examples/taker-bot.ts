@@ -16,6 +16,7 @@ import {
   Network,
   O2Client,
   O2Error,
+  scaleQuantityForMarket,
 } from "../src/index.js";
 
 // ── Configuration ─────────────────────────────────────────────────
@@ -73,6 +74,7 @@ async function main() {
       // Use bigint prices directly from depth (pass-through path)
       const bestAskBigint = sells[0].price;
       const bestAskQtyBigint = sells[0].quantity;
+      const maxOrderQuantity = scaleQuantityForMarket(market, CONFIG.maxQuantity);
 
       // Calculate max price with slippage as a string for BoundedMarket
       const maxPrice = (bestAsk * (1 + CONFIG.slippagePercent)).toFixed(6);
@@ -82,9 +84,7 @@ async function main() {
           pair,
           "buy",
           bestAskBigint, // bigint pass-through — already scaled
-          bestAskQtyBigint > scaleQuantity(CONFIG.maxQuantity, market.base.decimals)
-            ? scaleQuantity(CONFIG.maxQuantity, market.base.decimals)
-            : bestAskQtyBigint,
+          bestAskQtyBigint > maxOrderQuantity ? maxOrderQuantity : bestAskQtyBigint,
           { orderType: boundedMarketOrder(maxPrice, "0") },
         );
 
@@ -107,10 +107,6 @@ async function main() {
       }
     }
   }
-}
-
-function scaleQuantity(humanQty: number, decimals: number): bigint {
-  return BigInt(Math.ceil(humanQty * 10 ** decimals));
 }
 
 function sleep(ms: number): Promise<void> {

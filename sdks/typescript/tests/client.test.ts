@@ -41,6 +41,15 @@ const MARKET: Market = {
   },
 };
 
+const LOW_PRECISION_MARKET: Market = {
+  ...MARKET,
+  market_id: marketId(`0x${"ab".repeat(32)}`),
+  base: {
+    ...MARKET.base,
+    max_precision: 3,
+  },
+};
+
 const MARKETS_RESPONSE: MarketsResponse = {
   books_registry_id: contractId(`0x${"88".repeat(32)}`),
   accounts_registry_id: contractId(`0x${"99".repeat(32)}`),
@@ -48,6 +57,11 @@ const MARKETS_RESPONSE: MarketsResponse = {
   chain_id: "0x0",
   base_asset_id: BASE_ASSET_ID,
   markets: [MARKET],
+};
+
+const LOW_PRECISION_MARKETS_RESPONSE: MarketsResponse = {
+  ...MARKETS_RESPONSE,
+  markets: [LOW_PRECISION_MARKET],
 };
 
 function decodeNonceFromSigningBytes(bytes: Uint8Array): bigint {
@@ -65,6 +79,18 @@ function makeSigner() {
     personalSign,
   };
   return { signer, personalSign };
+}
+
+function makeSession() {
+  return {
+    ownerAddress: OWNER,
+    tradeAccountId: TRADE_ACCOUNT_ID,
+    sessionPrivateKey: new Uint8Array(32).fill(1),
+    sessionAddress: `0x${"12".repeat(32)}`,
+    contractIds: [MARKET_CONTRACT_ID],
+    expiry: Math.floor(Date.now() / 1000) + 3600,
+    nonce: 1n,
+  };
 }
 
 describe("O2Client nonce sourcing", () => {
@@ -157,5 +183,38 @@ describe("O2Client nonce sourcing", () => {
     );
     expect(personalSign).toHaveBeenCalledTimes(1);
     expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(99n);
+  });
+});
+
+describe("O2Client bigint quantity precision", () => {
+  it("createOrder rejects bigint quantity that exceeds market max_precision", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(client.createOrder("fFUEL/fUSDC", "buy", 100000000n, 123456789n)).rejects.toThrow(
+      "Quantity must be a multiple of 1000000",
+    );
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it("batchActions rejects bigint quantity that exceeds market max_precision", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(
+      client.batchActions([
+        {
+          market: "fFUEL/fUSDC",
+          actions: [{ type: "createOrder", side: "buy", price: 100000000n, quantity: 123456789n }],
+        },
+      ]),
+    ).rejects.toThrow("Quantity must be a multiple of 1000000");
+    expect(submitActionsSpy).not.toHaveBeenCalled();
   });
 });
