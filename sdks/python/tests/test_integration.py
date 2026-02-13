@@ -833,3 +833,251 @@ class TestWebSocket:
                     )
                     await ws_client.settle_balance(session, market.pair)
             await ws_client.close()
+
+    async def test_websocket_concurrent_subscriptions(self, funded_accounts):
+        """Subscribe to orders, balances, and nonce simultaneously;
+        place one order and verify each stream receives only its correct type."""
+        ctx = funded_accounts
+        maker_wallet, maker_account = ctx["maker"]
+
+        await _whitelist_with_retry(
+            ctx["client"].api, maker_account.trade_account_id, max_retries=2
+        )
+
+        ws_client = O2Client(network=Network.TESTNET)
+        orders_consumer = None
+        balances_consumer = None
+        nonce_consumer = None
+        session = None
+        order_id = None
+        try:
+            markets = await ws_client.get_markets()
+            if not markets:
+                pytest.skip("No markets available")
+            market = markets[0]
+
+            await _cleanup_open_orders(ws_client, maker_wallet, market.pair)
+
+            # Subscribe to all three streams concurrently on one WS connection
+            orders_consumer = asyncio.create_task(
+                _consume_first(ws_client.stream_orders(maker_account.trade_account_id))
+            )
+            balances_consumer = asyncio.create_task(
+                _consume_first(
+                    ws_client.stream_balances(maker_account.trade_account_id)
+                )
+            )
+            nonce_consumer = asyncio.create_task(
+                _consume_first(ws_client.stream_nonce(maker_account.trade_account_id))
+            )
+            await asyncio.sleep(2)
+
+            # Place one order — triggers orders, balances, and nonce updates
+            price_step = 10 ** (-market.quote.max_precision)
+            quantity = _min_quantity_for_min_order(market, price_step)
+
+            session = await ws_client.create_session(
+                owner=maker_wallet, markets=[market.pair], expiry_days=1
+            )
+            result = await _create_order_with_whitelist_retry(
+                ws_client,
+                session=session,
+                market=market.pair,
+                side=OrderSide.BUY,
+                price=price_step,
+                quantity=quantity,
+                order_type=OrderType.POST_ONLY,
+                settle_first=True,
+                collect_orders=True,
+            )
+            assert result.tx_id is not None, f"Order placement failed: {result.message}"
+            if result.orders:
+                order_id = result.orders[0].order_id
+
+            # Each stream must deliver the correct type — no cross-contamination
+            try:
+                orders_update = await asyncio.wait_for(orders_consumer, timeout=30)
+                orders_consumer = None
+            except asyncio.TimeoutError:
+                pytest.fail("Orders stream timed out")
+
+            try:
+                balances_update = await asyncio.wait_for(balances_consumer, timeout=30)
+                balances_consumer = None
+            except asyncio.TimeoutError:
+                pytest.fail("Balances stream timed out")
+
+            try:
+                nonce_update = await asyncio.wait_for(nonce_consumer, timeout=30)
+                nonce_consumer = None
+            except asyncio.TimeoutError:
+                pytest.fail("Nonce stream timed out")
+
+            assert isinstance(orders_update, OrderUpdate), (
+                f"Orders stream received wrong type: {type(orders_update).__name__}"
+            )
+            assert len(orders_update.orders) > 0
+
+            assert isinstance(balances_update, BalanceUpdate), (
+                f"Balances stream received wrong type: {type(balances_update).__name__}"
+            )
+            assert len(balances_update.balance) > 0
+
+            assert isinstance(nonce_update, NonceUpdate), (
+                f"Nonce stream received wrong type: {type(nonce_update).__name__}"
+            )
+            assert nonce_update.nonce is not None
+
+        finally:
+            for consumer in [orders_consumer, balances_consumer, nonce_consumer]:
+                if consumer and not consumer.done():
+                    consumer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer
+            with contextlib.suppress(Exception):
+                if session and order_id:
+                    await ws_client.cancel_order(
+                        session=session, order_id=order_id, market=market.pair
+                    )
+                    await ws_client.settle_balance(session, market.pair)
+            await ws_client.close()
+
+    async def test_websocket_mixed_with_fill(self, funded_accounts):
+        """Subscribe to trades, orders, and balances; execute a cross-account fill
+        and verify each stream gets only its own type."""
+        ctx = funded_accounts
+        maker_wallet, maker_account = ctx["maker"]
+        taker_wallet, taker_account = ctx["taker"]
+
+        await _whitelist_with_retry(
+            ctx["client"].api, maker_account.trade_account_id, max_retries=2
+        )
+        await _whitelist_with_retry(
+            ctx["client"].api, taker_account.trade_account_id, max_retries=2
+        )
+
+        ws_client = O2Client(network=Network.TESTNET)
+        trades_consumer = None
+        orders_consumer = None
+        balances_consumer = None
+        maker_session = None
+        taker_session = None
+        maker_order = None
+        try:
+            markets = await ws_client.get_markets()
+            if not markets:
+                pytest.skip("No markets available")
+            market = markets[0]
+
+            await _cleanup_open_orders(ws_client, maker_wallet, market.pair)
+            await _cleanup_open_orders(ws_client, taker_wallet, market.pair)
+
+            # Subscribe to all three streams
+            trades_consumer = asyncio.create_task(
+                _consume_first(ws_client.stream_trades(market.pair))
+            )
+            orders_consumer = asyncio.create_task(
+                _consume_first(
+                    ws_client.stream_orders(maker_account.trade_account_id)
+                )
+            )
+            balances_consumer = asyncio.create_task(
+                _consume_first(
+                    ws_client.stream_balances(maker_account.trade_account_id)
+                )
+            )
+            await asyncio.sleep(2)
+
+            # Cross-account fill
+            fill_price = _moderate_fill_price(market)
+            quantity = _fill_quantity(market, fill_price)
+
+            maker_session = await ws_client.create_session(
+                owner=maker_wallet, markets=[market.pair], expiry_days=1
+            )
+            maker_result = await _create_order_with_whitelist_retry(
+                ws_client,
+                session=maker_session,
+                market=market.pair,
+                side=OrderSide.BUY,
+                price=fill_price,
+                quantity=quantity,
+                order_type=OrderType.POST_ONLY,
+                settle_first=True,
+                collect_orders=True,
+            )
+            assert maker_result.tx_id is not None
+            assert maker_result.orders and len(maker_result.orders) > 0
+            maker_order = maker_result.orders[0]
+
+            taker_session = await ws_client.create_session(
+                owner=taker_wallet, markets=[market.pair], expiry_days=1
+            )
+            await _create_order_with_whitelist_retry(
+                ws_client,
+                session=taker_session,
+                market=market.pair,
+                side=OrderSide.SELL,
+                price=fill_price,
+                quantity=quantity,
+                order_type=OrderType.FILL_OR_KILL,
+                settle_first=True,
+                collect_orders=True,
+            )
+
+            # Each stream must deliver the correct type
+            try:
+                trades_update = await asyncio.wait_for(trades_consumer, timeout=30)
+                trades_consumer = None
+            except asyncio.TimeoutError:
+                pytest.fail("Trades stream timed out after cross-account fill")
+
+            try:
+                orders_update = await asyncio.wait_for(orders_consumer, timeout=30)
+                orders_consumer = None
+            except asyncio.TimeoutError:
+                pytest.fail("Orders stream timed out after cross-account fill")
+
+            try:
+                balances_update = await asyncio.wait_for(
+                    balances_consumer, timeout=30
+                )
+                balances_consumer = None
+            except asyncio.TimeoutError:
+                pytest.fail("Balances stream timed out after cross-account fill")
+
+            assert isinstance(trades_update, TradeUpdate), (
+                f"Trades stream got wrong type: {type(trades_update).__name__}"
+            )
+            assert len(trades_update.trades) > 0
+
+            assert isinstance(orders_update, OrderUpdate), (
+                f"Orders stream got wrong type: {type(orders_update).__name__}"
+            )
+            assert len(orders_update.orders) > 0
+
+            assert isinstance(balances_update, BalanceUpdate), (
+                f"Balances stream got wrong type: {type(balances_update).__name__}"
+            )
+            assert len(balances_update.balance) > 0
+
+        finally:
+            for consumer in [trades_consumer, orders_consumer, balances_consumer]:
+                if consumer and not consumer.done():
+                    consumer.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await consumer
+            with contextlib.suppress(Exception):
+                if maker_session and maker_order:
+                    await ws_client.cancel_order(
+                        session=maker_session,
+                        order_id=maker_order.order_id,
+                        market=market.pair,
+                    )
+            with contextlib.suppress(Exception):
+                if maker_session:
+                    await ws_client.settle_balance(maker_session, market.pair)
+            with contextlib.suppress(Exception):
+                if taker_session:
+                    await ws_client.settle_balance(taker_session, market.pair)
+            await ws_client.close()

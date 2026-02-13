@@ -1133,3 +1133,276 @@ async fn test_websocket_nonce() {
 
     let _ = client.disconnect_ws().await;
 }
+
+#[tokio::test]
+#[serial]
+async fn test_websocket_concurrent_subscriptions() {
+    let shared = get_shared_setup().await;
+    let mut client = O2Client::new(Network::Testnet);
+
+    let markets = client.get_markets().await.unwrap();
+    let market = &markets[0];
+    let market_pair = market.symbol_pair();
+
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+
+    // Subscribe to orders, balances, and nonce concurrently on one WS connection
+    let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
+    let mut orders_stream = client.stream_orders(&[identity.clone()]).await.unwrap();
+    let mut balances_stream = client.stream_balances(&[identity.clone()]).await.unwrap();
+    let mut nonce_stream = client.stream_nonce(&[identity.clone()]).await.unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Place one order — triggers orders, balances, and nonce updates
+    let mut session = client
+        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let price_step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    let buy_price = UnsignedDecimal::new(price_step).unwrap();
+    let quantity = min_quantity_for_min_order(market, &buy_price);
+
+    let order_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut session,
+        &shared.maker_trade_account_id,
+        &market_pair,
+        Side::Buy,
+        buy_price,
+        quantity,
+        OrderType::PostOnly,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        order_resp.is_success(),
+        "Order placement failed: {:?}",
+        order_resp.message
+    );
+
+    let order_id = order_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.clone());
+
+    let timeout_dur = std::time::Duration::from_secs(30);
+
+    // Verify each stream receives only its correct type — no cross-contamination
+    match tokio::time::timeout(timeout_dur, orders_stream.next()).await {
+        Ok(Some(Ok(update))) => {
+            assert!(
+                update.orders.is_some(),
+                "Orders stream should have orders field"
+            );
+            eprintln!("Orders stream OK: action={:?}", update.action);
+        }
+        Ok(Some(Err(e))) => panic!("Orders stream error: {e}"),
+        Ok(None) => panic!("Orders stream ended unexpectedly"),
+        Err(_) => panic!("Orders stream timed out"),
+    }
+
+    match tokio::time::timeout(timeout_dur, balances_stream.next()).await {
+        Ok(Some(Ok(update))) => {
+            assert!(
+                update.balance.is_some(),
+                "Balances stream should have balance field"
+            );
+            eprintln!("Balances stream OK: action={:?}", update.action);
+        }
+        Ok(Some(Err(e))) => panic!("Balances stream error: {e}"),
+        Ok(None) => panic!("Balances stream ended unexpectedly"),
+        Err(_) => panic!("Balances stream timed out"),
+    }
+
+    match tokio::time::timeout(timeout_dur, nonce_stream.next()).await {
+        Ok(Some(Ok(update))) => {
+            assert!(
+                update.nonce.is_some(),
+                "Nonce stream should have nonce field"
+            );
+            eprintln!("Nonce stream OK: action={:?}", update.action);
+        }
+        Ok(Some(Err(e))) => panic!("Nonce stream error: {e}"),
+        Ok(None) => panic!("Nonce stream ended unexpectedly"),
+        Err(_) => panic!("Nonce stream timed out"),
+    }
+
+    // Cleanup
+    if let Some(oid) = order_id {
+        let _ = client.cancel_order(&mut session, &oid, &market_pair).await;
+        let _ = client.settle_balance(&mut session, &market_pair).await;
+    }
+
+    let _ = client.disconnect_ws().await;
+}
+
+#[tokio::test]
+#[serial]
+async fn test_websocket_mixed_with_fill() {
+    let shared = get_shared_setup().await;
+    let mut client = O2Client::new(Network::Testnet);
+
+    let markets = client.get_markets().await.unwrap();
+    let market = &markets[0];
+    let market_pair = market.symbol_pair();
+
+    whitelist_with_retry(&client.api, shared.maker_trade_account_id.as_str(), 2).await;
+    whitelist_with_retry(&client.api, shared.taker_trade_account_id.as_str(), 2).await;
+
+    cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
+    cleanup_open_orders(&mut client, &shared.taker_wallet, &market_pair).await;
+
+    // Subscribe to trades, orders, and balances concurrently
+    let mut trades_stream = client.stream_trades(&market.market_id).await.unwrap();
+    let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
+    let mut orders_stream = client.stream_orders(&[identity.clone()]).await.unwrap();
+    let mut balances_stream = client.stream_balances(&[identity.clone()]).await.unwrap();
+
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+    // Ensure both accounts are funded
+    ensure_funded(
+        &mut client,
+        &shared.maker_trade_account_id,
+        &market.quote.symbol,
+        50_000_000,
+    )
+    .await;
+    ensure_funded(
+        &mut client,
+        &shared.taker_trade_account_id,
+        &market.base.symbol,
+        50_000_000,
+    )
+    .await;
+
+    // Cross-account fill
+    let fill_price = moderate_fill_price(market);
+    let quantity = fill_quantity(market, &fill_price);
+
+    // Maker: PostOnly Buy
+    let mut maker_session = client
+        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let maker_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut maker_session,
+        &shared.maker_trade_account_id,
+        &market_pair,
+        Side::Buy,
+        fill_price,
+        quantity,
+        OrderType::PostOnly,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        maker_resp.is_success(),
+        "Maker order failed: {:?}",
+        maker_resp.message
+    );
+    let maker_order_id = maker_resp
+        .orders
+        .as_ref()
+        .and_then(|o| o.first())
+        .and_then(|o| o.order_id.clone());
+
+    // Taker: FillOrKill Sell
+    let mut taker_session = client
+        .create_session(&shared.taker_wallet, &[&market_pair], 30)
+        .await
+        .unwrap();
+
+    let taker_resp = create_order_with_whitelist_retry(
+        &mut client,
+        &mut taker_session,
+        &shared.taker_trade_account_id,
+        &market_pair,
+        Side::Sell,
+        fill_price,
+        quantity,
+        OrderType::FillOrKill,
+        true,
+        true,
+        3,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        taker_resp.is_success(),
+        "Taker order failed: {:?}",
+        taker_resp.message
+    );
+
+    let timeout_dur = std::time::Duration::from_secs(30);
+
+    // Verify each stream receives only its correct type — no cross-contamination
+    match tokio::time::timeout(timeout_dur, trades_stream.next()).await {
+        Ok(Some(Ok(update))) => {
+            assert!(
+                update.trades.is_some(),
+                "Trades stream should have trades field"
+            );
+            eprintln!("Trades stream OK: action={:?}", update.action);
+        }
+        Ok(Some(Err(e))) => panic!("Trades stream error: {e}"),
+        Ok(None) => panic!("Trades stream ended unexpectedly"),
+        Err(_) => panic!("Trades stream timed out after cross-account fill"),
+    }
+
+    match tokio::time::timeout(timeout_dur, orders_stream.next()).await {
+        Ok(Some(Ok(update))) => {
+            assert!(
+                update.orders.is_some(),
+                "Orders stream should have orders field"
+            );
+            eprintln!("Orders stream OK: action={:?}", update.action);
+        }
+        Ok(Some(Err(e))) => panic!("Orders stream error: {e}"),
+        Ok(None) => panic!("Orders stream ended unexpectedly"),
+        Err(_) => panic!("Orders stream timed out after cross-account fill"),
+    }
+
+    match tokio::time::timeout(timeout_dur, balances_stream.next()).await {
+        Ok(Some(Ok(update))) => {
+            assert!(
+                update.balance.is_some(),
+                "Balances stream should have balance field"
+            );
+            eprintln!("Balances stream OK: action={:?}", update.action);
+        }
+        Ok(Some(Err(e))) => panic!("Balances stream error: {e}"),
+        Ok(None) => panic!("Balances stream ended unexpectedly"),
+        Err(_) => panic!("Balances stream timed out after cross-account fill"),
+    }
+
+    // Cleanup
+    if let Some(oid) = maker_order_id {
+        let _ = client
+            .cancel_order(&mut maker_session, &oid, &market_pair)
+            .await;
+    }
+    let _ = client
+        .settle_balance(&mut maker_session, &market_pair)
+        .await;
+    let _ = client
+        .settle_balance(&mut taker_session, &market_pair)
+        .await;
+
+    let _ = client.disconnect_ws().await;
+}

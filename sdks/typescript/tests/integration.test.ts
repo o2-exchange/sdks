@@ -649,4 +649,225 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
     }
   }, 60_000);
+
+  it("integration: concurrent different-type subscriptions (orders + balances + nonce)", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+
+    const wsClient = new O2Client({ network: Network.TESTNET });
+    try {
+      // Subscribe to all three streams concurrently on one WS connection
+      const ordersStream = await wsClient.streamOrders(makerTradeAccountId);
+      const balancesStream = await wsClient.streamBalances(makerTradeAccountId);
+      const nonceStream = await wsClient.streamNonce(makerTradeAccountId);
+
+      const ordersFirst = new Promise<any>((resolve, reject) => {
+        (async () => {
+          for await (const update of ordersStream) {
+            resolve(update);
+            return;
+          }
+          reject(new Error("orders stream ended"));
+        })();
+      });
+      const balancesFirst = new Promise<any>((resolve, reject) => {
+        (async () => {
+          for await (const update of balancesStream) {
+            resolve(update);
+            return;
+          }
+          reject(new Error("balances stream ended"));
+        })();
+      });
+      const nonceFirst = new Promise<any>((resolve, reject) => {
+        (async () => {
+          for await (const update of nonceStream) {
+            resolve(update);
+            return;
+          }
+          reject(new Error("nonce stream ended"));
+        })();
+      });
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // Place one order — triggers orders, balances, and nonce updates
+      const priceStep = 10 ** -market.quote.max_precision;
+      const quantity = minQuantityForMinOrder(market, priceStep);
+
+      const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+      const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+        client,
+        session,
+        market,
+        "Buy",
+        priceStep,
+        quantity,
+        "PostOnly",
+        true,
+        true,
+        makerTradeAccountId,
+      );
+      expect(response.orders?.length).toBeGreaterThan(0);
+      const order = response.orders?.[0];
+
+      const timeout = (ms: number) =>
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms));
+
+      // Wait for all three with timeout
+      const [ordersUpdate, balancesUpdate, nonceUpdate] = await Promise.all([
+        Promise.race([ordersFirst, timeout(30_000)]),
+        Promise.race([balancesFirst, timeout(30_000)]),
+        Promise.race([nonceFirst, timeout(30_000)]),
+      ]);
+
+      // Verify each stream received only its correct type
+      expect(ordersUpdate.orders).toBeDefined();
+      expect(Array.isArray(ordersUpdate.orders)).toBe(true);
+      expect(ordersUpdate.balance).toBeUndefined();
+      expect(ordersUpdate.nonce).toBeUndefined();
+
+      expect(balancesUpdate.balance).toBeDefined();
+      expect(Array.isArray(balancesUpdate.balance)).toBe(true);
+      expect(balancesUpdate.orders).toBeUndefined();
+      expect(balancesUpdate.nonce).toBeUndefined();
+
+      expect(nonceUpdate.nonce).toBeDefined();
+      expect(nonceUpdate.orders).toBeUndefined();
+      expect(nonceUpdate.balance).toBeUndefined();
+
+      try {
+        await client.cancelOrder(updatedSession, order.order_id, market);
+      } catch {}
+    } finally {
+      wsClient.disconnectWs();
+      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    }
+  }, 120_000);
+
+  it("integration: mixed subscriptions with cross-account fill", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
+    await whitelistWithRetry(client.api, takerTradeAccountId, 2);
+
+    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+
+    const wsClient = new O2Client({ network: Network.TESTNET });
+    try {
+      // Subscribe to trades, orders, and balances concurrently
+      const tradesStream = await wsClient.streamTrades(market);
+      const ordersStream = await wsClient.streamOrders(makerTradeAccountId);
+      const balancesStream = await wsClient.streamBalances(makerTradeAccountId);
+
+      const tradesFirst = new Promise<any>((resolve, reject) => {
+        (async () => {
+          for await (const update of tradesStream) {
+            resolve(update);
+            return;
+          }
+          reject(new Error("trades stream ended"));
+        })();
+      });
+      const ordersFirst = new Promise<any>((resolve, reject) => {
+        (async () => {
+          for await (const update of ordersStream) {
+            resolve(update);
+            return;
+          }
+          reject(new Error("orders stream ended"));
+        })();
+      });
+      const balancesFirst = new Promise<any>((resolve, reject) => {
+        (async () => {
+          for await (const update of balancesStream) {
+            resolve(update);
+            return;
+          }
+          reject(new Error("balances stream ended"));
+        })();
+      });
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      // Cross-account fill
+      const price = moderateFillPrice(market);
+      const quantity = fillQuantity(market, price);
+
+      const makerSession = await client.createSession(
+        makerWallet,
+        makerTradeAccountId,
+        [market],
+        30,
+      );
+      const { response: makerResponse } = await createOrderWithWhitelistRetry(
+        client,
+        makerSession,
+        market,
+        "Buy",
+        price,
+        quantity,
+        "PostOnly",
+        true,
+        true,
+        makerTradeAccountId,
+      );
+      expect(makerResponse.orders?.length).toBeGreaterThan(0);
+      const makerOrder = makerResponse.orders?.[0];
+      expect(makerOrder.cancel).not.toBe(true);
+
+      const takerSession = await client.createSession(
+        takerWallet,
+        takerTradeAccountId,
+        [market],
+        30,
+      );
+      await createOrderWithWhitelistRetry(
+        client,
+        takerSession,
+        market,
+        "Sell",
+        price,
+        quantity,
+        "FillOrKill",
+        true,
+        true,
+        takerTradeAccountId,
+      );
+
+      const timeout = (ms: number) =>
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms));
+
+      const [tradesUpdate, ordersUpdate, balancesUpdate] = await Promise.all([
+        Promise.race([tradesFirst, timeout(30_000)]),
+        Promise.race([ordersFirst, timeout(30_000)]),
+        Promise.race([balancesFirst, timeout(30_000)]),
+      ]);
+
+      // Verify each stream received only its correct type
+      expect(tradesUpdate.trades).toBeDefined();
+      expect(Array.isArray(tradesUpdate.trades)).toBe(true);
+      expect(tradesUpdate.orders).toBeUndefined();
+      expect(tradesUpdate.balance).toBeUndefined();
+
+      expect(ordersUpdate.orders).toBeDefined();
+      expect(Array.isArray(ordersUpdate.orders)).toBe(true);
+      expect(ordersUpdate.trades).toBeUndefined();
+      expect(ordersUpdate.balance).toBeUndefined();
+
+      expect(balancesUpdate.balance).toBeDefined();
+      expect(Array.isArray(balancesUpdate.balance)).toBe(true);
+      expect(balancesUpdate.trades).toBeUndefined();
+      expect(balancesUpdate.orders).toBeUndefined();
+    } finally {
+      wsClient.disconnectWs();
+      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+      await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+    }
+  }, 120_000);
 });
