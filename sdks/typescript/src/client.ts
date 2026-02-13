@@ -14,7 +14,7 @@
  * const wallet = client.generateWallet();
  * const { tradeAccountId } = await client.setupAccount(wallet);
  * const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
- * const { response } = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
+ * const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
  * console.log(`Order TX: ${response.tx_id}`);
  * client.close();
  * ```
@@ -33,6 +33,7 @@ import {
   hexToBytes,
   personalSign,
   rawSign,
+  type Signer,
   walletFromPrivateKey,
 } from "./crypto.js";
 import {
@@ -128,7 +129,12 @@ export class O2Client {
    */
   generateWallet(): WalletState {
     const w = generateWallet();
-    return { privateKey: w.privateKey, b256Address: w.b256Address, isEvm: false };
+    return {
+      privateKey: w.privateKey,
+      b256Address: w.b256Address,
+      isEvm: false,
+      personalSign: (message: Uint8Array) => personalSign(w.privateKey, message),
+    };
   }
 
   /**
@@ -143,6 +149,7 @@ export class O2Client {
       b256Address: w.b256Address,
       isEvm: true,
       evmAddress: w.evmAddress,
+      personalSign: (message: Uint8Array) => evmPersonalSign(w.privateKey, message),
     };
   }
 
@@ -154,7 +161,12 @@ export class O2Client {
    */
   loadWallet(privateKeyHex: string): WalletState {
     const w = walletFromPrivateKey(privateKeyHex);
-    return { privateKey: w.privateKey, b256Address: w.b256Address, isEvm: false };
+    return {
+      privateKey: w.privateKey,
+      b256Address: w.b256Address,
+      isEvm: false,
+      personalSign: (message: Uint8Array) => personalSign(w.privateKey, message),
+    };
   }
 
   /**
@@ -170,6 +182,7 @@ export class O2Client {
       b256Address: w.b256Address,
       isEvm: true,
       evmAddress: w.evmAddress,
+      personalSign: (message: Uint8Array) => evmPersonalSign(w.privateKey, message),
     };
   }
 
@@ -184,7 +197,7 @@ export class O2Client {
    * 4. Whitelist account
    * 5. Return trade_account_id
    */
-  async setupAccount(wallet: WalletState): Promise<{ tradeAccountId: string; nonce: bigint }> {
+  async setupAccount(wallet: Signer): Promise<{ tradeAccountId: string; nonce: bigint }> {
     // 1. Check if account already exists
     const existing = await this.api.getAccount({ owner: wallet.b256Address });
 
@@ -235,7 +248,7 @@ export class O2Client {
    * 5. Submit PUT /v1/session
    */
   async createSession(
-    wallet: WalletState,
+    wallet: Signer,
     tradeAccountId: string,
     markets: string[] | Market[],
     expiryDays = 30,
@@ -275,10 +288,9 @@ export class O2Client {
       expiry,
     );
 
-    // Sign with owner wallet
-    const signature = wallet.isEvm
-      ? evmPersonalSign(wallet.privateKey, signingBytes)
-      : personalSign(wallet.privateKey, signingBytes);
+    // Sign with owner wallet (dispatches to Fuel or EVM personal_sign
+    // based on the signer implementation)
+    const signature = wallet.personalSign(signingBytes);
 
     // Submit
     const _resp = await this.api.createSession(wallet.b256Address, {
@@ -298,7 +310,6 @@ export class O2Client {
       contractIds,
       expiry: Number(expiry),
       nonce: nonce + 1n, // Nonce increments after session creation
-      isEvm: wallet.isEvm,
     };
   }
 
@@ -307,6 +318,8 @@ export class O2Client {
   /**
    * Create an order with automatic encoding, signing, and nonce management.
    * Optionally prepends SettleBalance and appends collect_orders.
+   *
+   * The session nonce is updated in-place after each call.
    */
   async createOrder(
     session: SessionState,
@@ -317,7 +330,7 @@ export class O2Client {
     orderType: OrderType = "Spot",
     settleFirst = true,
     collectOrders = true,
-  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+  ): Promise<SessionActionsResponse> {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
@@ -384,12 +397,12 @@ export class O2Client {
     );
   }
 
-  /** Cancel an order. */
+  /** Cancel an order. The session nonce is updated in-place. */
   async cancelOrder(
     session: SessionState,
     orderId: string,
     market: string | Market,
-  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+  ): Promise<SessionActionsResponse> {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
@@ -406,11 +419,14 @@ export class O2Client {
     );
   }
 
-  /** Cancel all open orders for a market. Returns one result per chunk, or null if no orders. */
+  /**
+   * Cancel all open orders for a market. Returns one result per chunk, or null if no orders.
+   * The session nonce is updated in-place after each batch.
+   */
   async cancelAllOrders(
     session: SessionState,
     market: string | Market,
-  ): Promise<Array<{ response: SessionActionsResponse; session: SessionState }> | null> {
+  ): Promise<SessionActionsResponse[] | null> {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
@@ -424,8 +440,7 @@ export class O2Client {
 
     if (orders.orders.length === 0) return null;
 
-    const results: Array<{ response: SessionActionsResponse; session: SessionState }> = [];
-    let currentSession = session;
+    const results: SessionActionsResponse[] = [];
 
     // Process in chunks of 5 (max actions per batch)
     for (let i = 0; i < orders.orders.length; i += 5) {
@@ -435,23 +450,22 @@ export class O2Client {
       }));
 
       const result = await this.batchActions(
-        currentSession,
+        session,
         [{ market_id: resolved.market_id, actions: cancelActions }],
         resolved,
         marketsData.accounts_registry_id,
       );
-      currentSession = result.session;
       results.push(result);
     }
 
     return results;
   }
 
-  /** Settle balance for a market. */
+  /** Settle balance for a market. The session nonce is updated in-place. */
   async settleBalance(
     session: SessionState,
     market: string | Market,
-  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+  ): Promise<SessionActionsResponse> {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
@@ -477,6 +491,9 @@ export class O2Client {
   /**
    * Submit a batch of raw actions. Advanced interface.
    * Handles encoding, signing, nonce management.
+   *
+   * The session nonce is updated in-place after each call (even on errors,
+   * since the on-chain nonce increments on reverts too).
    */
   async batchActions(
     session: SessionState,
@@ -484,7 +501,7 @@ export class O2Client {
     market: Market,
     accountsRegistryId: string,
     collectOrders = false,
-  ): Promise<{ response: SessionActionsResponse; session: SessionState }> {
+  ): Promise<SessionActionsResponse> {
     // Check session expiry before submitting on-chain
     if (session.expiry > 0 && Math.floor(Date.now() / 1000) >= session.expiry) {
       throw new SessionExpired();
@@ -531,7 +548,7 @@ export class O2Client {
 
       // Increment nonce on success
       session.nonce += 1n;
-      return { response, session };
+      return response;
     } catch (error) {
       // Nonce increments on-chain even on revert
       session.nonce += 1n;
@@ -783,7 +800,7 @@ export class O2Client {
    * Requires the owner wallet (not session).
    */
   async withdraw(
-    wallet: WalletState,
+    wallet: Signer,
     tradeAccountId: string,
     assetId: string,
     amount: string,
@@ -815,9 +832,7 @@ export class O2Client {
       BigInt(amount),
     );
 
-    const signature = wallet.isEvm
-      ? evmPersonalSign(wallet.privateKey, signingBytes)
-      : personalSign(wallet.privateKey, signingBytes);
+    const signature = wallet.personalSign(signingBytes);
 
     return this.api.withdraw(wallet.b256Address, {
       trade_account_id: tradeAccountId,

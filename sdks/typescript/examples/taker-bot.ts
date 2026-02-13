@@ -42,8 +42,6 @@ async function main() {
   // Create session
   const session = await client.createSession(wallet, tradeAccountId, [market], 30);
 
-  let currentSession = session;
-
   // Stream depth
   console.log(`Watching for asks below ${CONFIG.buyBelowPrice} ${market.quote.symbol}...`);
   const depthStream = await client.streamDepth(market, 1);
@@ -66,8 +64,8 @@ async function main() {
       const maxPrice = bestAsk * (1 + CONFIG.slippagePercent);
 
       try {
-        const { response, session: updated } = await client.createOrder(
-          currentSession,
+        const response = await client.createOrder(
+          session,
           market,
           "Buy",
           bestAsk,
@@ -82,7 +80,6 @@ async function main() {
           true,
         );
 
-        currentSession = updated;
         console.log(`Buy executed! TX: ${response.tx_id}`);
 
         if (response.orders) {
@@ -95,7 +92,7 @@ async function main() {
       } catch (error) {
         if (error instanceof O2Error) {
           console.error(`Trade failed: ${error.message}`);
-          await client.refreshNonce(currentSession);
+          await client.refreshNonce(session);
         } else {
           console.error("Unexpected error:", error);
         }

@@ -8,6 +8,8 @@
  * @module
  */
 
+import type { Signer } from "./crypto.js";
+
 // ── Identity ────────────────────────────────────────────────────────
 
 /**
@@ -934,15 +936,14 @@ export interface SessionState {
   expiry: number;
   /** Current nonce (auto-incremented after each action). */
   nonce: bigint;
-  /** Whether the owner wallet is EVM-style. */
-  isEvm: boolean;
 }
 
 /**
  * Internal wallet state managed by {@link O2Client}.
  *
- * Returned by wallet generation/loading methods and passed to
- * {@link O2Client.setupAccount} and {@link O2Client.createSession}.
+ * Extends the {@link Signer} interface with the private key and wallet
+ * metadata. Returned by wallet generation/loading methods and passed
+ * to {@link O2Client.setupAccount} and {@link O2Client.createSession}.
  *
  * @example
  * ```ts
@@ -950,11 +951,9 @@ export interface SessionState {
  * console.log(wallet.b256Address); // "0x..."
  * ```
  */
-export interface WalletState {
+export interface WalletState extends Signer {
   /** The wallet's private key (32 bytes). */
   privateKey: Uint8Array;
-  /** The wallet's b256 address (0x-prefixed, 64-char hex). */
-  b256Address: string;
   /** Whether this is an EVM-style wallet. */
   isEvm: boolean;
   /** The EVM address (only present for EVM wallets). */

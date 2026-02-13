@@ -20,13 +20,20 @@ export {
 // ── Crypto ────────────────────────────────────────────────────────
 export {
   type EvmWallet,
+  ExternalEvmSigner,
+  ExternalSigner,
   evmPersonalSign,
+  evmPersonalSignDigest,
   evmWalletFromPrivateKey,
   fuelCompactSign,
+  fuelPersonalSignDigest,
   generateEvmWallet,
   generateWallet,
   personalSign,
   rawSign,
+  type SignDigestFn,
+  type Signer,
+  toFuelCompactSignature,
   type Wallet,
   walletFromPrivateKey,
 } from "./crypto.js";
