@@ -104,10 +104,24 @@ function capitalizeSide(side: string): string {
   return side.charAt(0).toUpperCase() + side.slice(1);
 }
 
+/** Runtime guard for Numeric values coming from untyped JS callers. */
+function ensureNumeric(value: Numeric, fieldName: string): Numeric {
+  if (typeof value === "string" || typeof value === "bigint") {
+    return value;
+  }
+  throw new O2Error(`Invalid ${fieldName} type: expected string or bigint, got ${typeof value}`);
+}
+
 /** Scale a single Numeric price to a chain integer string. */
-function scaleNumericPrice(value: string | bigint, decimals: number, maxPrecision: number): string {
-  if (typeof value === "bigint") return value.toString();
-  return scalePriceString(value, decimals, maxPrecision).toString();
+function scaleNumericPrice(
+  value: Numeric,
+  decimals: number,
+  maxPrecision: number,
+  fieldName = "price",
+): string {
+  const normalized = ensureNumeric(value, fieldName);
+  if (typeof normalized === "bigint") return normalized.toString();
+  return scalePriceString(normalized, decimals, maxPrecision).toString();
 }
 
 /** Convert an OrderType (with Numeric prices) to a WireOrderType (chain integer strings). */
@@ -117,7 +131,12 @@ function scaleOrderType(ot: OrderType, market: Market): WireOrderType {
     const [price, timestamp] = ot.Limit;
     return {
       Limit: [
-        scaleNumericPrice(price, market.quote.decimals, market.quote.max_precision),
+        scaleNumericPrice(
+          price,
+          market.quote.decimals,
+          market.quote.max_precision,
+          "orderType.Limit.price",
+        ),
         timestamp,
       ],
     };
@@ -129,11 +148,13 @@ function scaleOrderType(ot: OrderType, market: Market): WireOrderType {
         ot.BoundedMarket.max_price,
         market.quote.decimals,
         market.quote.max_precision,
+        "orderType.BoundedMarket.max_price",
       ),
       min_price: scaleNumericPrice(
         ot.BoundedMarket.min_price,
         market.quote.decimals,
         market.quote.max_precision,
+        "orderType.BoundedMarket.min_price",
       ),
     },
   };
@@ -459,18 +480,24 @@ export class O2Client {
     let scaledPrice: bigint;
     let scaledQuantity: bigint;
 
-    if (typeof price === "bigint") {
-      scaledPrice = price;
+    const normalizedPrice = ensureNumeric(price, "price");
+    if (typeof normalizedPrice === "bigint") {
+      scaledPrice = normalizedPrice;
     } else {
-      scaledPrice = scalePriceString(price, resolved.quote.decimals, resolved.quote.max_precision);
+      scaledPrice = scalePriceString(
+        normalizedPrice,
+        resolved.quote.decimals,
+        resolved.quote.max_precision,
+      );
     }
 
-    if (typeof quantity === "bigint") {
-      scaledQuantity = quantity;
+    const normalizedQuantity = ensureNumeric(quantity, "quantity");
+    if (typeof normalizedQuantity === "bigint") {
+      scaledQuantity = normalizedQuantity;
       this.ensureBigIntQuantityPrecision(scaledQuantity, resolved);
     } else {
       scaledQuantity = scaleQuantityString(
-        quantity,
+        normalizedQuantity,
         resolved.base.decimals,
         resolved.base.max_precision,
       );
@@ -909,8 +936,9 @@ export class O2Client {
 
     // Scale amount
     let scaledAmount: bigint;
-    if (typeof amount === "bigint") {
-      scaledAmount = amount;
+    const normalizedAmount = ensureNumeric(amount, "amount");
+    if (typeof normalizedAmount === "bigint") {
+      scaledAmount = normalizedAmount;
     } else {
       if (decimals === undefined) {
         throw new O2Error(
@@ -918,7 +946,7 @@ export class O2Client {
         );
       }
       const { scaleDecimalString } = await import("./encoding.js");
-      scaledAmount = scaleDecimalString(amount, decimals);
+      scaledAmount = scaleDecimalString(normalizedAmount, decimals);
     }
 
     const destination = to ? { Address: to } : { Address: wallet.b256Address };
@@ -1100,22 +1128,24 @@ export class O2Client {
         let scaledPrice: bigint;
         let scaledQuantity: bigint;
 
-        if (typeof action.price === "bigint") {
-          scaledPrice = action.price;
+        const normalizedPrice = ensureNumeric(action.price, "action.price");
+        if (typeof normalizedPrice === "bigint") {
+          scaledPrice = normalizedPrice;
         } else {
           scaledPrice = scalePriceString(
-            action.price,
+            normalizedPrice,
             market.quote.decimals,
             market.quote.max_precision,
           );
         }
 
-        if (typeof action.quantity === "bigint") {
-          scaledQuantity = action.quantity;
+        const normalizedQuantity = ensureNumeric(action.quantity, "action.quantity");
+        if (typeof normalizedQuantity === "bigint") {
+          scaledQuantity = normalizedQuantity;
           this.ensureBigIntQuantityPrecision(scaledQuantity, market);
         } else {
           scaledQuantity = scaleQuantityString(
-            action.quantity,
+            normalizedQuantity,
             market.base.decimals,
             market.base.max_precision,
           );

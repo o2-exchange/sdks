@@ -218,3 +218,85 @@ describe("O2Client bigint quantity precision", () => {
     expect(submitActionsSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("O2Client runtime numeric guards", () => {
+  it("createOrder rejects JS number price with a controlled O2Error", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(client.createOrder("fFUEL/fUSDC", "buy", 1 as any, "1")).rejects.toThrow(
+      "Invalid price type: expected string or bigint, got number",
+    );
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it("batchActions rejects JS number action quantity with a controlled O2Error", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(
+      client.batchActions([
+        {
+          market: "fFUEL/fUSDC",
+          actions: [{ type: "createOrder", side: "buy", price: "1", quantity: 1 as any }],
+        },
+      ]),
+    ).rejects.toThrow("Invalid action.quantity type: expected string or bigint, got number");
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it("createOrder rejects JS number orderType price with a controlled O2Error", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(
+      client.createOrder("fFUEL/fUSDC", "buy", "1", "1", {
+        orderType: {
+          BoundedMarket: { max_price: 1 as any, min_price: "0" },
+        },
+      }),
+    ).rejects.toThrow("Invalid orderType.BoundedMarket.max_price type: expected string or bigint");
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it("withdraw rejects JS number amount with a controlled O2Error", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const { signer, personalSign } = makeSigner();
+
+    const ownerLookup: AccountInfo = {
+      trade_account_id: TRADE_ACCOUNT_ID,
+      trade_account: null,
+      session: null,
+    };
+    const nonceLookup: AccountInfo = {
+      trade_account_id: TRADE_ACCOUNT_ID,
+      trade_account: {
+        last_modification: 0,
+        nonce: 5n,
+        owner: { Address: OWNER },
+      },
+      session: null,
+    };
+
+    vi.spyOn(client.api, "getAccount")
+      .mockResolvedValueOnce(ownerLookup)
+      .mockResolvedValueOnce(nonceLookup);
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const withdrawSpy = vi.spyOn(client.api, "withdraw");
+
+    await expect(client.withdraw(signer, "fFUEL", 1 as any)).rejects.toThrow(
+      "Invalid amount type: expected string or bigint, got number",
+    );
+    expect(withdrawSpy).not.toHaveBeenCalled();
+    expect(personalSign).not.toHaveBeenCalled();
+  });
+});
