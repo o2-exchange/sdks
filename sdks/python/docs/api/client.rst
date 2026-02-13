@@ -263,19 +263,19 @@ Trading
 .. method:: O2Client.cancel_all_orders(session, market)
    :async:
 
-   Cancel all open orders for a market (up to 5 per batch).
+   Cancel all open orders for a market.
 
-   Fetches the most recent open orders and cancels them in a single
-   batch transaction. If you have more than 5 open orders, call this
-   method repeatedly.
+   Fetches up to 200 open orders and cancels them in batches of 5.
+   Returns a list of :class:`~o2_sdk.models.ActionsResponse` (one per
+   batch), or an empty list if there are no open orders.
 
    :param session: An active trading session.
    :type session: :class:`~o2_sdk.models.SessionInfo`
    :param market: Market pair string.
    :type market: str
-   :returns: The action result, or a no-op response if there are no
-       open orders.
-   :rtype: :class:`~o2_sdk.models.ActionsResponse`
+   :returns: A list of action results (one per batch of up to 5
+       cancellations), or an empty list if there are no open orders.
+   :rtype: list[:class:`~o2_sdk.models.ActionsResponse`]
 
 .. method:: O2Client.settle_balance(session, market)
    :async:

@@ -31,7 +31,7 @@ For Fuel-native accounts:
 
 .. code-block:: python
 
-   from o2_sdk import O2Client, Network, ExternalSigner, to_fuel_compact_signature
+   from o2_sdk import O2Client, Network, OrderSide, ExternalSigner, to_fuel_compact_signature
 
    def my_kms_sign(digest: bytes) -> bytes:
        """Sign a 32-byte digest using your KMS/HSM."""
@@ -49,7 +49,7 @@ For Fuel-native accounts:
            owner=signer, markets=["FUEL/USDC"]
        )
        result = await client.create_order(
-           session, "FUEL/USDC", "Buy", 0.02, 100.0
+           session, "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
 
 The SDK will call ``my_kms_sign`` with a Fuel-prefixed SHA-256 digest
