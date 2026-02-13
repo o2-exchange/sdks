@@ -329,7 +329,7 @@ export interface DepthUpdate {
   /** Incremental changes (present on updates). */
   changes?: { buys: DepthLevel[]; sells: DepthLevel[] };
   /** Full order book view (present on snapshots). */
-  view?: { buys: DepthLevel[]; sells: DepthLevel[] };
+  view?: { precision?: number; buys: DepthLevel[]; sells: DepthLevel[] };
   /** Market identifier. */
   market_id: MarketId;
   /** On-chain timestamp. */
@@ -628,6 +628,8 @@ export interface OrderBookBalance {
   locked: bigint;
   /** Amount available for new orders (chain integer). */
   unlocked: bigint;
+  /** Accumulated fees (chain integer). */
+  fee: bigint;
 }
 
 /**
@@ -1337,6 +1339,7 @@ export function parseOrderBookBalance(raw: Record<string, unknown>): OrderBookBa
   return {
     locked: parseBigInt(raw.locked),
     unlocked: parseBigInt(raw.unlocked),
+    fee: parseBigInt(raw.fee),
   };
 }
 
@@ -1428,6 +1431,7 @@ export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
   if (raw.view) {
     const view = raw.view as Record<string, unknown>;
     result.view = {
+      precision: typeof view.precision === "number" ? view.precision : undefined,
       buys: ((view.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
       sells: ((view.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
     };

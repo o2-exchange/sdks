@@ -11,10 +11,13 @@ import {
   type Market,
   type MarketsResponse,
   type Order,
+  parseBalanceResponse,
   parseBigInt,
   parseDepthLevel,
+  parseDepthUpdate,
   parseDesiredQuantity,
   parseOrder,
+  parseOrderBookBalance,
   parseTrade,
   scalePriceForMarket,
   scaleQuantityForMarket,
@@ -151,7 +154,7 @@ describe("Models Module", () => {
     it("parses balance response", () => {
       const balance: BalanceResponse = {
         order_books: {
-          "0x9ad52fb8": { locked: "2000000000", unlocked: "34878720000" },
+          "0x9ad52fb8": { locked: "2000000000", unlocked: "34878720000", fee: "500000" },
         },
         total_locked: "2000000000",
         total_unlocked: "34878720000",
@@ -383,6 +386,75 @@ describe("Models Module", () => {
         expect(trade.price).toBe(0n);
         expect(trade.quantity).toBe(0n);
         expect(trade.total).toBe(0n);
+      });
+    });
+
+    describe("parseOrderBookBalance", () => {
+      it("parses locked, unlocked, and fee", () => {
+        const bal = parseOrderBookBalance({
+          locked: "2000000000",
+          unlocked: "34878720000",
+          fee: "500000",
+        });
+        expect(bal.locked).toBe(2000000000n);
+        expect(bal.unlocked).toBe(34878720000n);
+        expect(bal.fee).toBe(500000n);
+      });
+    });
+
+    describe("parseBalanceResponse", () => {
+      it("parses order_books with fee field", () => {
+        const bal = parseBalanceResponse({
+          order_books: {
+            "0x9ad52fb8": { locked: "100", unlocked: "200", fee: "10" },
+          },
+          total_locked: "100",
+          total_unlocked: "200",
+          trading_account_balance: "300",
+        });
+        expect(bal.order_books["0x9ad52fb8"].fee).toBe(10n);
+      });
+    });
+
+    describe("parseDepthUpdate", () => {
+      it("parses view with precision", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth",
+          market_id: "0xabc",
+          view: {
+            precision: 3,
+            buys: [{ price: "100", quantity: "50" }],
+            sells: [{ price: "200", quantity: "30" }],
+          },
+        });
+        expect(update.view?.precision).toBe(3);
+        expect(update.view?.buys[0].price).toBe(100n);
+        expect(update.view?.sells[0].price).toBe(200n);
+      });
+
+      it("parses view without precision", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth",
+          market_id: "0xabc",
+          view: {
+            buys: [],
+            sells: [],
+          },
+        });
+        expect(update.view?.precision).toBeUndefined();
+      });
+
+      it("parses changes (no view)", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth_update",
+          market_id: "0xabc",
+          changes: {
+            buys: [{ price: "100", quantity: "50" }],
+            sells: [],
+          },
+        });
+        expect(update.view).toBeUndefined();
+        expect(update.changes?.buys[0].price).toBe(100n);
       });
     });
   });
