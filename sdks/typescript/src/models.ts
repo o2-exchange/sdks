@@ -1236,7 +1236,7 @@ export function parseBigInt(value: unknown): bigint {
   if (typeof value === "bigint") return value;
   if (typeof value === "number") return BigInt(value);
   if (typeof value === "string") return BigInt(value);
-  return 0n;
+  throw new TypeError(`Cannot convert ${typeof value} to bigint: ${JSON.stringify(value)}`);
 }
 
 /** Parse a raw API order object into a typed {@link Order}. */
