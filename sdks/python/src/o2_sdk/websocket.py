@@ -33,6 +33,7 @@ class O2WebSocket:
     Features:
     - Auto-reconnect with exponential backoff
     - Subscription tracking and automatic re-subscribe on reconnect
+    - Per-subscriber message queues for safe concurrent access
     - Heartbeat ping/pong to detect silent disconnections
     - Configurable max reconnect attempts
     """
@@ -47,7 +48,9 @@ class O2WebSocket:
         self._config = config
         self._ws: ClientConnection | None = None
         self._subscriptions: list[dict] = []
-        self._message_queues: dict[str, asyncio.Queue] = {}
+        # Per-subscriber fan-out: each stream_*() call registers its own queue.
+        # Key = action queue key (e.g. "depth", "orders"), value = list of queues.
+        self._subscriber_queues: dict[str, list[asyncio.Queue]] = {}
         self._listener_task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
         self._connected = False
@@ -129,9 +132,8 @@ class O2WebSocket:
                     "Max reconnect attempts (%d) reached, stopping",
                     self._max_reconnect_attempts,
                 )
-                # Signal all queues to stop
-                for q in self._message_queues.values():
-                    await q.put(None)
+                # Signal all subscriber queues to stop
+                self._signal_all_queues(None)
                 return
             self._reconnect_attempts += 1
             logger.info(
@@ -163,9 +165,15 @@ class O2WebSocket:
         if self._ws:
             await self._ws.close()
             self._ws = None
-        # Signal all queues to stop
-        for q in self._message_queues.values():
-            await q.put(None)
+        # Signal all subscriber queues to stop
+        self._signal_all_queues(None)
+
+    def _signal_all_queues(self, sentinel: object) -> None:
+        """Push a sentinel value to every subscriber queue."""
+        for queues in self._subscriber_queues.values():
+            for q in queues:
+                with contextlib.suppress(asyncio.QueueFull):
+                    q.put_nowait(sentinel)
 
     async def _send(self, message: dict) -> None:
         if self._ws:
@@ -195,14 +203,20 @@ class O2WebSocket:
                 await self._reconnect()
 
     def _dispatch(self, action: str, data: dict) -> None:
-        # Route messages to the appropriate queue based on action
+        """Route messages to all subscriber queues for the matching action type."""
         key = self._action_to_queue_key(action)
-        if key and key in self._message_queues:
-            try:
-                self._message_queues[key].put_nowait(data)
-                logger.debug("WS dispatched %s -> %s queue", action, key)
-            except asyncio.QueueFull:
-                logger.warning("Queue full for %s, dropping message", key)
+        if key and key in self._subscriber_queues:
+            for q in self._subscriber_queues[key]:
+                try:
+                    q.put_nowait(data)
+                except asyncio.QueueFull:
+                    logger.warning("Subscriber queue full for %s, dropping message", key)
+            logger.debug(
+                "WS dispatched %s -> %d %s subscriber(s)",
+                action,
+                len(self._subscriber_queues[key]),
+                key,
+            )
         elif key is None and action:
             logger.warning("WS unhandled action: %s", action)
 
@@ -211,18 +225,29 @@ class O2WebSocket:
             return "depth"
         elif action == "subscribe_orders":
             return "orders"
-        elif action in ("subscribe_trades"):
+        elif action == "subscribe_trades":
             return "trades"
         elif action == "subscribe_balances":
             return "balances"
-        elif action in ("subscribe_nonce"):
+        elif action == "subscribe_nonce":
             return "nonce"
         return None
 
-    def _get_queue(self, key: str) -> asyncio.Queue:
-        if key not in self._message_queues:
-            self._message_queues[key] = asyncio.Queue(maxsize=1000)
-        return self._message_queues[key]
+    def _register_queue(self, key: str) -> asyncio.Queue:
+        """Create and register a new subscriber queue for the given action key."""
+        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        if key not in self._subscriber_queues:
+            self._subscriber_queues[key] = []
+        self._subscriber_queues[key].append(q)
+        return q
+
+    def _unregister_queue(self, key: str, q: asyncio.Queue) -> None:
+        """Remove a subscriber queue when the consumer exits."""
+        if key in self._subscriber_queues:
+            with contextlib.suppress(ValueError):
+                self._subscriber_queues[key].remove(q)
+            if not self._subscriber_queues[key]:
+                del self._subscriber_queues[key]
 
     def _add_subscription(self, sub: dict) -> None:
         """Add a subscription for reconnect tracking, deduplicating by content."""
@@ -244,62 +269,77 @@ class O2WebSocket:
         }
         self._add_subscription(sub)
         await self._send(sub)
-        queue = self._get_queue("depth")
-        while self._should_run:
-            msg = await queue.get()
-            if msg is None:
-                return
-            if msg.get("market_id") == market_id:
-                yield DepthUpdate.from_dict(msg)
+        queue = self._register_queue("depth")
+        try:
+            while self._should_run:
+                msg = await queue.get()
+                if msg is None:
+                    return
+                if msg.get("market_id") == market_id:
+                    yield DepthUpdate.from_dict(msg)
+        finally:
+            self._unregister_queue("depth", queue)
 
     async def stream_orders(self, identities: list[dict]) -> AsyncIterator[OrderUpdate]:
         """Subscribe to order updates for the given identities."""
         sub = {"action": "subscribe_orders", "identities": identities}
         self._add_subscription(sub)
         await self._send(sub)
-        queue = self._get_queue("orders")
-        while self._should_run:
-            msg = await queue.get()
-            if msg is None:
-                return
-            yield OrderUpdate.from_dict(msg)
+        queue = self._register_queue("orders")
+        try:
+            while self._should_run:
+                msg = await queue.get()
+                if msg is None:
+                    return
+                yield OrderUpdate.from_dict(msg)
+        finally:
+            self._unregister_queue("orders", queue)
 
     async def stream_trades(self, market_id: str) -> AsyncIterator[TradeUpdate]:
         """Subscribe to trade updates for the given market."""
         sub = {"action": "subscribe_trades", "market_id": market_id}
         self._add_subscription(sub)
         await self._send(sub)
-        queue = self._get_queue("trades")
-        while self._should_run:
-            msg = await queue.get()
-            if msg is None:
-                return
-            if msg.get("market_id") == market_id:
-                yield TradeUpdate.from_dict(msg)
+        queue = self._register_queue("trades")
+        try:
+            while self._should_run:
+                msg = await queue.get()
+                if msg is None:
+                    return
+                if msg.get("market_id") == market_id:
+                    yield TradeUpdate.from_dict(msg)
+        finally:
+            self._unregister_queue("trades", queue)
 
     async def stream_balances(self, identities: list[dict]) -> AsyncIterator[BalanceUpdate]:
         """Subscribe to balance updates for the given identities."""
         sub = {"action": "subscribe_balances", "identities": identities}
         self._add_subscription(sub)
         await self._send(sub)
-        queue = self._get_queue("balances")
-        while self._should_run:
-            msg = await queue.get()
-            if msg is None:
-                return
-            yield BalanceUpdate.from_dict(msg)
+        queue = self._register_queue("balances")
+        try:
+            while self._should_run:
+                msg = await queue.get()
+                if msg is None:
+                    return
+                yield BalanceUpdate.from_dict(msg)
+        finally:
+            self._unregister_queue("balances", queue)
 
     async def stream_nonce(self, identities: list[dict]) -> AsyncIterator[NonceUpdate]:
         """Subscribe to nonce updates for the given identities."""
         sub = {"action": "subscribe_nonce", "identities": identities}
         self._add_subscription(sub)
         await self._send(sub)
-        queue = self._get_queue("nonce")
-        while self._should_run:
-            msg = await queue.get()
-            if msg is None:
-                return
-            yield NonceUpdate.from_dict(msg)
+        queue = self._register_queue("nonce")
+        try:
+            while self._should_run:
+                msg = await queue.get()
+                if msg is None:
+                    return
+                yield NonceUpdate.from_dict(msg)
+        finally:
+            self._unregister_queue("nonce", queue)
 
     # -----------------------------------------------------------------------
     # Unsubscribe methods
