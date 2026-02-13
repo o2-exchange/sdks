@@ -911,6 +911,11 @@ export class O2Client {
     if (typeof amount === "bigint") {
       scaledAmount = amount;
     } else {
+      if (decimals === undefined) {
+        throw new O2Error(
+          `Cannot scale string amount for unknown asset ${assetId}. Pass amount as a pre-scaled bigint, or use a known asset symbol.`,
+        );
+      }
       const { scaleDecimalString } = await import("./encoding.js");
       scaledAmount = scaleDecimalString(amount, decimals);
     }
@@ -1040,7 +1045,7 @@ export class O2Client {
   private resolveAsset(
     data: MarketsResponse,
     symbolOrId: string,
-  ): { assetId: AssetId; decimals: number } {
+  ): { assetId: AssetId; decimals: number | undefined } {
     // If it looks like a hex ID, return directly
     if (symbolOrId.startsWith("0x")) {
       for (const m of data.markets) {
@@ -1049,8 +1054,8 @@ export class O2Client {
         if (m.quote.asset === symbolOrId)
           return { assetId: m.quote.asset, decimals: m.quote.decimals };
       }
-      // Return with default decimals if not found in markets
-      return { assetId: toAssetId(symbolOrId), decimals: 9 };
+      // Unknown hex asset — caller must provide pre-scaled bigint amount
+      return { assetId: toAssetId(symbolOrId), decimals: undefined };
     }
 
     // Search by symbol name (case-insensitive)
