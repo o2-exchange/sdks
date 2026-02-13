@@ -211,11 +211,11 @@ class O2WebSocket:
             return "depth"
         elif action == "subscribe_orders":
             return "orders"
-        elif action == "trades":
+        elif action in ("subscribe_trades"):
             return "trades"
         elif action == "subscribe_balances":
             return "balances"
-        elif action == "nonce":
+        elif action in ("subscribe_nonce"):
             return "nonce"
         return None
 
