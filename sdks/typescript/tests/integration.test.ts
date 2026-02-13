@@ -6,10 +6,9 @@
  *
  * # Order Book Pollution & Pricing Strategy
  *
- * Integration tests create ephemeral accounts (new wallets each run), so orders
- * from prior runs can never be cancelled. Over time, orphaned orders accumulate
- * at whatever prices tests used. All pricing strategies must tolerate an
- * arbitrary number of stale orders on the book.
+ * Integration tests persist maker/taker wallets in a local gitignored file to
+ * speed up repeated runs and reduce faucet dependence. Because accounts are
+ * reused, cleanup at startup is important to remove stale open orders.
  *
  * ## Non-fill tests: PostOnly Buy at minimum price step
  *
@@ -40,11 +39,64 @@
  * and rounding without rejection.
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Network, type Numeric, O2Client } from "../src/index.js";
 import type { Market, SessionActionsResponse, TradeAccountId, WalletState } from "../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
+const INTEGRATION_WALLETS_FILE = fileURLToPath(
+  new URL("../.integration-wallets.json", import.meta.url),
+);
+
+interface PersistedIntegrationWallets {
+  makerPrivateKey: string;
+  takerPrivateKey: string;
+}
+
+function isPrivateKeyHex(value: unknown): value is string {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
+function privateKeyToHex(privateKey: Uint8Array): string {
+  return `0x${Array.from(privateKey)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function loadOrCreateIntegrationWallets(): { makerWallet: WalletState; takerWallet: WalletState } {
+  if (existsSync(INTEGRATION_WALLETS_FILE)) {
+    try {
+      const raw = JSON.parse(
+        readFileSync(INTEGRATION_WALLETS_FILE, "utf8"),
+      ) as Partial<PersistedIntegrationWallets>;
+      if (isPrivateKeyHex(raw.makerPrivateKey) && isPrivateKeyHex(raw.takerPrivateKey)) {
+        return {
+          makerWallet: O2Client.loadWallet(raw.makerPrivateKey),
+          takerWallet: O2Client.loadWallet(raw.takerPrivateKey),
+        };
+      }
+      console.error(
+        `[integration] wallet cache at ${INTEGRATION_WALLETS_FILE} is invalid, regenerating`,
+      );
+    } catch (error) {
+      console.error(
+        `[integration] failed to read wallet cache at ${INTEGRATION_WALLETS_FILE}, regenerating: ${String(error)}`,
+      );
+    }
+  }
+
+  const makerWallet = O2Client.generateWallet();
+  const takerWallet = O2Client.generateWallet();
+  const persisted: PersistedIntegrationWallets = {
+    makerPrivateKey: privateKeyToHex(makerWallet.privateKey),
+    takerPrivateKey: privateKeyToHex(takerWallet.privateKey),
+  };
+  writeFileSync(INTEGRATION_WALLETS_FILE, `${JSON.stringify(persisted, null, 2)}\n`);
+  console.error(`[integration] wrote wallet cache to ${INTEGRATION_WALLETS_FILE}`);
+  return { makerWallet, takerWallet };
+}
 
 /**
  * Compute the minimum quantity (as human-readable string) that satisfies
@@ -160,7 +212,28 @@ async function createOrderWithWhitelistRetry(
   throw new Error("unreachable");
 }
 
-async function setupWithRetry(
+async function ensureAccount(
+  client: O2Client,
+  wallet: WalletState,
+): Promise<{ tradeAccountId: TradeAccountId; nonce: bigint }> {
+  const existing = await client.api.getAccount({ owner: wallet.b256Address });
+
+  let tradeAccountId = existing.trade_account_id;
+  if (!tradeAccountId) {
+    const created = await client.api.createAccount({ Address: wallet.b256Address });
+    tradeAccountId = created.trade_account_id;
+  }
+
+  await whitelistWithRetry(client.api, tradeAccountId, 2);
+
+  const info = await client.api.getAccount({ tradeAccountId });
+  return {
+    tradeAccountId,
+    nonce: info.trade_account?.nonce ?? 0n,
+  };
+}
+
+async function ensureAccountWithRetry(
   client: O2Client,
   wallet: WalletState,
   maxRetries = 4,
@@ -181,17 +254,17 @@ async function setupWithRetry(
 
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await client.setupAccount(wallet);
+      return await ensureAccount(client, wallet);
     } catch (error: unknown) {
       lastError = error;
       console.error(
-        `[integration] setupAccount attempt ${attempt + 1}/${maxRetries} failed for ${wallet.b256Address.slice(0, 12)}...: ${formatError(error)}`,
+        `[integration] ensureAccount attempt ${attempt + 1}/${maxRetries} failed for ${wallet.b256Address.slice(0, 12)}...: ${formatError(error)}`,
       );
       if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
   throw new Error(
-    `setupAccount failed after retries. Last error: ${lastError ? formatError(lastError) : "unknown"}`,
+    `ensureAccount failed after retries. Last error: ${lastError ? formatError(lastError) : "unknown"}`,
   );
 }
 
@@ -240,14 +313,13 @@ describe.skipIf(!INTEGRATION)("integration", () => {
   let takerTradeAccountId: TradeAccountId;
 
   beforeAll(async () => {
-    // Generate wallets upfront
-    makerWallet = O2Client.generateWallet();
-    takerWallet = O2Client.generateWallet();
+    // Load persistent maker/taker wallets (or create on first run)
+    ({ makerWallet, takerWallet } = loadOrCreateIntegrationWallets());
 
-    // Set up both accounts in parallel — setupAccount already does mint + whitelist internally
+    // Ensure both accounts exist/are whitelisted, without unconditional faucet mints
     const [maker, taker] = await Promise.all([
-      setupWithRetry(makerClient, makerWallet),
-      setupWithRetry(takerClient, takerWallet),
+      ensureAccountWithRetry(makerClient, makerWallet),
+      ensureAccountWithRetry(takerClient, takerWallet),
     ]);
     makerTradeAccountId = maker.tradeAccountId;
     takerTradeAccountId = taker.tradeAccountId;
@@ -255,6 +327,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     // Verify both accounts have sufficient balances (runs ensureFunded in parallel per account)
     const markets = await makerClient.getMarkets();
     const market = markets[0];
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await cleanupOpenOrders(takerClient, takerWallet, market);
     const baseSymbol = market.base.symbol;
     const quoteSymbol = market.quote.symbol;
     await Promise.all([
