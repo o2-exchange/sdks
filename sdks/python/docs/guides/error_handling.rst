@@ -52,11 +52,11 @@ Basic error handling
 
 .. code-block:: python
 
-   from o2_sdk import O2Error
+   from o2_sdk import O2Error, OrderSide
 
    try:
        result = await client.create_order(
-           session, "fFUEL/fUSDC", "Buy", 0.02, 100.0
+           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except O2Error as e:
        print(f"Error: {e.message} (code={e.code})")
@@ -78,7 +78,7 @@ Catching specific errors
 
    try:
        result = await client.create_order(
-           session, "fFUEL/fUSDC", "Buy", 0.02, 100.0
+           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except SessionExpired:
        # The session has expired — create a new one
@@ -86,7 +86,7 @@ Catching specific errors
            owner=owner, markets=["fFUEL/fUSDC"]
        )
        result = await client.create_order(
-           session, "fFUEL/fUSDC", "Buy", 0.02, 100.0
+           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except InvalidSignature:
        # Signing verification failed — check your key/signer setup
@@ -192,8 +192,9 @@ A production-grade pattern with error recovery:
 .. code-block:: python
 
    import asyncio
+   import os
    from o2_sdk import (
-       O2Client, Network, O2Error,
+       O2Client, Network, O2Error, OrderSide, OrderType,
        SessionExpired, OnChainRevert, RateLimitExceeded,
    )
 
@@ -208,8 +209,8 @@ A production-grade pattern with error recovery:
        while True:
            try:
                result = await client.create_order(
-                   session, "FUEL/USDC", "Buy", 0.02, 100.0,
-                   order_type="PostOnly",
+                   session, "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
+                   order_type=OrderType.POST_ONLY,
                )
                print(f"Order placed: {result.tx_id}")
 

@@ -5,7 +5,7 @@
 <h1 align="center">O2 SDK for Rust</h1>
 
 <p align="center">
-  <a href="https://github.com/o2-exchange/contracts/actions/workflows/ci.yml"><img src="https://github.com/o2-exchange/contracts/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/o2-exchange/sdks/actions/workflows/ci.yml"><img src="https://github.com/o2-exchange/sdks/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://rust-lang.org"><img src="https://img.shields.io/badge/rust-1.75+-orange.svg" alt="Rust 1.75+"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-o2-sdk = { git = "https://github.com/o2-exchange/contracts", path = "sdks/rust" }
+o2-sdk = { git = "https://github.com/o2-exchange/sdks.git", path = "sdks/rust" }
 tokio = { version = "1", features = ["full"] }
 ```
 
@@ -31,7 +31,7 @@ tokio = { version = "1", features = ["full"] }
 ## Quick Start
 
 ```rust
-use o2_sdk::{O2Client, Network};
+use o2_sdk::{O2Client, Network, Side, OrderType};
 
 #[tokio::main]
 async fn main() -> Result<(), o2_sdk::O2Error> {
@@ -40,7 +40,8 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let account = client.setup_account(&wallet).await?;
     let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
     let order = client.create_order(
-        &mut session, "fFUEL/fUSDC", "Buy", 0.05, 100.0, "Spot", true, true,
+        &mut session, "fFUEL/fUSDC", Side::Buy, 0.05.into(), 100.0.into(),
+        OrderType::Spot, true, true,
     ).await?;
     println!("tx: {}", order.tx_id.unwrap_or_default());
     Ok(())

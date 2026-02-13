@@ -20,7 +20,7 @@
 | Language | Min Version | Async Runtime | Signing Library | Install |
 |----------|------------|---------------|-----------------|---------|
 | [Python](sdks/python/) | 3.10+ | `asyncio` | `coincurve` | `pip install o2-sdk` |
-| [TypeScript](sdks/typescript/) | Node 18+ | native `async/await` | `@noble/secp256k1` | `npm install o2-sdk` |
+| [TypeScript](sdks/typescript/) | Node 18+ | native `async/await` | `@noble/secp256k1` | `npm install @o2exchange/sdk` |
 | [Rust](sdks/rust/) | 1.75+ | `tokio` | `secp256k1` | git dependency |
 
 ## ✨ Features
@@ -40,14 +40,14 @@ All three SDKs share the same capabilities:
 
 ```python
 import asyncio
-from o2_sdk import O2Client, Network
+from o2_sdk import O2Client, Network, OrderSide
 
 async def main():
     client = O2Client(network=Network.TESTNET)
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order(session, "fFUEL/fUSDC", "Buy", price=0.02, quantity=100.0)
+    result = await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0)
     print(f"Created order with transaction ID {result.tx_id}")
     await client.close()
 
@@ -57,7 +57,7 @@ asyncio.run(main())
 ### TypeScript
 
 ```ts
-import { O2Client, Network } from "o2-sdk";
+import { O2Client, Network } from "@o2exchange/sdk";
 
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = client.generateWallet();
@@ -70,7 +70,7 @@ console.log(response.tx_id);
 ### Rust
 
 ```rust
-use o2_sdk::{O2Client, Network};
+use o2_sdk::{O2Client, Network, Side, OrderType};
 
 #[tokio::main]
 async fn main() -> Result<(), o2_sdk::O2Error> {
@@ -79,7 +79,8 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let account = client.setup_account(&wallet).await?;
     let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
     let order = client.create_order(
-        &mut session, "fFUEL/fUSDC", "Buy", 0.05, 100.0, "Spot", true, true,
+        &mut session, "fFUEL/fUSDC", Side::Buy, 0.05.into(), 100.0.into(),
+        OrderType::Spot, true, true,
     ).await?;
     Ok(())
 }
@@ -153,7 +154,7 @@ just integration rust
 ## 📁 Repository Structure
 
 ```
-sdks/
+.
 ├── abi/
 │   ├── mainnet/          # Mainnet contract ABIs
 │   └── testnet/          # Testnet contract ABIs

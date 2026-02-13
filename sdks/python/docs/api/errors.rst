@@ -201,7 +201,7 @@ Error handling patterns
 .. code-block:: python
 
    from o2_sdk import (
-       O2Error,
+       O2Error, OrderSide,
        InvalidSignature,
        RateLimitExceeded,
        OnChainRevert,
@@ -210,13 +210,13 @@ Error handling patterns
 
    try:
        result = await client.create_order(
-           session, "fFUEL/fUSDC", "Buy", 0.02, 100.0
+           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except SessionExpired:
        # Create a new session
        session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
        result = await client.create_order(
-           session, "fFUEL/fUSDC", "Buy", 0.02, 100.0
+           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except InvalidSignature:
        # Check signing logic

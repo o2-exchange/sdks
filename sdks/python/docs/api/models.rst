@@ -25,23 +25,22 @@ Enums
 
    Type of an order (simple types without additional parameters).
 
+   For order types that require additional parameters, use the dedicated
+   dataclasses instead: :class:`LimitOrder` (for limit orders with
+   price + timestamp) or :class:`BoundedMarketOrder` (for bounded market
+   orders with max_price + min_price).
+
    .. attribute:: SPOT
       :value: "Spot"
 
    .. attribute:: MARKET
       :value: "Market"
 
-   .. attribute:: LIMIT
-      :value: "Limit"
-
    .. attribute:: FILL_OR_KILL
       :value: "FillOrKill"
 
    .. attribute:: POST_ONLY
       :value: "PostOnly"
-
-   .. attribute:: BOUNDED_MARKET
-      :value: "BoundedMarket"
 
 
 Order type parameter classes
@@ -538,7 +537,7 @@ Trade models
    A completed trade on the exchange.
 
    .. attribute:: trade_id
-      :type: Id
+      :type: str
 
       The unique trade identifier.
 
