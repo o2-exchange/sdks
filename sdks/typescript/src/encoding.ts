@@ -422,6 +422,9 @@ export function actionToCall(
  * ```
  */
 export function scaleDecimalString(value: string, decimals: number): bigint {
+  if (!/^-?(?:\d+|\d+\.\d*|\.\d+)$/.test(value)) {
+    throw new TypeError(`Invalid decimal string: ${value}`);
+  }
   const [whole = "0", frac = ""] = value.split(".");
   const paddedFrac = frac.slice(0, decimals).padEnd(decimals, "0");
   return BigInt((whole || "0") + paddedFrac);
