@@ -44,8 +44,8 @@ import {
   O2Client,
   Network,
   ExternalSigner,
-  toFuelCompactSignature,
 } from "@o2exchange/sdk";
+import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
 function myKmsSign(digest: Uint8Array): Uint8Array {
   const { r, s, recoveryId } = myKms.sign("my-key-id", digest);
@@ -59,7 +59,7 @@ await client.setupAccount(signer);
 await client.createSession(signer, ["FUEL/USDC"]);
 
 // Session actions use the session key — not the external signer
-const response = await client.createOrder("FUEL/USDC", "Buy", "0.02", "100");
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 ```
 
 > **Important:** Session **actions** (orders, cancels, settlements) are
@@ -74,7 +74,7 @@ For EVM-compatible accounts (MetaMask, Ledger via Ethereum, etc.), use
 `\x19Fuel Signed Message:\n` prefix + SHA-256:
 
 ```ts
-import { ExternalEvmSigner, toFuelCompactSignature } from "@o2exchange/sdk";
+import { ExternalEvmSigner } from "@o2exchange/sdk";
 
 const signer = new ExternalEvmSigner(
   "0x000000000000000000000000abcd...1234", // b256 (zero-padded)
@@ -93,7 +93,7 @@ Use `toFuelCompactSignature` to convert from standard `(r, s, recoveryId)`
 components:
 
 ```ts
-import { toFuelCompactSignature } from "@o2exchange/sdk";
+import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
 function signDigest(digest: Uint8Array): Uint8Array {
   const r: Uint8Array = ...;   // 32 bytes
@@ -120,7 +120,8 @@ s[0] = (recoveryId << 7) | (s[0] & 0x7F)
 
 ```ts
 import { KMSClient, SignCommand } from "@aws-sdk/client-kms";
-import { ExternalSigner, toFuelCompactSignature } from "@o2exchange/sdk";
+import { ExternalSigner } from "@o2exchange/sdk";
+import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
 const kms = new KMSClient({ region: "us-east-1" });
 
@@ -148,8 +149,8 @@ Use the digest helpers to ensure your framing matches the SDK:
 ```ts
 import {
   type Signer,
-  fuelPersonalSignDigest,
 } from "@o2exchange/sdk";
+import { fuelPersonalSignDigest } from "@o2exchange/sdk/internals";
 
 class MyCustomSigner implements Signer {
   readonly b256Address: string;

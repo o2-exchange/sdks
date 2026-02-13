@@ -30,11 +30,11 @@ Requires **Node.js 18+**. Ships with dual ESM + CJS output.
 import { O2Client, Network } from "@o2exchange/sdk";
 
 const client = new O2Client({ network: Network.TESTNET });
-const wallet = client.generateWallet();
-const { tradeAccountId } = await client.setupAccount(wallet);
-const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
-const { response } = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
-console.log(response.tx_id);
+const wallet = O2Client.generateWallet();
+await client.setupAccount(wallet);
+await client.createSession(wallet, ["fFUEL/fUSDC"]);
+const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+console.log(response.txId);
 ```
 
 ## Features
@@ -51,21 +51,23 @@ console.log(response.tx_id);
 
 | Method | Description |
 |--------|-------------|
-| `generateWallet()` / `loadWallet(hex)` | Create or load a Fuel wallet |
-| `generateEvmWallet()` / `loadEvmWallet(hex)` | Create or load an EVM wallet |
+| `O2Client.generateWallet()` / `O2Client.loadWallet(hex)` | Create or load a Fuel wallet |
+| `O2Client.generateEvmWallet()` / `O2Client.loadEvmWallet(hex)` | Create or load an EVM wallet |
 | `setupAccount(wallet)` | Idempotent account setup |
-| `createSession(wallet, tradeAccountId, markets)` | Create a trading session |
-| `createOrder(session, market, side, price, qty)` | Place an order |
-| `cancelOrder(session, orderId, market)` | Cancel a specific order |
-| `cancelAllOrders(session, market)` | Cancel all open orders |
-| `settleBalance(session, market)` | Settle filled order proceeds |
-| `batchActions(session, actions, market, registryId)` | Submit raw action batch |
+| `setSession(session)` | Restore a serialized session onto the client |
+| `createSession(wallet, markets, expiryDays?)` | Create and store a trading session |
+| `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
+| `cancelOrder(orderId, market)` | Cancel a specific order |
+| `cancelAllOrders(market)` | Cancel all open orders |
+| `settleBalance(market)` | Settle filled order proceeds |
+| `batchActions(marketActions, collectOrders?)` | Submit type-safe action batches |
 | `getMarkets()` / `getMarket(pair)` | Fetch market info |
 | `getDepth(market)` / `getTrades(market)` | Order book and trade data |
 | `getBalances(tradeAccountId)` / `getOrders(id, market)` | Account data |
 | `streamDepth(market)` | Real-time order book stream |
 | `streamOrders(id)` / `streamTrades(market)` | Real-time updates |
-| `withdraw(wallet, tradeAccountId, assetId, amount)` | Withdraw funds |
+| `refreshNonce()` | Re-sync the stored session nonce |
+| `withdraw(wallet, asset, amount, to?)` | Withdraw funds |
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
 

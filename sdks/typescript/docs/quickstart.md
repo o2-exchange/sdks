@@ -102,7 +102,7 @@ Prices and quantities accept dual-mode `Numeric` values:
 ```ts
 const response = await client.createOrder(
   "fFUEL/fUSDC",
-  "Buy",
+  "buy",
   "0.02",   // price (human-readable string, auto-scaled)
   "100",    // quantity
 );
@@ -148,7 +148,7 @@ async function main() {
   await client.createSession(wallet, ["fFUEL/fUSDC"]);
 
   // Place order (string prices, auto-scaled — session used implicitly)
-  const response = await client.createOrder("fFUEL/fUSDC", "Buy", "0.02", "100");
+  const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
   if (response.success) {
     console.log(`txId=${response.txId}`);
   }
