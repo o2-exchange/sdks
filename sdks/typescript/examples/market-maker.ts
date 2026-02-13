@@ -81,8 +81,6 @@ async function main() {
   // Market maker loop
   console.log("Starting market maker loop...");
 
-  let currentSession = session;
-
   for (let cycle = 0; ; cycle++) {
     try {
       console.log(`\n--- Cycle ${cycle + 1} ---`);
@@ -151,22 +149,21 @@ async function main() {
       const marketActions: MarketActions[] = [{ market_id: market.market_id, actions }];
 
       const result = await client.batchActions(
-        currentSession,
+        session,
         marketActions,
         market,
         (await client.api.getMarkets()).accounts_registry_id,
         true, // collect_orders
       );
 
-      currentSession = result.session;
-      console.log(`TX: ${result.response.tx_id}`);
+      console.log(`TX: ${result.tx_id}`);
 
       // Track new order IDs
       activeBuyId = null;
       activeSellId = null;
 
-      if (result.response.orders) {
-        for (const order of result.response.orders) {
+      if (result.orders) {
+        for (const order of result.orders) {
           if (order.side === "Buy") {
             activeBuyId = order.order_id;
             console.log(`New buy order: ${order.order_id}`);
@@ -188,7 +185,7 @@ async function main() {
         }
 
         // Refresh nonce on any error
-        await client.refreshNonce(currentSession);
+        await client.refreshNonce(session);
       } else {
         console.error("Unexpected error:", error);
       }

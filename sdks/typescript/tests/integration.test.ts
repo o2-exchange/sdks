@@ -84,7 +84,7 @@ async function createOrderWithWhitelistRetry(
   collectOrders: boolean,
   tradeAccountId: string,
   maxRetries = 5,
-): Promise<{ response: any; session: any }> {
+): Promise<any> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await client.createOrder(
@@ -253,7 +253,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
 
     // Place PostOnly Buy at minimum price — guaranteed to rest on the book
-    const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+    const response = await createOrderWithWhitelistRetry(
       client,
       session,
       market,
@@ -273,12 +273,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(order.order_id).toBeTruthy();
     expect(order.cancel).not.toBe(true);
 
-    // Cancel the order
-    const { response: cancelResponse } = await client.cancelOrder(
-      updatedSession,
-      order.order_id,
-      market,
-    );
+    // Cancel the order (session nonce was updated in-place)
+    const cancelResponse = await client.cancelOrder(session, order.order_id, market);
     expect(cancelResponse.tx_id).toBeTruthy();
   });
 
@@ -305,7 +301,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
     // Maker: PostOnly Sell at high price → guaranteed to rest on the book
     const makerSession = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
-    const { response: makerResponse } = await createOrderWithWhitelistRetry(
+    const makerResponse = await createOrderWithWhitelistRetry(
       client,
       makerSession,
       market,
@@ -331,7 +327,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const takerQuantity = quantity * 3.0;
 
     const takerSession = await client.createSession(takerWallet, takerTradeAccountId, [market], 30);
-    const { response: takerResponse } = await createOrderWithWhitelistRetry(
+    const takerResponse = await createOrderWithWhitelistRetry(
       client,
       takerSession,
       market,
@@ -416,7 +412,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
         [market],
         30,
       );
-      const { response: makerResponse } = await createOrderWithWhitelistRetry(
+      const makerResponse = await createOrderWithWhitelistRetry(
         client,
         makerSession,
         market,
@@ -494,7 +490,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const quantity = minQuantityForMinOrder(market, priceStep);
 
       const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
-      const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+      const response = await createOrderWithWhitelistRetry(
         client,
         session,
         market,
@@ -521,7 +517,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(Array.isArray(update.orders)).toBe(true);
 
       try {
-        await client.cancelOrder(updatedSession, order.order_id, market);
+        await client.cancelOrder(session, order.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
@@ -555,7 +551,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const quantity = minQuantityForMinOrder(market, priceStep);
 
       const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
-      const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+      const response = await createOrderWithWhitelistRetry(
         client,
         session,
         market,
@@ -582,7 +578,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(Array.isArray(update.balance)).toBe(true);
 
       try {
-        await client.cancelOrder(updatedSession, order.order_id, market);
+        await client.cancelOrder(session, order.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
@@ -616,7 +612,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const quantity = minQuantityForMinOrder(market, priceStep);
 
       const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
-      const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+      const response = await createOrderWithWhitelistRetry(
         client,
         session,
         market,
@@ -642,7 +638,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(update.nonce).toBeDefined();
 
       try {
-        await client.cancelOrder(updatedSession, order.order_id, market);
+        await client.cancelOrder(session, order.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
@@ -699,7 +695,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const quantity = minQuantityForMinOrder(market, priceStep);
 
       const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
-      const { response, session: updatedSession } = await createOrderWithWhitelistRetry(
+      const response = await createOrderWithWhitelistRetry(
         client,
         session,
         market,
@@ -740,7 +736,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(nonceUpdate.balance).toBeUndefined();
 
       try {
-        await client.cancelOrder(updatedSession, order.order_id, market);
+        await client.cancelOrder(session, order.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
@@ -805,7 +801,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
         [market],
         30,
       );
-      const { response: makerResponse } = await createOrderWithWhitelistRetry(
+      const makerResponse = await createOrderWithWhitelistRetry(
         client,
         makerSession,
         market,

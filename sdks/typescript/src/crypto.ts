@@ -39,6 +39,56 @@ secp.hashes.sha256 = (...msgs: Uint8Array[]) => {
 // ── Types ───────────────────────────────────────────────────────────
 
 /**
+ * Interface for objects that can sign messages for the O2 Exchange.
+ *
+ * Both built-in wallets ({@link Wallet}, {@link EvmWallet}) and external
+ * signers ({@link ExternalSigner}, {@link ExternalEvmSigner}) satisfy this
+ * interface. For custom signing backends (hardware wallets, AWS KMS, HSMs,
+ * etc.), implement this interface directly or use the provided external
+ * signer classes.
+ *
+ * @example
+ * ```ts
+ * // Using the built-in wallet (implements Signer)
+ * const wallet = client.generateWallet();
+ * const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
+ *
+ * // Using an external signer
+ * const signer = new ExternalSigner("0x1234...abcd", myKmsSignDigest);
+ * const session = await client.createSession(signer, tradeAccountId, ["fFUEL/fUSDC"]);
+ * ```
+ */
+export interface Signer {
+  /** The Fuel B256 address (0x-prefixed, 64-char hex string). */
+  readonly b256Address: string;
+
+  /**
+   * Sign a message using the appropriate personal_sign format.
+   *
+   * For Fuel-native accounts: Fuel personalSign
+   * (`\x19Fuel Signed Message:\n` prefix + SHA-256).
+   *
+   * For EVM accounts: Ethereum personalSign
+   * (`\x19Ethereum Signed Message:\n` prefix + keccak256).
+   *
+   * @param message - The raw message bytes to sign.
+   * @returns A 64-byte Fuel compact signature.
+   */
+  personalSign(message: Uint8Array): Uint8Array;
+}
+
+/**
+ * Callback type for external signing functions.
+ *
+ * Receives a 32-byte digest and must return a 64-byte Fuel compact
+ * signature (r[32] + s[32] with recovery ID embedded in the MSB of s[0]).
+ *
+ * Use {@link toFuelCompactSignature} to convert standard `(r, s, recoveryId)`
+ * components to the expected format.
+ */
+export type SignDigestFn = (digest: Uint8Array) => Uint8Array;
+
+/**
  * A Fuel-native secp256k1 wallet.
  *
  * The address is derived as `SHA-256(publicKey[1:65])`, skipping the
@@ -191,6 +241,165 @@ export function evmPersonalSign(privateKey: Uint8Array, message: Uint8Array): Ui
   const fullMessage = concat([prefix, message]);
   const digest = keccak_256(fullMessage);
   return fuelCompactSign(privateKey, digest);
+}
+
+// ── Digest helpers ──────────────────────────────────────────────────
+
+/**
+ * Compute the Fuel personalSign digest.
+ *
+ * Constructs `SHA-256("\x19Fuel Signed Message:\n" + str(len(message)) + message)`
+ * and returns the 32-byte digest.
+ *
+ * Use this when implementing a custom {@link Signer} for Fuel-native accounts.
+ */
+export function fuelPersonalSignDigest(message: Uint8Array): Uint8Array {
+  const prefix = new TextEncoder().encode("\x19Fuel Signed Message:\n");
+  const lengthStr = new TextEncoder().encode(String(message.length));
+  return sha256(concat([prefix, lengthStr, message]));
+}
+
+/**
+ * Compute the Ethereum personal_sign digest.
+ *
+ * Constructs `keccak256("\x19Ethereum Signed Message:\n" + str(len(message)) + message)`
+ * and returns the 32-byte digest.
+ *
+ * Use this when implementing a custom {@link Signer} for EVM accounts.
+ */
+export function evmPersonalSignDigest(message: Uint8Array): Uint8Array {
+  const prefix = new TextEncoder().encode(`\x19Ethereum Signed Message:\n${message.length}`);
+  return keccak_256(concat([prefix, message]));
+}
+
+/**
+ * Convert standard `(r, s, recoveryId)` components to a 64-byte Fuel compact signature.
+ *
+ * The Fuel compact format stores the recovery ID in the MSB of byte 32
+ * (first byte of `s`): `s[0] = (recoveryId << 7) | (s[0] & 0x7F)`.
+ *
+ * @param r - The 32-byte `r` component of the ECDSA signature.
+ * @param s - The 32-byte `s` component (must be low-s normalized).
+ * @param recoveryId - The recovery ID (0 or 1).
+ * @returns A 64-byte Fuel compact signature.
+ *
+ * @remarks
+ * The `s` component **must be low-s normalized** before calling this function.
+ * If `s > secp256k1_order / 2`, negate it (`s = order - s`) and flip the
+ * recovery ID (`recoveryId ^= 1`). Most modern signing libraries do this
+ * automatically, but check your KMS documentation.
+ */
+export function toFuelCompactSignature(
+  r: Uint8Array,
+  s: Uint8Array,
+  recoveryId: number,
+): Uint8Array {
+  const sig = new Uint8Array(64);
+  sig.set(r, 0);
+  sig.set(s, 32);
+  // Embed recovery ID in MSB of s[0]
+  sig[32] = (recoveryId << 7) | (sig[32] & 0x7f);
+  return sig;
+}
+
+// ── External Signers ────────────────────────────────────────────────
+
+/**
+ * A Fuel-native signer backed by an external signing function.
+ *
+ * Use this for hardware wallets, AWS KMS, or other secure enclaves
+ * that manage private keys externally. The SDK handles Fuel-specific
+ * message framing (prefix + SHA-256 hashing); your callback only needs
+ * to sign a raw 32-byte digest.
+ *
+ * @example
+ * ```ts
+ * import { ExternalSigner, toFuelCompactSignature } from "@o2exchange/sdk";
+ *
+ * const signer = new ExternalSigner("0x1234...abcd", (digest) => {
+ *   const { r, s, recoveryId } = myKms.sign(digest);
+ *   return toFuelCompactSignature(r, s, recoveryId);
+ * });
+ *
+ * const session = await client.createSession(signer, tradeAccountId, ["fFUEL/fUSDC"]);
+ * ```
+ */
+export class ExternalSigner implements Signer {
+  /** The Fuel B256 address (0x-prefixed hex string). */
+  readonly b256Address: string;
+  private readonly signDigest: SignDigestFn;
+
+  /**
+   * @param b256Address - The Fuel B256 address (0x-prefixed, 64-char hex).
+   * @param signDigest - Callback that signs a 32-byte digest and returns
+   *   a 64-byte Fuel compact signature.
+   */
+  constructor(b256Address: string, signDigest: SignDigestFn) {
+    this.b256Address = b256Address;
+    this.signDigest = signDigest;
+  }
+
+  /**
+   * Sign using Fuel's personalSign format, delegating to the external signer.
+   *
+   * Computes `SHA-256("\x19Fuel Signed Message:\n" + len + message)` and
+   * passes the 32-byte digest to the `signDigest` callback.
+   */
+  personalSign(message: Uint8Array): Uint8Array {
+    const digest = fuelPersonalSignDigest(message);
+    return this.signDigest(digest);
+  }
+}
+
+/**
+ * An EVM signer backed by an external signing function.
+ *
+ * Same as {@link ExternalSigner} but uses Ethereum personal_sign message
+ * framing (`\x19Ethereum Signed Message:\n` prefix + keccak256 hashing).
+ *
+ * @example
+ * ```ts
+ * import { ExternalEvmSigner, toFuelCompactSignature } from "@o2exchange/sdk";
+ *
+ * const signer = new ExternalEvmSigner(
+ *   "0x000000000000000000000000abcd...1234", // b256 (zero-padded)
+ *   "0xabcd...1234",                          // EVM address
+ *   (digest) => {
+ *     const { r, s, recoveryId } = myKms.sign(digest);
+ *     return toFuelCompactSignature(r, s, recoveryId);
+ *   },
+ * );
+ * ```
+ */
+export class ExternalEvmSigner implements Signer {
+  /** The Fuel B256 address (zero-padded EVM address). */
+  readonly b256Address: string;
+  /** The EVM address (0x-prefixed, 40-char hex). */
+  readonly evmAddress: string;
+  private readonly signDigest: SignDigestFn;
+
+  /**
+   * @param b256Address - The B256 address (EVM address zero-padded to 32 bytes).
+   * @param evmAddress - The EVM address (0x-prefixed, 40-char hex).
+   * @param signDigest - Callback that signs a 32-byte digest and returns
+   *   a 64-byte Fuel compact signature.
+   */
+  constructor(b256Address: string, evmAddress: string, signDigest: SignDigestFn) {
+    this.b256Address = b256Address;
+    this.evmAddress = evmAddress;
+    this.signDigest = signDigest;
+  }
+
+  /**
+   * Sign using Ethereum's personal_sign format, delegating to the external signer.
+   *
+   * Computes `keccak256("\x19Ethereum Signed Message:\n" + len + message)` and
+   * passes the 32-byte digest to the `signDigest` callback.
+   */
+  personalSign(message: Uint8Array): Uint8Array {
+    const digest = evmPersonalSignDigest(message);
+    return this.signDigest(digest);
+  }
 }
 
 export { hexToBytes, bytesToHex };

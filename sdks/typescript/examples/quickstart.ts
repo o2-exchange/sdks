@@ -63,7 +63,7 @@ async function main() {
   );
 
   try {
-    const { response, session: updatedSession } = await client.createOrder(
+    const response = await client.createOrder(
       session,
       market,
       "Buy",
@@ -85,10 +85,10 @@ async function main() {
       const orderStatus = await client.getOrder(market, order.order_id);
       console.log(`Order status: close=${orderStatus.close}, cancel=${orderStatus.cancel}`);
 
-      // 8. Cancel the order
+      // 8. Cancel the order (session nonce is updated in-place)
       console.log("Cancelling order...");
-      const cancelResult = await client.cancelOrder(updatedSession, order.order_id, market);
-      console.log(`Cancel tx: ${cancelResult.response.tx_id}`);
+      const cancelResult = await client.cancelOrder(session, order.order_id, market);
+      console.log(`Cancel tx: ${cancelResult.tx_id}`);
     }
   } catch (error) {
     console.error("Order failed:", error);
