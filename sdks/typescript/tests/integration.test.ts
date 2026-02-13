@@ -73,7 +73,7 @@ async function mintWithRetry(
       await api.mintToContract(tradeAccountId);
       return;
     } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 5_000 * (attempt + 1)));
     }
   }
 }
@@ -124,7 +124,7 @@ async function whitelistWithRetry(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       await api.whitelistAccount(tradeAccountId);
-      await new Promise((r) => setTimeout(r, 10_000));
+      await new Promise((r) => setTimeout(r, 5_000));
       return;
     } catch {
       if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
@@ -220,29 +220,33 @@ describe.skipIf(!INTEGRATION)("integration", () => {
   let takerTradeAccountId: TradeAccountId;
 
   beforeAll(async () => {
-    // Set up maker account
+    // Generate wallets upfront
     makerWallet = O2Client.generateWallet();
-    const maker = await setupWithRetry(makerClient, makerWallet);
-    makerTradeAccountId = maker.tradeAccountId;
-    await whitelistWithRetry(makerClient.api, makerTradeAccountId);
-    await mintWithRetry(makerClient.api, makerTradeAccountId);
-
-    // Set up taker account
     takerWallet = O2Client.generateWallet();
-    const taker = await setupWithRetry(takerClient, takerWallet);
-    takerTradeAccountId = taker.tradeAccountId;
-    await whitelistWithRetry(takerClient.api, takerTradeAccountId);
-    await mintWithRetry(takerClient.api, takerTradeAccountId);
 
-    // Verify both accounts have sufficient balances
+    // Set up both accounts in parallel — setupAccount already does mint + whitelist internally
+    const [maker, taker] = await Promise.all([
+      setupWithRetry(makerClient, makerWallet),
+      setupWithRetry(takerClient, takerWallet),
+    ]);
+    makerTradeAccountId = maker.tradeAccountId;
+    takerTradeAccountId = taker.tradeAccountId;
+
+    // Verify both accounts have sufficient balances (runs ensureFunded in parallel per account)
     const markets = await makerClient.getMarkets();
     const market = markets[0];
     const baseSymbol = market.base.symbol;
     const quoteSymbol = market.quote.symbol;
-    await ensureFunded(makerClient, makerTradeAccountId, baseSymbol, 50_000_000n);
-    await ensureFunded(makerClient, makerTradeAccountId, quoteSymbol, 50_000_000n);
-    await ensureFunded(takerClient, takerTradeAccountId, baseSymbol, 50_000_000n);
-    await ensureFunded(takerClient, takerTradeAccountId, quoteSymbol, 50_000_000n);
+    await Promise.all([
+      Promise.all([
+        ensureFunded(makerClient, makerTradeAccountId, baseSymbol, 50_000_000n),
+        ensureFunded(makerClient, makerTradeAccountId, quoteSymbol, 50_000_000n),
+      ]),
+      Promise.all([
+        ensureFunded(takerClient, takerTradeAccountId, baseSymbol, 50_000_000n),
+        ensureFunded(takerClient, takerTradeAccountId, quoteSymbol, 50_000_000n),
+      ]),
+    ]);
   }, 600_000);
 
   it("integration: fetches markets", async () => {
