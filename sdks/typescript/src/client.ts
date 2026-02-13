@@ -79,6 +79,26 @@ import { O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
 
+/** Convert a wire-format Market to the MarketInfo used by encoding helpers. */
+function toMarketInfo(market: Market): MarketInfo {
+  return {
+    contractId: market.contract_id,
+    marketId: market.market_id,
+    base: {
+      asset: market.base.asset,
+      decimals: market.base.decimals,
+      maxPrecision: market.base.max_precision,
+      symbol: market.base.symbol,
+    },
+    quote: {
+      asset: market.quote.asset,
+      decimals: market.quote.decimals,
+      maxPrecision: market.quote.max_precision,
+      symbol: market.quote.symbol,
+    },
+  };
+}
+
 /** Capitalize side for the API wire format: "buy" → "Buy", "sell" → "Sell". */
 function capitalizeSide(side: string): string {
   return side.charAt(0).toUpperCase() + side.slice(1);
@@ -496,12 +516,7 @@ export class O2Client {
       },
     });
 
-    return this.submitBatch(
-      [{ market_id: resolved.market_id, actions }],
-      resolved,
-      marketsData.accounts_registry_id,
-      collectOrders,
-    );
+    return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders);
   }
 
   /** Cancel an order. The session nonce is updated in-place. */
@@ -510,16 +525,12 @@ export class O2Client {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    return this.submitBatch(
-      [
-        {
-          market_id: resolved.market_id,
-          actions: [{ CancelOrder: { order_id: orderId } }],
-        },
-      ],
-      resolved,
-      marketsData.accounts_registry_id,
-    );
+    return this.submitBatch([
+      {
+        market_id: resolved.market_id,
+        actions: [{ CancelOrder: { order_id: orderId } }],
+      },
+    ]);
   }
 
   /**
@@ -549,11 +560,9 @@ export class O2Client {
         CancelOrder: { order_id: o.order_id },
       }));
 
-      const result = await this.submitBatch(
-        [{ market_id: resolved.market_id, actions: cancelActions }],
-        resolved,
-        marketsData.accounts_registry_id,
-      );
+      const result = await this.submitBatch([
+        { market_id: resolved.market_id, actions: cancelActions },
+      ]);
       results.push(result);
     }
 
@@ -566,22 +575,18 @@ export class O2Client {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    return this.submitBatch(
-      [
-        {
-          market_id: resolved.market_id,
-          actions: [
-            {
-              SettleBalance: {
-                to: { ContractId: session.tradeAccountId },
-              },
+    return this.submitBatch([
+      {
+        market_id: resolved.market_id,
+        actions: [
+          {
+            SettleBalance: {
+              to: { ContractId: session.tradeAccountId },
             },
-          ],
-        },
-      ],
-      resolved,
-      marketsData.accounts_registry_id,
-    );
+          },
+        ],
+      },
+    ]);
   }
 
   /**
@@ -617,11 +622,9 @@ export class O2Client {
 
     // Convert type-safe actions to wire format
     const wireGroups: MarketActions[] = [];
-    let firstMarket: Market | null = null;
 
     for (const group of marketActions) {
       const resolved = this.resolveMarket(marketsData, group.market);
-      if (!firstMarket) firstMarket = resolved;
 
       const wireActions: ActionPayload[] = [];
       for (const action of group.actions) {
@@ -634,16 +637,11 @@ export class O2Client {
       });
     }
 
-    if (!firstMarket) {
+    if (wireGroups.length === 0) {
       throw new O2Error("No market actions provided");
     }
 
-    return this.submitBatch(
-      wireGroups,
-      firstMarket,
-      marketsData.accounts_registry_id,
-      collectOrders,
-    );
+    return this.submitBatch(wireGroups, collectOrders);
   }
 
   // ── Market data ─────────────────────────────────────────────────
@@ -1147,8 +1145,6 @@ export class O2Client {
    */
   private async submitBatch(
     marketActions: MarketActions[],
-    market: Market,
-    accountsRegistryId: string,
     collectOrders = false,
   ): Promise<SessionActionsResponse> {
     const session = this.ensureSession();
@@ -1157,28 +1153,15 @@ export class O2Client {
       throw new SessionExpired();
     }
 
-    const marketInfo: MarketInfo = {
-      contractId: market.contract_id,
-      marketId: market.market_id,
-      base: {
-        asset: market.base.asset,
-        decimals: market.base.decimals,
-        maxPrecision: market.base.max_precision,
-        symbol: market.base.symbol,
-      },
-      quote: {
-        asset: market.quote.asset,
-        decimals: market.quote.decimals,
-        maxPrecision: market.quote.max_precision,
-        symbol: market.quote.symbol,
-      },
-    };
-
-    // Convert high-level actions to low-level calls
+    // Look up market metadata per-group from the cache (always populated by callers).
+    const cache = this.marketsCache!;
     const calls: ContractCall[] = [];
     for (const group of marketActions) {
+      const market = cache.markets.find((m) => m.market_id === group.market_id);
+      if (!market) throw new O2Error(`Market ${group.market_id} not found in cache`);
+      const marketInfo = toMarketInfo(market);
       for (const action of group.actions) {
-        calls.push(actionToCall(action as ActionJSON, marketInfo, accountsRegistryId));
+        calls.push(actionToCall(action as ActionJSON, marketInfo, cache.accounts_registry_id));
       }
     }
 
