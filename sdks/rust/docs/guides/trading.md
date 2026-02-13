@@ -19,7 +19,7 @@ A standard limit order that rests on the book if not immediately filled.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0,
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
     OrderType::Spot, true, true,
 ).await?;
 ```
@@ -31,7 +31,7 @@ the spread and match an existing order.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0,
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
     OrderType::PostOnly, true, true,
 ).await?;
 ```
@@ -43,7 +43,7 @@ book is empty.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.03, 100.0,
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.03".parse()?, "100".parse()?,
     OrderType::Market, true, true,
 ).await?;
 ```
@@ -55,7 +55,7 @@ rejected.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.03, 100.0,
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.03".parse()?, "100".parse()?,
     OrderType::FillOrKill, true, true,
 ).await?;
 ```
@@ -71,8 +71,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0,
-    OrderType::Limit { price: 0.025.into(), timestamp: now },
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
+    OrderType::Limit { price: "0.025".parse()?, timestamp: now },
     true, true,
 ).await?;
 ```
@@ -84,8 +84,8 @@ within the specified range:
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.025, 100.0,
-    OrderType::BoundedMarket { max_price: 0.03.into(), min_price: 0.01.into() },
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.025".parse()?, "100".parse()?,
+    OrderType::BoundedMarket { max_price: "0.03".parse()?, min_price: "0.01".parse()? },
     true, true,
 ).await?;
 ```
@@ -185,14 +185,14 @@ loop {
     actions.push(Action::SettleBalance);
     actions.push(Action::CreateOrder {
         side: Side::Buy,
-        price: buy_price.into(),
-        quantity: qty.into(),
+        price: format!("{buy_price}").parse()?,
+        quantity: format!("{qty}").parse()?,
         order_type: OrderType::PostOnly,
     });
     actions.push(Action::CreateOrder {
         side: Side::Sell,
-        price: sell_price.into(),
-        quantity: qty.into(),
+        price: format!("{sell_price}").parse()?,
+        quantity: format!("{qty}").parse()?,
         order_type: OrderType::PostOnly,
     });
 

@@ -12,7 +12,7 @@ All SDK errors are represented by the [`O2Error`](crate::O2Error) enum, which im
 ```rust,ignore
 use o2_sdk::O2Error;
 
-match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, OrderType::Spot, true, true).await {
+match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?, OrderType::Spot, true, true).await {
     Ok(resp) => println!("Success: {:?}", resp.tx_id),
     Err(e) => println!("Error: {}", e),
 }
@@ -95,7 +95,7 @@ Use Rust's `match` expression to handle specific error variants:
 use o2_sdk::{O2Error, O2Client, Side, OrderType};
 
 match client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0,
+    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
     OrderType::Spot, true, true,
 ).await {
     Ok(resp) if resp.is_success() => {
@@ -137,7 +137,7 @@ execution. These are returned as [`O2Error::OnChainRevert`](crate::O2Error::OnCh
 and `reason` fields:
 
 ```rust,ignore
-match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, OrderType::Spot, true, true).await {
+match client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?, OrderType::Spot, true, true).await {
     Err(O2Error::OnChainRevert { reason, message, .. }) => {
         match reason.as_str() {
             "NotEnoughBalance" => {
@@ -174,7 +174,7 @@ The [`SessionActionsResponse`](crate::SessionActionsResponse) provides helper me
 between success and different error types:
 
 ```rust,ignore
-let resp = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.02, 100.0, OrderType::Spot, true, true).await?;
+let resp = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?, OrderType::Spot, true, true).await?;
 
 if resp.is_success() {
     // Transaction succeeded — tx_id is present
@@ -238,7 +238,7 @@ async fn trading_loop() -> Result<(), O2Error> {
 
     loop {
         match client.create_order(
-            &mut session, "FUEL/USDC", Side::Buy, 0.02, 100.0,
+            &mut session, "FUEL/USDC", Side::Buy, "0.02".parse()?, "100".parse()?,
             OrderType::PostOnly, true, true,
         ).await {
             Ok(resp) if resp.is_success() => {
