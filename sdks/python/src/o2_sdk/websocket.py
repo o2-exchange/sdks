@@ -132,7 +132,7 @@ class O2WebSocket:
                     "Max reconnect attempts (%d) reached, stopping",
                     self._max_reconnect_attempts,
                 )
-                # Signal all subscriber queues to stop
+                self._should_run = False
                 self._signal_all_queues(None)
                 return
             self._reconnect_attempts += 1
@@ -169,11 +169,19 @@ class O2WebSocket:
         self._signal_all_queues(None)
 
     def _signal_all_queues(self, sentinel: object) -> None:
-        """Push a sentinel value to every subscriber queue."""
+        """Push a sentinel value to every subscriber queue.
+
+        Drains each queue first so the sentinel is never lost due to a full
+        queue — buffered data is worthless once shutdown is signalled.
+        """
         for queues in self._subscriber_queues.values():
             for q in queues:
-                with contextlib.suppress(asyncio.QueueFull):
-                    q.put_nowait(sentinel)
+                while not q.empty():
+                    try:
+                        q.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                q.put_nowait(sentinel)
 
     async def _send(self, message: dict) -> None:
         if self._ws:
