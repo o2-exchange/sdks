@@ -243,6 +243,11 @@ export class O2Api {
 
   /**
    * Fetch recent trades for a market.
+   * @param marketId - The market identifier.
+   * @param direction - Sort direction (default: `"desc"`).
+   * @param count - Number of trades to return (default: 50).
+   * @param startTimestamp - Optional starting timestamp for pagination.
+   * @param startTradeId - Optional starting trade ID for pagination.
    */
   async getTrades(
     marketId: MarketId,
@@ -264,6 +269,10 @@ export class O2Api {
 
   /**
    * Fetch trades for a specific account.
+   * @param marketId - The market identifier.
+   * @param contract - The trade account contract ID.
+   * @param direction - Sort direction (default: `"desc"`).
+   * @param count - Number of trades to return (default: 50).
    */
   async getTradesByAccount(
     marketId: MarketId,
@@ -286,6 +295,10 @@ export class O2Api {
 
   /**
    * Fetch OHLCV candlestick bars.
+   * @param marketId - The market identifier.
+   * @param from - Start time (Unix seconds).
+   * @param to - End time (Unix seconds).
+   * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
    */
   async getBars(marketId: MarketId, from: number, to: number, resolution: string): Promise<Bar[]> {
     return this.get<Bar[]>("/v1/bars", {
@@ -308,6 +321,7 @@ export class O2Api {
 
   /**
    * Fetch account information by owner address, contract, or trade account ID.
+   * @param params - Lookup parameters (provide one of `owner`, `ownerContract`, or `tradeAccountId`).
    */
   async getAccount(params: {
     owner?: string;
@@ -324,6 +338,8 @@ export class O2Api {
 
   /**
    * Fetch balance for a specific asset and account.
+   * @param assetId - The asset ID.
+   * @param params - Account lookup parameters.
    */
   async getBalance(
     assetId: AssetId,
@@ -341,6 +357,11 @@ export class O2Api {
 
   /**
    * Fetch orders for an account on a specific market.
+   * @param marketId - The market identifier.
+   * @param contract - The trade account contract ID.
+   * @param direction - Sort direction (default: `"desc"`).
+   * @param count - Number of orders to return (default: 20).
+   * @param isOpen - Filter by open/closed status.
    */
   async getOrders(
     marketId: MarketId,
@@ -369,6 +390,8 @@ export class O2Api {
 
   /**
    * Fetch a single order by ID.
+   * @param marketId - The market identifier.
+   * @param orderId - The order identifier.
    */
   async getOrder(marketId: MarketId, orderId: OrderId): Promise<Order> {
     const data = await this.get<Record<string, unknown>>("/v1/order", {
@@ -384,6 +407,8 @@ export class O2Api {
 
   /**
    * Create a new trading session.
+   * @param ownerId - The owner's b256 address.
+   * @param request - The session creation request.
    */
   async createSession(ownerId: string, request: SessionRequest): Promise<SessionResponse> {
     return this.put<SessionResponse>("/v1/session", request, {
@@ -393,6 +418,8 @@ export class O2Api {
 
   /**
    * Submit session actions (create/cancel orders, settle balances).
+   * @param ownerId - The owner's b256 address.
+   * @param request - The signed session actions request.
    * @throws {@link OnChainRevertError} if the transaction reverts on-chain.
    */
   async submitActions(
@@ -415,6 +442,8 @@ export class O2Api {
 
   /**
    * Withdraw funds from a trading account.
+   * @param ownerId - The owner's b256 address.
+   * @param request - The signed withdrawal request.
    */
   async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
@@ -426,6 +455,7 @@ export class O2Api {
 
   /**
    * Whitelist a trading account.
+   * @param tradeAccountId - The trade account contract ID.
    */
   async whitelistAccount(tradeAccountId: TradeAccountId): Promise<WhitelistResponse> {
     return this.post<WhitelistResponse>("/analytics/v1/whitelist", {
@@ -435,6 +465,7 @@ export class O2Api {
 
   /**
    * Fetch referral code information.
+   * @param code - The referral code.
    */
   async getReferralInfo(code: string): Promise<ReferralInfo> {
     return this.get<ReferralInfo>("/analytics/v1/referral/code-info", { code });
@@ -449,6 +480,9 @@ export class O2Api {
 
   /**
    * Fetch aggregated order book (CoinGecko-compatible).
+   * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
+   * @param depth - Number of levels (default: 500).
+   * @param level - Aggregation level (default: 2).
    */
   async getAggregatedOrderbook(
     marketPair: string,
@@ -474,6 +508,7 @@ export class O2Api {
 
   /**
    * Fetch aggregated trades for a pair (CoinGecko-compatible).
+   * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
    */
   async getAggregatedTrades(marketPair: string): Promise<Trade[]> {
     const raw = await this.get<Record<string, unknown>[]>("/v1/aggregated/trades", {
@@ -486,6 +521,8 @@ export class O2Api {
 
   /**
    * Mint test tokens to an address (testnet/devnet only).
+   * @param address - The destination address.
+   * @throws {@link O2Error} if faucet is not available on this network.
    */
   async mintToAddress(address: string): Promise<FaucetResponse> {
     if (!this.faucetUrl) {
@@ -508,6 +545,8 @@ export class O2Api {
 
   /**
    * Mint test tokens to a contract (testnet/devnet only).
+   * @param contractId - The destination contract ID.
+   * @throws {@link O2Error} if faucet is not available on this network.
    */
   async mintToContract(contractId: TradeAccountId): Promise<FaucetResponse> {
     if (!this.faucetUrl) {

@@ -667,6 +667,9 @@ export class O2Client {
 
   /**
    * Fetch the order book depth snapshot.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param precision - Number of price levels (default: 10).
    */
   async getDepth(market: string | Market, precision = 10): Promise<DepthSnapshot> {
     const marketId =
@@ -676,6 +679,9 @@ export class O2Client {
 
   /**
    * Fetch recent trades for a market.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param count - Number of trades to return (default: 50).
    */
   async getTrades(market: string | Market, count = 50) {
     const marketId =
@@ -685,6 +691,11 @@ export class O2Client {
 
   /**
    * Fetch OHLCV candlestick bars.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
+   * @param from - Start time (Unix seconds).
+   * @param to - End time (Unix seconds).
    */
   async getBars(
     market: string | Market,
@@ -699,6 +710,8 @@ export class O2Client {
 
   /**
    * Fetch real-time ticker data for a market.
+   *
+   * @param market - Market pair string or {@link Market} object.
    */
   async getTicker(market: string | Market) {
     const marketId =
@@ -738,6 +751,11 @@ export class O2Client {
 
   /**
    * Fetch orders for an account on a market.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @param market - Market pair string or {@link Market} object.
+   * @param isOpen - Filter by open/closed status.
+   * @param count - Number of orders (default: 20).
    */
   async getOrders(
     tradeAccountId: TradeAccountId,
@@ -758,6 +776,9 @@ export class O2Client {
 
   /**
    * Fetch a single order by ID.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param orderId - The order identifier.
    */
   async getOrder(market: string | Market, orderId: OrderId): Promise<Order> {
     const resolved = typeof market === "string" ? await this.getMarket(market) : market;
@@ -779,6 +800,10 @@ export class O2Client {
 
   /**
    * Stream real-time order book depth updates.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @param precision - Number of price levels (default: 10).
+   * @returns An async generator yielding {@link DepthUpdate} messages.
    */
   async streamDepth(market: string | Market, precision = 10): Promise<AsyncGenerator<DepthUpdate>> {
     const ws = await this.ensureWs();
@@ -789,6 +814,9 @@ export class O2Client {
 
   /**
    * Stream real-time order updates for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @returns An async generator yielding {@link OrderUpdate} messages.
    */
   async streamOrders(tradeAccountId: TradeAccountId): Promise<AsyncGenerator<OrderUpdate>> {
     const ws = await this.ensureWs();
@@ -797,6 +825,9 @@ export class O2Client {
 
   /**
    * Stream real-time trades for a market.
+   *
+   * @param market - Market pair string or {@link Market} object.
+   * @returns An async generator yielding {@link TradeUpdate} messages.
    */
   async streamTrades(market: string | Market): Promise<AsyncGenerator<TradeUpdate>> {
     const ws = await this.ensureWs();
@@ -807,6 +838,9 @@ export class O2Client {
 
   /**
    * Stream real-time balance updates for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @returns An async generator yielding {@link BalanceUpdate} messages.
    */
   async streamBalances(tradeAccountId: TradeAccountId): Promise<AsyncGenerator<BalanceUpdate>> {
     const ws = await this.ensureWs();
@@ -815,6 +849,9 @@ export class O2Client {
 
   /**
    * Stream real-time nonce updates for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
+   * @returns An async generator yielding {@link NonceUpdate} messages.
    */
   async streamNonce(tradeAccountId: TradeAccountId): Promise<AsyncGenerator<NonceUpdate>> {
     const ws = await this.ensureWs();
@@ -912,6 +949,8 @@ export class O2Client {
 
   /**
    * Fetch the current on-chain nonce for a trading account.
+   *
+   * @param tradeAccountId - The trade account contract ID.
    */
   async getNonce(tradeAccountId: TradeAccountId): Promise<bigint> {
     const info = await this.api.getAccount({ tradeAccountId });
@@ -920,6 +959,12 @@ export class O2Client {
 
   /**
    * Re-fetch the nonce from the API and update the stored session state.
+   *
+   * @remarks
+   * Call this after errors to re-sync the nonce (it increments on-chain
+   * even on reverts).
+   *
+   * @returns The fresh nonce value.
    */
   async refreshNonce(): Promise<bigint> {
     const session = this.ensureSession();

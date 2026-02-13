@@ -121,11 +121,21 @@ export interface IdentityContractId {
  * {@link IdentityContractId}.
  *
  * Use the {@link isAddress} and {@link isContractId} type guards to narrow.
+ *
+ * @example
+ * ```ts
+ * const id: Identity = { Address: "0xabcd...1234" };
+ * if (isAddress(id)) {
+ *   console.log(id.Address);
+ * }
+ * ```
  */
 export type Identity = IdentityAddress | IdentityContractId;
 
 /**
  * Type guard: returns `true` if the identity is an {@link IdentityAddress}.
+ *
+ * @param id - The identity to check.
  */
 export function isAddress(id: Identity): id is IdentityAddress {
   return "Address" in id;
@@ -133,6 +143,8 @@ export function isAddress(id: Identity): id is IdentityAddress {
 
 /**
  * Type guard: returns `true` if the identity is an {@link IdentityContractId}.
+ *
+ * @param id - The identity to check.
  */
 export function isContractId(id: Identity): id is IdentityContractId {
   return "ContractId" in id;
@@ -140,6 +152,9 @@ export function isContractId(id: Identity): id is IdentityContractId {
 
 /**
  * Extract the raw hex string from an {@link Identity}, regardless of variant.
+ *
+ * @param id - The identity to extract from.
+ * @returns The 0x-prefixed hex address or contract ID string.
  */
 export function identityValue(id: Identity): string {
   return isAddress(id) ? id.Address : id.ContractId;
@@ -149,6 +164,9 @@ export function identityValue(id: Identity): string {
 
 /**
  * A secp256k1 signature in Fuel compact format.
+ *
+ * The signature is a 0x-prefixed, 128-character hex string (64 bytes)
+ * with the recovery ID embedded in the MSB of byte 32.
  */
 export interface Secp256k1Signature {
   /** 0x-prefixed 128-char hex signature. */
@@ -157,6 +175,7 @@ export interface Secp256k1Signature {
 
 /**
  * Signature type used throughout the SDK.
+ * Currently always {@link Secp256k1Signature}.
  */
 export type Signature = Secp256k1Signature;
 
@@ -213,6 +232,8 @@ export interface Market {
 
 /**
  * Response from the `GET /v1/markets` endpoint.
+ *
+ * Contains global registry IDs and the list of all available markets.
  */
 export interface MarketsResponse {
   /** Books registry contract ID. */
@@ -298,6 +319,9 @@ export interface DepthSnapshot {
 
 /**
  * A WebSocket depth update message.
+ *
+ * Can be either a full snapshot (`action: "subscribe_depth"`)
+ * or an incremental update (`action: "subscribe_depth_update"`).
  */
 export interface DepthUpdate {
   /** The action type (`"subscribe_depth"` or `"subscribe_depth_update"`). */
@@ -551,6 +575,14 @@ export interface OrdersResponse {
 
 /**
  * A completed trade on the exchange.
+ *
+ * @example
+ * ```ts
+ * const trades = await client.getTrades("fFUEL/fUSDC", 10);
+ * for (const trade of trades) {
+ *   console.log(`${trade.side} ${trade.quantity} @ ${trade.price}`);
+ * }
+ * ```
  */
 export interface Trade {
   /** Unique trade identifier. */
@@ -585,6 +617,14 @@ export interface OrderBookBalance {
 
 /**
  * Balance information for a trading account on a specific asset.
+ *
+ * @example
+ * ```ts
+ * const balances = await client.getBalances(tradeAccountId);
+ * for (const [symbol, bal] of Object.entries(balances)) {
+ *   console.log(`${symbol}: ${bal.trading_account_balance}`);
+ * }
+ * ```
  */
 export interface BalanceResponse {
   /** Per-order-book balance breakdown, keyed by order book contract ID. */
@@ -601,6 +641,14 @@ export interface BalanceResponse {
 
 /**
  * An OHLCV candlestick bar.
+ *
+ * @example
+ * ```ts
+ * const bars = await client.getBars("fFUEL/fUSDC", "1h", fromTs, toTs);
+ * for (const bar of bars) {
+ *   console.log(`${new Date(bar.time * 1000).toISOString()}: O=${bar.open} C=${bar.close}`);
+ * }
+ * ```
  */
 export interface Bar {
   /** Bar start time (Unix seconds). */
@@ -657,6 +705,9 @@ export interface CancelOrderPayload {
 
 /**
  * Payload for a SettleBalance action.
+ *
+ * Settles filled order proceeds back to the specified identity
+ * (typically the trade account contract).
  */
 export interface SettleBalancePayload {
   SettleBalance: {
@@ -677,6 +728,11 @@ export interface RegisterRefererPayload {
 
 /**
  * Union of all possible action payloads for session actions (wire format).
+ *
+ * @see {@link CreateOrderPayload}
+ * @see {@link CancelOrderPayload}
+ * @see {@link SettleBalancePayload}
+ * @see {@link RegisterRefererPayload}
  */
 export type ActionPayload =
   | CreateOrderPayload
@@ -686,6 +742,10 @@ export type ActionPayload =
 
 /**
  * Request body for submitting session actions.
+ *
+ * @remarks
+ * Actions are grouped by market via {@link MarketActions}. A maximum
+ * of 5 actions can be submitted per request.
  */
 export interface SessionActionsRequest {
   /** Grouped actions per market. */
@@ -794,6 +854,9 @@ export class SessionActionsResponse {
 
 /**
  * Request body for a withdrawal.
+ *
+ * @remarks
+ * Withdrawals require the owner wallet signature (not the session key).
  */
 export interface WithdrawRequest {
   /** The trade account contract ID. */
@@ -820,11 +883,17 @@ export interface WithdrawResponse {
 
 // ── Whitelist ───────────────────────────────────────────────────────
 
+/**
+ * Request body for whitelisting a trading account.
+ */
 export interface WhitelistRequest {
   /** The trade account contract ID to whitelist. */
   tradeAccount: TradeAccountId;
 }
 
+/**
+ * Response from the whitelist endpoint.
+ */
 export interface WhitelistResponse {
   /** Whether the whitelist operation succeeded. */
   success: boolean;
@@ -836,6 +905,9 @@ export interface WhitelistResponse {
 
 // ── Referral ────────────────────────────────────────────────────────
 
+/**
+ * Information about a referral code.
+ */
 export interface ReferralInfo {
   /** Whether the referral code is valid. */
   valid: boolean;
@@ -847,6 +919,9 @@ export interface ReferralInfo {
 
 // ── Faucet ──────────────────────────────────────────────────────────
 
+/**
+ * Response from the testnet/devnet faucet.
+ */
 export interface FaucetResponse {
   /** Success message (present on success). */
   message?: string;
@@ -856,88 +931,181 @@ export interface FaucetResponse {
 
 // ── Aggregated ──────────────────────────────────────────────────────
 
+/**
+ * An asset in the aggregated assets endpoint.
+ */
 export interface AggregatedAsset {
+  /** Unique asset identifier. */
   id: string;
+  /** Human-readable asset name. */
   name: string;
+  /** Asset ticker symbol. */
   symbol: string;
 }
 
+/**
+ * Aggregated order book data.
+ */
 export interface AggregatedOrderbook {
+  /** Bid levels as `[price, quantity]` pairs. */
   bids: [string, string][];
+  /** Ask levels as `[price, quantity]` pairs. */
   asks: [string, string][];
+  /** Snapshot timestamp (Unix milliseconds). */
   timestamp: number;
 }
 
+/**
+ * Summary for a trading pair (CoinGecko-compatible format).
+ */
 export interface PairSummary {
+  /** Trading pair identifier (e.g., `"fFUEL_fUSDC"`). */
   trading_pairs: string;
+  /** Last traded price. */
   last_price: string;
+  /** Lowest ask (sell) price. */
   lowest_ask: string;
+  /** Highest bid (buy) price. */
   highest_bid: string;
+  /** 24-hour base asset volume. */
   base_volume: string;
+  /** 24-hour quote asset volume. */
   quote_volume: string;
+  /** 24-hour price change as a percentage string. */
   price_change_percent_24h: string;
+  /** 24-hour highest price. */
   highest_price_24h: string;
+  /** 24-hour lowest price. */
   lowest_price_24h: string;
 }
 
+/**
+ * Ticker data for a trading pair (CoinGecko-compatible format).
+ */
 export interface PairTicker {
+  /** Ticker identifier (e.g., `"fFUEL_fUSDC"`). */
   ticker_id: string;
+  /** Base currency symbol. */
   base_currency: string;
+  /** Target (quote) currency symbol. */
   target_currency: string;
+  /** Last traded price. */
   last_price: string;
+  /** 24-hour base currency volume. */
   base_volume: string;
+  /** 24-hour target currency volume. */
   target_volume: string;
+  /** Highest bid (buy) price. */
   bid: string;
+  /** Lowest ask (sell) price. */
   ask: string;
+  /** 24-hour highest price. */
   high: string;
+  /** 24-hour lowest price. */
   low: string;
 }
 
 // ── WebSocket Messages ──────────────────────────────────────────────
 
+/**
+ * A WebSocket order update message.
+ *
+ * Received when orders are created, updated, or cancelled for a subscribed account.
+ */
 export interface OrderUpdate {
+  /** The subscription action type. */
   action: string;
+  /** Updated orders. */
   orders: Order[];
+  /** On-chain timestamp. */
   onchain_timestamp?: string;
+  /** Server-observed timestamp. */
   seen_timestamp?: string;
 }
 
+/**
+ * A WebSocket trade update message.
+ *
+ * Received when new trades occur on a subscribed market.
+ */
 export interface TradeUpdate {
+  /** The subscription action type. */
   action: string;
+  /** New trades. */
   trades: Trade[];
+  /** The market identifier. */
   market_id: MarketId;
+  /** On-chain timestamp. */
   onchain_timestamp?: string;
+  /** Server-observed timestamp. */
   seen_timestamp?: string;
 }
 
+/**
+ * A WebSocket balance update message.
+ *
+ * Received when balances change for a subscribed account.
+ */
 export interface BalanceUpdate {
+  /** The subscription action type. */
   action: string;
+  /** Updated balance entries (one per affected asset). */
   balance: Array<{
+    /** The account identity. */
     identity: Identity;
+    /** The asset identifier. */
     asset_id: AssetId;
+    /** Total locked across all order books (chain integer). */
     total_locked: bigint;
+    /** Total unlocked across all order books (chain integer). */
     total_unlocked: bigint;
+    /** Total balance in the trading account (chain integer). */
     trading_account_balance: bigint;
+    /** Per-order-book balance breakdown. */
     order_books: Record<string, OrderBookBalance>;
   }>;
+  /** On-chain timestamp. */
   onchain_timestamp?: string;
+  /** Server-observed timestamp. */
   seen_timestamp?: string;
 }
 
+/**
+ * A WebSocket nonce update message.
+ *
+ * Received when the nonce changes for a subscribed account.
+ */
 export interface NonceUpdate {
+  /** The subscription action type. */
   action: string;
+  /** The trade account contract ID. */
   contract_id: TradeAccountId;
+  /** The new nonce value. */
   nonce: bigint;
+  /** On-chain timestamp. */
   onchain_timestamp?: string;
+  /** Server-observed timestamp. */
   seen_timestamp?: string;
 }
 
 // ── Error Response ──────────────────────────────────────────────────
 
+/**
+ * Raw error response from the O2 API.
+ *
+ * @remarks
+ * Errors come in two formats:
+ * - Pre-flight validation errors: `code` + `message` (no transaction submitted)
+ * - On-chain reverts: `reason` + `receipts` (transaction submitted but reverted)
+ */
 export interface O2ErrorResponse {
+  /** Error code (present for pre-flight validation errors). */
   code?: number;
+  /** Error message. */
   message: string;
+  /** On-chain revert reason (e.g., `"NotEnoughBalance"`). */
   reason?: string;
+  /** Transaction receipts from on-chain reverts. */
   receipts?: unknown[];
 }
 
@@ -948,6 +1116,13 @@ export interface O2ErrorResponse {
  *
  * Returned by {@link O2Client.createSession} and passed to trading methods.
  * Contains everything needed to sign and submit session actions.
+ *
+ * @example
+ * ```ts
+ * const session = await client.createSession(wallet, ["fFUEL/fUSDC"]);
+ * console.log(session.tradeAccountId); // "0x..."
+ * console.log(session.expiry);         // Unix seconds
+ * ```
  */
 export interface SessionState {
   /** The owner wallet's b256 address. */
@@ -970,7 +1145,14 @@ export interface SessionState {
  * Internal wallet state managed by {@link O2Client}.
  *
  * Extends the {@link Signer} interface with the private key and wallet
- * metadata.
+ * metadata. Returned by wallet generation/loading methods and passed to
+ * {@link O2Client.setupAccount} and {@link O2Client.createSession}.
+ *
+ * @example
+ * ```ts
+ * const wallet = O2Client.generateWallet();
+ * console.log(wallet.b256Address); // "0x..."
+ * ```
  */
 export interface WalletState extends Signer {
   /** The wallet's private key (32 bytes). */
@@ -985,6 +1167,15 @@ export interface WalletState extends Signer {
 
 /**
  * Format a chain-integer price to a human-readable number.
+ *
+ * @param market - The market definition (provides quote decimals).
+ * @param chainValue - The price as a chain integer (bigint).
+ * @returns The human-readable price as a number.
+ *
+ * @example
+ * ```ts
+ * const price = formatPrice(market, 25000000000n); // e.g., 25.0
+ * ```
  */
 export function formatPrice(market: Market, chainValue: bigint): number {
   return Number(chainValue) / 10 ** market.quote.decimals;
@@ -992,6 +1183,17 @@ export function formatPrice(market: Market, chainValue: bigint): number {
 
 /**
  * Scale a human-readable price to a chain integer.
+ *
+ * Truncates to the market's maximum precision using floor rounding.
+ *
+ * @param market - The market definition (provides quote decimals and precision).
+ * @param humanPrice - The human-readable price as a number.
+ * @returns The scaled price as a chain integer (bigint).
+ *
+ * @example
+ * ```ts
+ * const chainPrice = scalePriceForMarket(market, 0.025); // e.g., 25000000n
+ * ```
  */
 export function scalePriceForMarket(market: Market, humanPrice: number): bigint {
   const scaled = BigInt(Math.floor(humanPrice * 10 ** market.quote.decimals));
@@ -1001,6 +1203,10 @@ export function scalePriceForMarket(market: Market, humanPrice: number): bigint 
 
 /**
  * Format a chain-integer quantity to a human-readable number.
+ *
+ * @param market - The market definition (provides base decimals).
+ * @param chainValue - The quantity as a chain integer (bigint).
+ * @returns The human-readable quantity as a number.
  */
 export function formatQuantity(market: Market, chainValue: bigint): number {
   return Number(chainValue) / 10 ** market.base.decimals;
@@ -1008,6 +1214,12 @@ export function formatQuantity(market: Market, chainValue: bigint): number {
 
 /**
  * Scale a human-readable quantity to a chain integer.
+ *
+ * Rounds up to the nearest precision step using ceiling rounding.
+ *
+ * @param market - The market definition (provides base decimals and precision).
+ * @param humanQuantity - The human-readable quantity as a number.
+ * @returns The scaled quantity as a chain integer (bigint).
  */
 export function scaleQuantityForMarket(market: Market, humanQuantity: number): bigint {
   const scaled = BigInt(Math.ceil(humanQuantity * 10 ** market.base.decimals));
