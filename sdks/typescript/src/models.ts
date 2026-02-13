@@ -612,8 +612,8 @@ export interface MarketActions {
  */
 export interface CreateOrderPayload {
   CreateOrder: {
-    /** Order side. */
-    side: Side;
+    /** Order side (API wire format: "Buy" | "Sell"). */
+    side: string;
     /** Order price (chain integer string). */
     price: string;
     /** Order quantity (chain integer string). */

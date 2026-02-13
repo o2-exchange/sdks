@@ -73,7 +73,7 @@ async function mintWithRetry(
       await api.mintToContract(tradeAccountId);
       return;
     } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
 }
@@ -127,7 +127,7 @@ async function whitelistWithRetry(
       await new Promise((r) => setTimeout(r, 10_000));
       return;
     } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
 }
@@ -169,7 +169,7 @@ async function setupWithRetry(
     try {
       return await client.setupAccount(wallet);
     } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
   throw new Error("setupAccount failed after retries");

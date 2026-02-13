@@ -76,6 +76,11 @@ import type {
 import { assetId as toAssetId } from "./models.js";
 import { O2WebSocket } from "./websocket.js";
 
+/** Capitalize side for the API wire format: "buy" → "Buy", "sell" → "Sell". */
+function capitalizeSide(side: string): string {
+  return side.charAt(0).toUpperCase() + side.slice(1);
+}
+
 /**
  * Options for constructing an {@link O2Client}.
  *
@@ -441,7 +446,7 @@ export class O2Client {
 
     actions.push({
       CreateOrder: {
-        side,
+        side: capitalizeSide(side),
         price: scaledPrice.toString(),
         quantity: scaledQuantity.toString(),
         order_type: orderType,
@@ -1009,7 +1014,7 @@ export class O2Client {
 
         return {
           CreateOrder: {
-            side: action.side,
+            side: capitalizeSide(action.side),
             price: scaledPrice.toString(),
             quantity: scaledQuantity.toString(),
             order_type: action.orderType ?? "Spot",

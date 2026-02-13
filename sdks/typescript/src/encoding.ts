@@ -337,7 +337,7 @@ export function actionToCall(
     let amount: bigint;
     let assetId: Uint8Array;
 
-    if (data.side === "buy") {
+    if (data.side.toLowerCase() === "buy") {
       amount = (price * quantity) / BigInt(10 ** baseDecimals);
       assetId = hexToBytes(market.quote.asset);
     } else {
