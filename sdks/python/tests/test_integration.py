@@ -863,9 +863,7 @@ class TestWebSocket:
                 _consume_first(ws_client.stream_orders(maker_account.trade_account_id))
             )
             balances_consumer = asyncio.create_task(
-                _consume_first(
-                    ws_client.stream_balances(maker_account.trade_account_id)
-                )
+                _consume_first(ws_client.stream_balances(maker_account.trade_account_id))
             )
             nonce_consumer = asyncio.create_task(
                 _consume_first(ws_client.stream_nonce(maker_account.trade_account_id))
@@ -977,14 +975,10 @@ class TestWebSocket:
                 _consume_first(ws_client.stream_trades(market.pair))
             )
             orders_consumer = asyncio.create_task(
-                _consume_first(
-                    ws_client.stream_orders(maker_account.trade_account_id)
-                )
+                _consume_first(ws_client.stream_orders(maker_account.trade_account_id))
             )
             balances_consumer = asyncio.create_task(
-                _consume_first(
-                    ws_client.stream_balances(maker_account.trade_account_id)
-                )
+                _consume_first(ws_client.stream_balances(maker_account.trade_account_id))
             )
             await asyncio.sleep(2)
 
@@ -1039,9 +1033,7 @@ class TestWebSocket:
                 pytest.fail("Orders stream timed out after cross-account fill")
 
             try:
-                balances_update = await asyncio.wait_for(
-                    balances_consumer, timeout=30
-                )
+                balances_update = await asyncio.wait_for(balances_consumer, timeout=30)
                 balances_consumer = None
             except asyncio.TimeoutError:
                 pytest.fail("Balances stream timed out after cross-account fill")
