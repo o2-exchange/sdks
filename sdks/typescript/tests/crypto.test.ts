@@ -2,10 +2,10 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
 import { describe, expect, it, vi } from "vitest";
 import {
-  evmPersonalSignDigest,
-  evmPersonalSign,
   ExternalEvmSigner,
   ExternalSigner,
+  evmPersonalSign,
+  evmPersonalSignDigest,
   evmWalletFromPrivateKey,
   fuelCompactSign,
   fuelPersonalSignDigest,
@@ -141,9 +141,7 @@ describe("Crypto Module", () => {
       const digest = fuelPersonalSignDigest(message);
       const prefix = new TextEncoder().encode("\x19Fuel Signed Message:\n");
       const lengthStr = new TextEncoder().encode(String(message.length));
-      const expected = sha256(
-        new Uint8Array([...prefix, ...lengthStr, ...message]),
-      );
+      const expected = sha256(new Uint8Array([...prefix, ...lengthStr, ...message]));
       expect(bytesToHex(digest)).toBe(bytesToHex(expected));
     });
 
