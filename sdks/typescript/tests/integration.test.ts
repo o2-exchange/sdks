@@ -24,22 +24,6 @@ function minQuantityForMinOrder(market: Market, price: number): number {
   return rounded * 1.1;
 }
 
-/**
- * Calculate a safe sell price from balance constraints alone (no book dependency).
- * Uses a tiny fraction of base balance so the price is very high — well above
- * any testnet bid — and the required quantity is trivially small.
- */
-function safeSellPrice(market: Market, baseBalance: bigint): number {
-  const minOrder = Number(market.min_order) || 1_000_000;
-  const baseFactor = 10 ** market.base.decimals;
-  const quoteFactor = 10 ** market.quote.decimals;
-  // Budget: 0.1% of balance or 100k chain units, whichever is smaller
-  const budgetChain = Math.min(Number(baseBalance) * 0.001, 100_000);
-  const budget = Math.max(budgetChain, 1) / baseFactor;
-  // Price where selling 'budget' meets min_order, with 2x margin
-  return (minOrder / (budget * quoteFactor)) * 2.0;
-}
-
 async function mintWithRetry(
   api: InstanceType<typeof O2Client>["api"],
   tradeAccountId: string,
@@ -286,27 +270,30 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     await whitelistWithRetry(client.api, makerTradeAccountId, 2);
     await whitelistWithRetry(client.api, takerTradeAccountId, 2);
 
-    // Check maker base balance
+    // Cleanup leaked orders from earlier tests
+    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+
+    // Moderate price below stale sells — maker buy rests safely.
+    // Taker FillOrKill sell targets the maker directly, avoiding
+    // the gas cost of walking through many intermediate orders.
+    const price = moderateFillPrice(market);
+    const quantity = fillQuantity(market, price);
+
+    // Check maker has enough quote to buy
     const balances = await client.getBalances(makerTradeAccountId);
-    const baseSymbol = market.base.symbol;
-    expect(balances[baseSymbol]).toBeDefined();
-    const baseBalance = BigInt(balances[baseSymbol].trading_account_balance);
-    expect(baseBalance).toBeGreaterThan(0n);
+    const quoteSymbol = market.quote.symbol;
+    expect(balances[quoteSymbol]).toBeDefined();
+    expect(BigInt(balances[quoteSymbol].trading_account_balance)).toBeGreaterThan(0n);
 
-    // Calculate sell price from balance alone (no book dependency).
-    // This produces a high price well above any testnet bid, needing
-    // only a tiny amount of base tokens.
-    const sellPrice = safeSellPrice(market, baseBalance);
-    const quantity = minQuantityForMinOrder(market, sellPrice);
-
-    // Maker: PostOnly Sell at high price → guaranteed to rest on the book
+    // Maker: PostOnly Buy at moderate price → rests below stale sells
     const makerSession = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
     const makerResponse = await createOrderWithWhitelistRetry(
       client,
       makerSession,
       market,
-      "Sell",
-      sellPrice,
+      "Buy",
+      price,
       quantity,
       "PostOnly",
       true,
@@ -321,20 +308,16 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(makerOrder.order_id).toBeTruthy();
     expect(makerOrder.cancel).not.toBe(true);
 
-    // Taker: buy a small multiple of the maker quantity to limit gas usage.
-    // Using too much quote balance causes OutOfGas when the taker walks
-    // through many intermediate orders on a busy book.
-    const takerQuantity = quantity * 3.0;
-
+    // Taker: FillOrKill Sell — fills against maker, never rests on the book
     const takerSession = await client.createSession(takerWallet, takerTradeAccountId, [market], 30);
     const takerResponse = await createOrderWithWhitelistRetry(
       client,
       takerSession,
       market,
-      "Buy",
-      sellPrice,
-      takerQuantity,
-      "Spot",
+      "Sell",
+      price,
+      quantity,
+      "FillOrKill",
       true,
       true,
       takerTradeAccountId,
