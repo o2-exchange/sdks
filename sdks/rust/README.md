@@ -40,7 +40,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let account = client.setup_account(&wallet).await?;
     let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
     let order = client.create_order(
-        &mut session, "fFUEL/fUSDC", Side::Buy, 0.05.into(), 100.0.into(),
+        &mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?,
         OrderType::Spot, true, true,
     ).await?;
     println!("tx: {}", order.tx_id.unwrap_or_default());

@@ -19,7 +19,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let wallet = client.generate_wallet()?;
     let account = client.setup_account(&wallet).await?;
     let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
-    let order = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.05.into(), 100.0.into(), OrderType::Spot, true, true).await?;
+    let order = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?, OrderType::Spot, true, true).await?;
     Ok(())
 }
 ```
@@ -96,7 +96,7 @@ let mut client = O2Client::new(Network::Testnet);
 let wallet = client.generate_wallet()?;
 let account = client.setup_account(&wallet).await?;
 let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
-let resp = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, 0.05.into(), 100.0.into(), OrderType::Spot, true, true).await?;
+let resp = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?, OrderType::Spot, true, true).await?;
 ```
 
 ### 2. Market Maker Loop

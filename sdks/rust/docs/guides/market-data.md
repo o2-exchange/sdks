@@ -125,8 +125,8 @@ if let Some(best_ask) = depth.sells.as_deref().and_then(|s| s.first()) {
 }
 
 // Human-readable → chain integer
-let chain_price = market.scale_price(&0.02.into());
-let chain_qty = market.scale_quantity(&100.0.into());
+let chain_price = market.scale_price(&"0.02".parse()?);
+let chain_qty = market.scale_quantity(&"100".parse()?);
 ```
 
 ## Balances
