@@ -218,61 +218,6 @@ class TestSessionFlow:
         assert len(session.contract_ids) > 0
 
 
-async def _get_market_prices(client, market):
-    """Get (ref_price, best_bid, best_ask) from market data."""
-    ref_price = 0.0
-    best_bid = 0.0
-    best_ask = 0.0
-
-    try:
-        depth = await client.api.get_depth(market.market_id)
-        if depth.buys:
-            entry = depth.buys[0]
-            p = int(entry["price"] if isinstance(entry, dict) else entry.price)
-            if p > 0:
-                best_bid = market.format_price(p)
-                if ref_price == 0.0:
-                    ref_price = best_bid
-        if depth.sells:
-            entry = depth.sells[0]
-            p = int(entry["price"] if isinstance(entry, dict) else entry.price)
-            if p > 0:
-                best_ask = market.format_price(p)
-                if ref_price == 0.0:
-                    ref_price = best_ask
-    except Exception:
-        pass
-
-    try:
-        trades = await client.get_trades(market.pair, count=5)
-        if trades:
-            chain_price = int(trades[0].price)
-            if chain_price > 0:
-                ref_price = market.format_price(chain_price)
-    except Exception:
-        pass
-
-    if ref_price == 0.0:
-        ref_price = 1.0
-    return ref_price, best_bid, best_ask
-
-
-def _safe_sell_price(market, base_balance):
-    """Calculate a safe sell price from balance constraints alone (no book dependency).
-
-    Uses a tiny fraction of base balance so the price is very high — well above
-    any testnet bid — and the required quantity is trivially small.
-    """
-    min_order = float(market.min_order) if market.min_order else 1_000_000
-    base_factor = 10**market.base.decimals
-    quote_factor = 10**market.quote.decimals
-    # Budget: 0.1% of balance or 100k chain units, whichever is smaller
-    budget_chain = min(base_balance * 0.001, 100_000)
-    budget = max(budget_chain, 1) / base_factor
-    # Price where selling 'budget' meets min_order, with 2x margin
-    return (min_order / (budget * quote_factor)) * 2.0
-
-
 def _min_quantity_for_min_order(market, price):
     """Calculate minimum quantity that meets min_order at the given price."""
     min_order = float(market.min_order) if market.min_order else 1_000_000
@@ -415,25 +360,23 @@ class TestTradingFlow:
 
         market = markets[0]
 
-        # Get reference price from market data
-        ref_price, best_bid, best_ask = await _get_market_prices(client, market)
+        # Cleanup leaked orders from earlier tests
+        await _cleanup_open_orders(client, maker_wallet, market.pair)
+        await _cleanup_open_orders(client, taker_wallet, market.pair)
 
-        # Sell price: 10% above best ask to ensure PostOnly rests
-        if best_ask > 0.0:
-            sell_price = best_ask * 1.1
-        elif best_bid > 0.0:
-            sell_price = best_bid * 1.5
-        else:
-            sell_price = ref_price * 1.5
-        quantity = _min_quantity_for_min_order(market, sell_price)
+        # Moderate price below stale sells — maker buy rests safely.
+        # Taker FillOrKill sell targets the maker directly, avoiding
+        # the gas cost of walking through many intermediate orders.
+        fill_price = _moderate_fill_price(market)
+        quantity = _fill_quantity(market, fill_price)
 
-        # Check maker has enough base
+        # Check maker has enough quote to buy
         balances = await client.get_balances(maker_account.trade_account_id)
-        base_symbol = market.base.symbol
-        assert base_symbol in balances, f"No {base_symbol} balance after faucet"
-        assert int(balances[base_symbol].trading_account_balance) > 0
+        quote_symbol = market.quote.symbol
+        assert quote_symbol in balances, f"No {quote_symbol} balance after faucet"
+        assert int(balances[quote_symbol].trading_account_balance) > 0
 
-        # Maker: PostOnly Sell above market → rests on the book
+        # Maker: PostOnly Buy at moderate price → rests below stale sells
         maker_session = await client.create_session(
             owner=maker_wallet,
             markets=[market.pair],
@@ -443,8 +386,8 @@ class TestTradingFlow:
             client,
             session=maker_session,
             market=market.pair,
-            side=OrderSide.SELL,
-            price=sell_price,
+            side=OrderSide.BUY,
+            price=fill_price,
             quantity=quantity,
             order_type=OrderType.POST_ONLY,
             settle_first=True,
@@ -456,11 +399,7 @@ class TestTradingFlow:
         assert maker_order.order_id is not None
         assert maker_order.cancel is not True, "Maker order was unexpectedly cancelled"
 
-        # Taker: buy a small multiple of the maker quantity to limit gas usage.
-        # Using too much quote balance causes OutOfGas when the taker walks
-        # through many intermediate orders on a busy book.
-        taker_quantity = quantity * 3.0
-
+        # Taker: FillOrKill Sell — fills against maker, never rests on the book
         taker_session = await client.create_session(
             owner=taker_wallet,
             markets=[market.pair],
@@ -470,10 +409,10 @@ class TestTradingFlow:
             client,
             session=taker_session,
             market=market.pair,
-            side=OrderSide.BUY,
-            price=sell_price,
-            quantity=taker_quantity,
-            order_type=OrderType.SPOT,
+            side=OrderSide.SELL,
+            price=fill_price,
+            quantity=quantity,
+            order_type=OrderType.FILL_OR_KILL,
             settle_first=True,
             collect_orders=True,
         )
