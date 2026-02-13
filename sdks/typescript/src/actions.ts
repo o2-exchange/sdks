@@ -8,28 +8,9 @@
  * @module
  */
 
-import type { Identity, OrderId, OrderType, Side } from "./models.js";
+import type { Identity, Numeric, OrderId, OrderType, Side } from "./models.js";
 
-/**
- * Dual-mode numeric type for prices and quantities.
- *
- * - `string` — Human-readable decimal (e.g., `"0.02"`, `"100.5"`). Auto-scaled
- *   using market decimals via precise string parsing (no float intermediary).
- * - `bigint` — Raw chain integer (e.g., `20000000n`). Passed through directly.
- *
- * @example
- * ```ts
- * // Human-readable (auto-scaled):
- * createOrderAction("buy", "0.02", "100")
- *
- * // Raw chain integer (pass-through):
- * createOrderAction("buy", 20000000n, 100000000000n)
- *
- * // Mix modes:
- * createOrderAction("buy", "0.02", 100000000000n)
- * ```
- */
-export type Numeric = string | bigint;
+export type { Numeric } from "./models.js";
 
 /**
  * A type-safe action for session batch submission.

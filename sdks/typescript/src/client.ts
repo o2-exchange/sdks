@@ -72,6 +72,7 @@ import type {
   TradeAccountId,
   TradeUpdate,
   WalletState,
+  WireOrderType,
 } from "./models.js";
 import { assetId as toAssetId } from "./models.js";
 import { O2WebSocket } from "./websocket.js";
@@ -79,6 +80,41 @@ import { O2WebSocket } from "./websocket.js";
 /** Capitalize side for the API wire format: "buy" → "Buy", "sell" → "Sell". */
 function capitalizeSide(side: string): string {
   return side.charAt(0).toUpperCase() + side.slice(1);
+}
+
+/** Scale a single Numeric price to a chain integer string. */
+function scaleNumericPrice(value: string | bigint, decimals: number, maxPrecision: number): string {
+  if (typeof value === "bigint") return value.toString();
+  return scalePriceString(value, decimals, maxPrecision).toString();
+}
+
+/** Convert an OrderType (with Numeric prices) to a WireOrderType (chain integer strings). */
+function scaleOrderType(ot: OrderType, market: Market): WireOrderType {
+  if (typeof ot === "string") return ot;
+  if ("Limit" in ot) {
+    const [price, timestamp] = ot.Limit;
+    return {
+      Limit: [
+        scaleNumericPrice(price, market.quote.decimals, market.quote.max_precision),
+        timestamp,
+      ],
+    };
+  }
+  // BoundedMarket
+  return {
+    BoundedMarket: {
+      max_price: scaleNumericPrice(
+        ot.BoundedMarket.max_price,
+        market.quote.decimals,
+        market.quote.max_precision,
+      ),
+      min_price: scaleNumericPrice(
+        ot.BoundedMarket.min_price,
+        market.quote.decimals,
+        market.quote.max_precision,
+      ),
+    },
+  };
 }
 
 /**
@@ -449,7 +485,7 @@ export class O2Client {
         side: capitalizeSide(side),
         price: scaledPrice.toString(),
         quantity: scaledQuantity.toString(),
-        order_type: orderType,
+        order_type: scaleOrderType(orderType, resolved),
       },
     });
 
@@ -1017,7 +1053,7 @@ export class O2Client {
             side: capitalizeSide(action.side),
             price: scaledPrice.toString(),
             quantity: scaledQuantity.toString(),
-            order_type: action.orderType ?? "Spot",
+            order_type: scaleOrderType(action.orderType ?? "Spot", market),
           },
         };
       }

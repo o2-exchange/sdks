@@ -410,16 +410,22 @@ export interface SessionResponse {
 export type Side = "buy" | "sell";
 
 /**
- * Order type variants.
+ * Dual-mode numeric type for prices and quantities.
  *
- * - `"Spot"` — Standard limit order (default)
- * - `"FillOrKill"` — Must fill entirely or be rejected
- * - `"PostOnly"` — Guaranteed maker; rejected if it would match
- * - `"Market"` — Executes at best available price
- * - `{ Limit: [price, timestamp] }` — Limit with time-in-force
- * - `{ BoundedMarket: { max_price, min_price } }` — Market with price bounds
+ * - `string` — Human-readable decimal (e.g., `"0.02"`, `"100.5"`). Auto-scaled
+ *   using market decimals via precise string parsing (no float intermediary).
+ * - `bigint` — Raw chain integer (e.g., `20000000n`). Passed through directly.
  */
-export type OrderType =
+export type Numeric = string | bigint;
+
+/**
+ * Wire-format order type — all price fields are chain integer strings.
+ *
+ * Used in {@link CreateOrderPayload} and the encoding layer.
+ * Consumers should use {@link OrderType} (which accepts {@link Numeric})
+ * and let the SDK scale prices automatically.
+ */
+export type WireOrderType =
   | "Spot"
   | "FillOrKill"
   | "PostOnly"
@@ -428,34 +434,50 @@ export type OrderType =
   | { BoundedMarket: { max_price: string; min_price: string } };
 
 /**
+ * Order type variants.
+ *
+ * - `"Spot"` — Standard limit order (default)
+ * - `"FillOrKill"` — Must fill entirely or be rejected
+ * - `"PostOnly"` — Guaranteed maker; rejected if it would match
+ * - `"Market"` — Executes at best available price
+ * - `{ Limit: [price, timestamp] }` — Limit with time-in-force (price is {@link Numeric})
+ * - `{ BoundedMarket: { max_price, min_price } }` — Market with price bounds (prices are {@link Numeric})
+ */
+export type OrderType =
+  | "Spot"
+  | "FillOrKill"
+  | "PostOnly"
+  | "Market"
+  | { Limit: [Numeric, string] }
+  | { BoundedMarket: { max_price: Numeric; min_price: Numeric } };
+
+/**
  * Create a Limit order type with named parameters.
  *
- * @param price - Limit price (chain integer string)
+ * @param price - Limit price as human-readable string (e.g., `"0.025"`) or raw bigint
  * @param timestamp - Time-in-force expiry (Unix seconds as string)
  *
  * @example
  * ```ts
- * const ot = limitOrder("20000000", "1700000000");
- * // Equivalent to: { Limit: ["20000000", "1700000000"] }
+ * const ot = limitOrder("0.025", String(Math.floor(Date.now() / 1000)));
  * ```
  */
-export function limitOrder(price: string, timestamp?: string): OrderType {
+export function limitOrder(price: Numeric, timestamp?: string): OrderType {
   return { Limit: [price, timestamp ?? "0"] };
 }
 
 /**
  * Create a BoundedMarket order type with named parameters.
  *
- * @param maxPrice - Maximum acceptable price (chain integer string)
- * @param minPrice - Minimum acceptable price (chain integer string)
+ * @param maxPrice - Maximum acceptable price as human-readable string or raw bigint
+ * @param minPrice - Minimum acceptable price as human-readable string or raw bigint
  *
  * @example
  * ```ts
- * const ot = boundedMarketOrder("25000000", "15000000");
- * // Equivalent to: { BoundedMarket: { max_price: "25000000", min_price: "15000000" } }
+ * const ot = boundedMarketOrder("0.03", "0.01");
  * ```
  */
-export function boundedMarketOrder(maxPrice: string, minPrice: string): OrderType {
+export function boundedMarketOrder(maxPrice: Numeric, minPrice: Numeric): OrderType {
   return { BoundedMarket: { max_price: maxPrice, min_price: minPrice } };
 }
 
@@ -618,8 +640,8 @@ export interface CreateOrderPayload {
     price: string;
     /** Order quantity (chain integer string). */
     quantity: string;
-    /** Order type. */
-    order_type: OrderType;
+    /** Order type (wire format with chain integer strings). */
+    order_type: WireOrderType;
   };
 }
 

@@ -125,6 +125,7 @@ export type {
   TxId,
   WalletState,
   WhitelistResponse,
+  WireOrderType,
   WithdrawRequest,
   WithdrawResponse,
 } from "./models.js";

@@ -50,7 +50,7 @@ import { limitOrder } from "@o2exchange/sdk";
 
 await client.createOrder(
   "fFUEL/fUSDC", "Buy", "0.02", "100",
-  { orderType: limitOrder("25000000", String(Math.floor(Date.now() / 1000))) },
+  { orderType: limitOrder("0.025", String(Math.floor(Date.now() / 1000))) },
 );
 ```
 
