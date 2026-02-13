@@ -303,7 +303,15 @@ export class O2WebSocket {
     let done = false;
 
     const handler = (msg: Record<string, unknown>) => {
-      queue.push(transform ? transform(msg) : (msg as T));
+      let parsed: T;
+      try {
+        parsed = transform ? transform(msg) : (msg as T);
+      } catch {
+        // Drop malformed payloads instead of letting parser exceptions
+        // unwind through the WebSocket message event path.
+        return;
+      }
+      queue.push(parsed);
       if (resolve) {
         resolve();
         resolve = null;
