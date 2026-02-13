@@ -188,6 +188,50 @@ describe("O2Client nonce sourcing", () => {
     expect(personalSign).toHaveBeenCalledTimes(1);
     expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(99n);
   });
+
+  it("withdraw resolves mixed-case asset IDs and scales string amounts", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const { signer, personalSign } = makeSigner();
+
+    const ownerLookup: AccountInfo = {
+      trade_account_id: TRADE_ACCOUNT_ID,
+      trade_account: null,
+      session: null,
+    };
+    const nonceLookup: AccountInfo = {
+      trade_account_id: TRADE_ACCOUNT_ID,
+      trade_account: {
+        last_modification: 0,
+        nonce: 7n,
+        owner: { Address: OWNER },
+      },
+      session: null,
+    };
+
+    vi.spyOn(client.api, "getAccount")
+      .mockResolvedValueOnce(ownerLookup)
+      .mockResolvedValueOnce(nonceLookup);
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const withdrawSpy = vi
+      .spyOn(client.api, "withdraw")
+      .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.withdraw>>);
+
+    const uppercaseAssetId = `0x${BASE_ASSET_ID.slice(2).toUpperCase()}`;
+    await client.withdraw(signer, uppercaseAssetId, "1.25", DESTINATION);
+
+    expect(withdrawSpy).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        trade_account_id: TRADE_ACCOUNT_ID,
+        nonce: "7",
+        to: { Address: DESTINATION },
+        asset_id: BASE_ASSET_ID,
+        amount: "1250000000",
+      }),
+    );
+    expect(personalSign).toHaveBeenCalledTimes(1);
+    expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(7n);
+  });
 });
 
 describe("O2Client bigint precision", () => {

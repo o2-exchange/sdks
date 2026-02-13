@@ -1076,16 +1076,17 @@ export class O2Client {
     data: MarketsResponse,
     symbolOrId: string,
   ): { assetId: AssetId; decimals: number | undefined } {
-    // If it looks like a hex ID, return directly
-    if (symbolOrId.startsWith("0x")) {
+    // If it looks like a hex ID, normalize and match case-insensitively
+    if (symbolOrId.startsWith("0x") || symbolOrId.startsWith("0X")) {
+      const normalized = toAssetId(symbolOrId);
       for (const m of data.markets) {
-        if (m.base.asset === symbolOrId)
+        if (toAssetId(m.base.asset) === normalized)
           return { assetId: m.base.asset, decimals: m.base.decimals };
-        if (m.quote.asset === symbolOrId)
+        if (toAssetId(m.quote.asset) === normalized)
           return { assetId: m.quote.asset, decimals: m.quote.decimals };
       }
       // Unknown hex asset — caller must provide pre-scaled bigint amount
-      return { assetId: toAssetId(symbolOrId), decimals: undefined };
+      return { assetId: normalized, decimals: undefined };
     }
 
     // Search by symbol name (case-insensitive)
