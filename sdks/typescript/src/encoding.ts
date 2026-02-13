@@ -442,7 +442,19 @@ export function scalePriceString(value: string, decimals: number, maxPrecision: 
  * Uses ceil truncation for quantities to avoid rounding to zero. No float intermediary.
  */
 export function scaleQuantityString(value: string, decimals: number, maxPrecision: number): bigint {
-  const scaled = scaleDecimalString(value, decimals);
+  let scaled = scaleDecimalString(value, decimals);
+  // If fractional digits beyond `decimals` were non-zero, bump up by 1
+  // so the ceiling step rounds to the minimum representable unit
+  const frac = value.split(".")[1] ?? "";
+  if (
+    frac.length > decimals &&
+    frac
+      .slice(decimals)
+      .split("")
+      .some((c) => c !== "0")
+  ) {
+    scaled += 1n;
+  }
   const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
   const remainder = scaled % truncateFactor;
   if (remainder === 0n) return scaled;
