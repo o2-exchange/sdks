@@ -2,12 +2,26 @@
  * O2 Exchange TypeScript SDK
  *
  * Public API exports for the O2 Exchange SDK.
+ *
+ * For internal encoding and crypto utilities, import from
+ * `@o2exchange/sdk/internals`.
  */
+
+// ── Actions ───────────────────────────────────────────────────────
+export {
+  type Action,
+  cancelOrderAction,
+  createOrderAction,
+  type MarketActionGroup,
+  type Numeric,
+  registerRefererAction,
+  settleBalanceAction,
+} from "./actions.js";
 
 // ── API ───────────────────────────────────────────────────────────
 export { O2Api, type O2ApiOptions } from "./api.js";
 // ── High-level client ─────────────────────────────────────────────
-export { O2Client, type O2ClientOptions } from "./client.js";
+export { type CreateOrderOptions, O2Client, type O2ClientOptions } from "./client.js";
 // ── Config ────────────────────────────────────────────────────────
 export {
   DEVNET,
@@ -17,58 +31,17 @@ export {
   type NetworkConfig,
   TESTNET,
 } from "./config.js";
-// ── Crypto ────────────────────────────────────────────────────────
+
+// ── Crypto (user-facing types) ────────────────────────────────────
 export {
   type EvmWallet,
   ExternalEvmSigner,
   ExternalSigner,
-  evmPersonalSign,
-  evmPersonalSignDigest,
-  evmWalletFromPrivateKey,
-  fuelCompactSign,
-  fuelPersonalSignDigest,
-  generateEvmWallet,
-  generateWallet,
-  personalSign,
-  rawSign,
   type SignDigestFn,
   type Signer,
-  toFuelCompactSignature,
   type Wallet,
-  walletFromPrivateKey,
 } from "./crypto.js";
-// ── Encoding ──────────────────────────────────────────────────────
-export {
-  type ActionJSON,
-  actionToCall,
-  buildActionsSigningBytes,
-  buildSessionSigningBytes,
-  buildWithdrawSigningBytes,
-  bytesToHex,
-  type CancelOrderAction,
-  type ContractCall,
-  type CreateOrderAction,
-  concat,
-  encodeIdentity,
-  encodeOptionCallData,
-  encodeOptionNone,
-  encodeOptionSome,
-  encodeOrderArgs,
-  formatDecimal,
-  functionSelector,
-  GAS_MAX,
-  hexToBytes,
-  type MarketInfo,
-  type OrderTypeJSON,
-  type OrderTypeVariant,
-  type RegisterRefererAction,
-  type SettleBalanceAction,
-  scalePrice,
-  scaleQuantity,
-  u64BE,
-  validateFractionalPrice,
-  validateMinOrder,
-} from "./encoding.js";
+
 // ── Errors ────────────────────────────────────────────────────────
 export {
   AccountNotFound,
@@ -85,7 +58,6 @@ export {
   InvalidSignature,
   InvalidTimeRange,
   InvalidTradeCount,
-  isActionsSuccess,
   MarketAlreadyExists,
   MarketNotFound,
   MarketPaused,
@@ -95,7 +67,6 @@ export {
   OrderNotActive,
   OrderNotFound,
   ParseError,
-  parseApiError,
   RateLimitExceeded,
   SessionExpired,
   SubscriptionError,
@@ -108,25 +79,25 @@ export {
 // ── Models ────────────────────────────────────────────────────────
 export type {
   AccountInfo,
-  ActionPayload,
   AggregatedAsset,
   AggregatedOrderbook,
+  AssetId,
   BalanceResponse,
   BalanceUpdate,
   Bar,
-  CancelOrderPayload,
+  ContractId,
   CreateAccountResponse,
-  CreateOrderPayload,
   DepthLevel,
   DepthSnapshot,
   DepthUpdate,
   FaucetResponse,
+  HexId,
   Identity,
   IdentityAddress,
   IdentityContractId,
   Market,
-  MarketActions,
   MarketAsset,
+  MarketId,
   MarketSummary,
   MarketsResponse,
   MarketTicker,
@@ -134,40 +105,49 @@ export type {
   O2ErrorResponse,
   Order,
   OrderBookBalance,
+  OrderId,
   OrdersResponse,
   OrderType,
   OrderUpdate,
   PairSummary,
   PairTicker,
   ReferralInfo,
-  RegisterRefererPayload,
-  Secp256k1Signature,
-  SessionActionsRequest,
-  SessionActionsResponse,
   SessionInfo,
   SessionRequest,
   SessionResponse,
   SessionState,
-  SettleBalancePayload,
   Side,
   Signature,
   Trade,
   TradeAccount,
+  TradeAccountId,
   TradeUpdate,
+  TxId,
   WalletState,
-  WhitelistRequest,
   WhitelistResponse,
   WithdrawRequest,
   WithdrawResponse,
 } from "./models.js";
 export {
+  assetId,
+  boundedMarketOrder,
+  contractId,
   formatPrice,
   formatQuantity,
+  hexId,
   identityValue,
   isAddress,
   isContractId,
+  limitOrder,
+  marketId,
+  Nonce,
+  orderId,
+  SessionActionsResponse,
   scalePriceForMarket,
   scaleQuantityForMarket,
+  tradeAccountId,
+  txId,
 } from "./models.js";
+
 // ── WebSocket ─────────────────────────────────────────────────────
 export { O2WebSocket, type O2WebSocketOptions } from "./websocket.js";

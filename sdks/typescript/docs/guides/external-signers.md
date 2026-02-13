@@ -31,8 +31,8 @@ interface Signer {
 }
 ```
 
-The built-in `WalletState` (returned by `generateWallet()`, `loadWallet()`,
-etc.) extends `Signer` automatically.
+The built-in `WalletState` (returned by `O2Client.generateWallet()`,
+`O2Client.loadWallet()`, etc.) extends `Signer` automatically.
 
 ## Fuel-Native External Signer
 
@@ -48,7 +48,6 @@ import {
 } from "@o2exchange/sdk";
 
 function myKmsSign(digest: Uint8Array): Uint8Array {
-  // Your KMS/HSM returns (r, s, recoveryId)
   const { r, s, recoveryId } = myKms.sign("my-key-id", digest);
   return toFuelCompactSignature(r, s, recoveryId);
 }
@@ -56,11 +55,11 @@ function myKmsSign(digest: Uint8Array): Uint8Array {
 const signer = new ExternalSigner("0x1234...abcd", myKmsSign);
 
 const client = new O2Client({ network: Network.MAINNET });
-const { tradeAccountId } = await client.setupAccount(signer);
-const session = await client.createSession(signer, tradeAccountId, ["FUEL/USDC"]);
+await client.setupAccount(signer);
+await client.createSession(signer, ["FUEL/USDC"]);
 
-// Session actions (orders, cancels) use the session key — not the external signer
-const response = await client.createOrder(session, "FUEL/USDC", "Buy", 0.02, 100.0);
+// Session actions use the session key — not the external signer
+const response = await client.createOrder("FUEL/USDC", "Buy", "0.02", "100");
 ```
 
 > **Important:** Session **actions** (orders, cancels, settlements) are
@@ -80,11 +79,11 @@ import { ExternalEvmSigner, toFuelCompactSignature } from "@o2exchange/sdk";
 const signer = new ExternalEvmSigner(
   "0x000000000000000000000000abcd...1234", // b256 (zero-padded)
   "0xabcd...1234",                          // EVM address
-  myKmsSign,                                // Same callback interface
+  myKmsSign,
 );
 
-const { tradeAccountId } = await client.setupAccount(signer);
-const session = await client.createSession(signer, tradeAccountId, ["FUEL/USDC"]);
+await client.setupAccount(signer);
+await client.createSession(signer, ["FUEL/USDC"]);
 ```
 
 ## Implementing the Callback
@@ -97,7 +96,6 @@ components:
 import { toFuelCompactSignature } from "@o2exchange/sdk";
 
 function signDigest(digest: Uint8Array): Uint8Array {
-  // Your KMS/HSM returns (r, s, recoveryId)
   const r: Uint8Array = ...;   // 32 bytes
   const s: Uint8Array = ...;   // 32 bytes (must be low-s normalized)
   const v: number     = ...;   // 0 or 1
@@ -134,7 +132,6 @@ function awsKmsSign(digest: Uint8Array): Uint8Array {
     SigningAlgorithm: "ECDSA_SHA_256",
   });
 
-  // Note: in production, handle the async response appropriately
   const response = kms.send(command);
   const { r, s, recoveryId } = parseDerSignature(response.Signature);
   return toFuelCompactSignature(r, s, recoveryId);
@@ -163,49 +160,13 @@ class MyCustomSigner implements Signer {
 
   personalSign(message: Uint8Array): Uint8Array {
     const digest = fuelPersonalSignDigest(message);
-    // Sign the 32-byte digest with your own signing backend
     return myBackendSign(digest);
   }
 }
 
 const signer = new MyCustomSigner("0x1234...abcd");
-const session = await client.createSession(signer, tradeAccountId, ["FUEL/USDC"]);
+await client.createSession(signer, ["FUEL/USDC"]);
 ```
 
 For EVM accounts, use `evmPersonalSignDigest` instead of
 `fuelPersonalSignDigest`.
-
-## Using the Built-In Helpers
-
-The SDK exposes low-level signing primitives if you need them:
-
-```ts
-import {
-  fuelCompactSign,
-  personalSign,
-  rawSign,
-  evmPersonalSign,
-  fuelPersonalSignDigest,
-  evmPersonalSignDigest,
-  toFuelCompactSignature,
-} from "@o2exchange/sdk";
-
-// Sign a raw 32-byte digest → 64-byte Fuel compact signature
-const sig = fuelCompactSign(privateKey, digest);
-
-// Fuel personalSign (prefix + SHA-256) — for session creation
-const sig = personalSign(privateKey, message);
-
-// Raw SHA-256 signing — for session actions
-const sig = rawSign(privateKey, message);
-
-// EVM personalSign (prefix + keccak256) — for EVM owner sessions
-const sig = evmPersonalSign(privateKey, message);
-
-// Compute digests without signing (for external signers)
-const fuelDigest = fuelPersonalSignDigest(message);
-const evmDigest = evmPersonalSignDigest(message);
-
-// Convert (r, s, v) to Fuel compact format
-const compact = toFuelCompactSignature(r, s, recoveryId);
-```

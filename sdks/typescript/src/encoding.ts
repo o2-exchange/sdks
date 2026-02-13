@@ -404,6 +404,52 @@ export function actionToCall(
 // ── Decimal Helpers ─────────────────────────────────────────────────
 
 /**
+ * Precisely scale a decimal string to a chain integer without float intermediaries.
+ *
+ * Algorithm:
+ * 1. Split on `.` to get whole and fractional parts
+ * 2. Pad/truncate fractional part to `decimals` digits
+ * 3. Concatenate and parse as bigint
+ *
+ * @param value - Decimal string (e.g., `"0.02"`, `"100.5"`)
+ * @param decimals - Number of decimal places to scale to
+ * @returns The scaled bigint value
+ *
+ * @example
+ * ```ts
+ * scaleDecimalString("0.02", 9) // 20000000n
+ * scaleDecimalString("100", 9)  // 100000000000n
+ * ```
+ */
+export function scaleDecimalString(value: string, decimals: number): bigint {
+  const [whole = "0", frac = ""] = value.split(".");
+  const paddedFrac = frac.slice(0, decimals).padEnd(decimals, "0");
+  return BigInt((whole || "0") + paddedFrac);
+}
+
+/**
+ * Scale a decimal string price to a chain integer, truncated to max_precision.
+ * Uses floor truncation for prices. No float intermediary.
+ */
+export function scalePriceString(value: string, decimals: number, maxPrecision: number): bigint {
+  const scaled = scaleDecimalString(value, decimals);
+  const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
+  return (scaled / truncateFactor) * truncateFactor;
+}
+
+/**
+ * Scale a decimal string quantity to a chain integer, truncated to max_precision.
+ * Uses ceil truncation for quantities to avoid rounding to zero. No float intermediary.
+ */
+export function scaleQuantityString(value: string, decimals: number, maxPrecision: number): bigint {
+  const scaled = scaleDecimalString(value, decimals);
+  const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
+  const remainder = scaled % truncateFactor;
+  if (remainder === 0n) return scaled;
+  return scaled + (truncateFactor - remainder);
+}
+
+/**
  * Scale a human-readable price to a chain integer, truncated to max_precision.
  * Uses floor truncation for prices.
  */

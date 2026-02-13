@@ -2,9 +2,9 @@
  * REST API client for O2 Exchange.
  *
  * Provides typed wrappers for every REST endpoint. Returns typed response
- * objects and raises {@link O2Error} subclasses with typed error codes.
- * Includes automatic retry logic for rate limits (error 1003) with
- * exponential backoff.
+ * objects with chain-integer fields parsed to `bigint`. Raises
+ * {@link O2Error} subclasses with typed error codes. Includes automatic
+ * retry logic for rate limits (error 1003) with exponential backoff.
  *
  * For most use cases, prefer the high-level {@link O2Client} which
  * orchestrates wallet, session, and encoding automatically. Use `O2Api`
@@ -15,32 +15,44 @@
 
 import type { NetworkConfig } from "./config.js";
 import { isActionsSuccess, O2Error, parseApiError, RateLimitExceeded } from "./errors.js";
-import type {
-  AccountInfo,
-  AggregatedAsset,
-  AggregatedOrderbook,
-  BalanceResponse,
-  Bar,
-  CreateAccountResponse,
-  DepthSnapshot,
-  FaucetResponse,
-  Identity,
-  MarketSummary,
-  MarketsResponse,
-  MarketTicker,
-  Order,
-  OrdersResponse,
-  PairSummary,
-  PairTicker,
-  ReferralInfo,
-  SessionActionsRequest,
+import {
+  type AccountInfo,
+  type AggregatedAsset,
+  type AggregatedOrderbook,
+  type AssetId,
+  assetId,
+  type BalanceResponse,
+  type Bar,
+  type CreateAccountResponse,
+  contractId,
+  type DepthSnapshot,
+  type FaucetResponse,
+  type Identity,
+  type MarketId,
+  type MarketSummary,
+  type MarketsResponse,
+  type MarketTicker,
+  type Order,
+  type OrderId,
+  type OrdersResponse,
+  type PairSummary,
+  type PairTicker,
+  parseAccountInfo,
+  parseBalanceResponse,
+  parseDepthLevel,
+  parseMarket,
+  parseOrder,
+  parseTrade,
+  type ReferralInfo,
+  type SessionActionsRequest,
   SessionActionsResponse,
-  SessionRequest,
-  SessionResponse,
-  Trade,
-  WhitelistResponse,
-  WithdrawRequest,
-  WithdrawResponse,
+  type SessionRequest,
+  type SessionResponse,
+  type Trade,
+  type TradeAccountId,
+  type WhitelistResponse,
+  type WithdrawRequest,
+  type WithdrawResponse,
 } from "./models.js";
 
 /**
@@ -175,14 +187,23 @@ export class O2Api {
 
   /** Fetch all markets and global registry configuration. */
   async getMarkets(): Promise<MarketsResponse> {
-    return this.get<MarketsResponse>("/v1/markets");
+    const raw = await this.get<Record<string, unknown>>("/v1/markets");
+    const rawMarkets = raw.markets as Record<string, unknown>[];
+    return {
+      books_registry_id: contractId(raw.books_registry_id as string),
+      accounts_registry_id: contractId(raw.accounts_registry_id as string),
+      trade_account_oracle_id: contractId(raw.trade_account_oracle_id as string),
+      chain_id: raw.chain_id as string,
+      base_asset_id: assetId(raw.base_asset_id as string),
+      markets: rawMarkets.map(parseMarket),
+    };
   }
 
   /**
    * Fetch 24-hour market summary statistics.
    * @param marketId - The market identifier.
    */
-  async getMarketSummary(marketId: string): Promise<MarketSummary> {
+  async getMarketSummary(marketId: MarketId): Promise<MarketSummary> {
     return this.get<MarketSummary>("/v1/markets/summary", {
       market_id: marketId,
     });
@@ -192,7 +213,7 @@ export class O2Api {
    * Fetch real-time ticker data for a market.
    * @param marketId - The market identifier.
    */
-  async getMarketTicker(marketId: string): Promise<MarketTicker> {
+  async getMarketTicker(marketId: MarketId): Promise<MarketTicker> {
     return this.get<MarketTicker>("/v1/markets/ticker", {
       market_id: marketId,
     });
@@ -203,59 +224,56 @@ export class O2Api {
    * @param marketId - The market identifier.
    * @param precision - Number of price levels to return (default: 10).
    */
-  async getDepth(marketId: string, precision = 10): Promise<DepthSnapshot> {
+  async getDepth(marketId: MarketId, precision = 10): Promise<DepthSnapshot> {
     const data = await this.get<Record<string, unknown>>("/v1/depth", {
       market_id: marketId,
       precision,
     });
     // API wraps depth in "orders" or "view" field; unwrap it
-    const depth = (data.orders ?? data.view ?? data) as DepthSnapshot;
-    return depth;
+    const depth = (data.orders ?? data.view ?? data) as Record<string, unknown>;
+    const buys = (depth.buys ?? []) as Record<string, unknown>[];
+    const sells = (depth.sells ?? []) as Record<string, unknown>[];
+    return {
+      buys: buys.map(parseDepthLevel),
+      sells: sells.map(parseDepthLevel),
+    };
   }
 
   // ── Trading Data ────────────────────────────────────────────────
 
   /**
    * Fetch recent trades for a market.
-   * @param marketId - The market identifier.
-   * @param direction - Sort direction (default: `"desc"`).
-   * @param count - Number of trades to return (default: 50).
-   * @param startTimestamp - Optional starting timestamp for pagination.
-   * @param startTradeId - Optional starting trade ID for pagination.
    */
   async getTrades(
-    marketId: string,
+    marketId: MarketId,
     direction: "asc" | "desc" = "desc",
     count = 50,
     startTimestamp?: number,
     startTradeId?: string,
   ): Promise<Trade[]> {
-    const data = await this.get<Trade[] | { trades: Trade[] }>("/v1/trades", {
+    const data = await this.get<unknown>("/v1/trades", {
       market_id: marketId,
       direction,
       count,
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
     });
-    return Array.isArray(data) ? data : data.trades;
+    const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
+    return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
 
   /**
    * Fetch trades for a specific account.
-   * @param marketId - The market identifier.
-   * @param contract - The trade account contract ID.
-   * @param direction - Sort direction (default: `"desc"`).
-   * @param count - Number of trades to return (default: 50).
    */
   async getTradesByAccount(
-    marketId: string,
-    contract: string,
+    marketId: MarketId,
+    contract: TradeAccountId,
     direction: "asc" | "desc" = "desc",
     count = 50,
     startTimestamp?: number,
     startTradeId?: string,
   ): Promise<Trade[]> {
-    return this.get<Trade[]>("/v1/trades_by_account", {
+    const raw = await this.get<Record<string, unknown>[]>("/v1/trades_by_account", {
       market_id: marketId,
       contract,
       direction,
@@ -263,16 +281,13 @@ export class O2Api {
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
     });
+    return raw.map(parseTrade);
   }
 
   /**
    * Fetch OHLCV candlestick bars.
-   * @param marketId - The market identifier.
-   * @param from - Start time (Unix seconds).
-   * @param to - End time (Unix seconds).
-   * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
    */
-  async getBars(marketId: string, from: number, to: number, resolution: string): Promise<Bar[]> {
+  async getBars(marketId: MarketId, from: number, to: number, resolution: string): Promise<Bar[]> {
     return this.get<Bar[]>("/v1/bars", {
       market_id: marketId,
       from,
@@ -293,56 +308,50 @@ export class O2Api {
 
   /**
    * Fetch account information by owner address, contract, or trade account ID.
-   * @param params - Lookup parameters (provide one of `owner`, `ownerContract`, or `tradeAccountId`).
    */
   async getAccount(params: {
     owner?: string;
     ownerContract?: string;
-    tradeAccountId?: string;
+    tradeAccountId?: TradeAccountId;
   }): Promise<AccountInfo> {
-    return this.get<AccountInfo>("/v1/accounts", {
+    const raw = await this.get<Record<string, unknown>>("/v1/accounts", {
       owner: params.owner,
       owner_contract: params.ownerContract,
       trade_account_id: params.tradeAccountId,
     });
+    return parseAccountInfo(raw);
   }
 
   /**
    * Fetch balance for a specific asset and account.
-   * @param assetId - The asset ID (0x-prefixed hex).
-   * @param params - Account lookup parameters.
    */
   async getBalance(
-    assetId: string,
-    params: { address?: string; contract?: string },
+    assetId: AssetId,
+    params: { address?: string; contract?: TradeAccountId },
   ): Promise<BalanceResponse> {
-    return this.get<BalanceResponse>("/v1/balance", {
+    const raw = await this.get<Record<string, unknown>>("/v1/balance", {
       asset_id: assetId,
       address: params.address,
       contract: params.contract,
     });
+    return parseBalanceResponse(raw);
   }
 
   // ── Orders ──────────────────────────────────────────────────────
 
   /**
    * Fetch orders for an account on a specific market.
-   * @param marketId - The market identifier.
-   * @param contract - The trade account contract ID.
-   * @param direction - Sort direction (default: `"desc"`).
-   * @param count - Number of orders to return (default: 20).
-   * @param isOpen - Filter by open/closed status.
    */
   async getOrders(
-    marketId: string,
-    contract: string,
+    marketId: MarketId,
+    contract: TradeAccountId,
     direction: "asc" | "desc" = "desc",
     count = 20,
     isOpen?: boolean,
     startTimestamp?: number,
-    startOrderId?: string,
+    startOrderId?: OrderId,
   ): Promise<OrdersResponse> {
-    return this.get<OrdersResponse>("/v1/orders", {
+    const raw = await this.get<Record<string, unknown>>("/v1/orders", {
       market_id: marketId,
       contract,
       direction,
@@ -351,28 +360,30 @@ export class O2Api {
       start_timestamp: startTimestamp,
       start_order_id: startOrderId,
     });
+    const rawOrders = (raw.orders ?? []) as Record<string, unknown>[];
+    return {
+      ...(raw as unknown as OrdersResponse),
+      orders: rawOrders.map(parseOrder),
+    };
   }
 
   /**
    * Fetch a single order by ID.
-   * @param marketId - The market identifier.
-   * @param orderId - The order identifier.
    */
-  async getOrder(marketId: string, orderId: string): Promise<Order> {
-    const data = await this.get<{ order?: Order } & Order>("/v1/order", {
+  async getOrder(marketId: MarketId, orderId: OrderId): Promise<Order> {
+    const data = await this.get<Record<string, unknown>>("/v1/order", {
       market_id: marketId,
       order_id: orderId,
     });
     // API wraps order in an "order" key
-    return (data as any).order ?? data;
+    const raw = (data.order ?? data) as Record<string, unknown>;
+    return parseOrder(raw);
   }
 
   // ── Session Management ──────────────────────────────────────────
 
   /**
    * Create a new trading session.
-   * @param ownerId - The owner's b256 address.
-   * @param request - The session creation request.
    */
   async createSession(ownerId: string, request: SessionRequest): Promise<SessionResponse> {
     return this.put<SessionResponse>("/v1/session", request, {
@@ -382,8 +393,6 @@ export class O2Api {
 
   /**
    * Submit session actions (create/cancel orders, settle balances).
-   * @param ownerId - The owner's b256 address.
-   * @param request - The signed session actions request.
    * @throws {@link OnChainRevertError} if the transaction reverts on-chain.
    */
   async submitActions(
@@ -396,7 +405,7 @@ export class O2Api {
     });
 
     if (isActionsSuccess(body)) {
-      return body as unknown as SessionActionsResponse;
+      return SessionActionsResponse.fromResponse(body, parseOrder);
     }
 
     throw parseApiError(body);
@@ -406,8 +415,6 @@ export class O2Api {
 
   /**
    * Withdraw funds from a trading account.
-   * @param ownerId - The owner's b256 address.
-   * @param request - The signed withdrawal request.
    */
   async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
@@ -419,9 +426,8 @@ export class O2Api {
 
   /**
    * Whitelist a trading account.
-   * @param tradeAccountId - The trade account contract ID.
    */
-  async whitelistAccount(tradeAccountId: string): Promise<WhitelistResponse> {
+  async whitelistAccount(tradeAccountId: TradeAccountId): Promise<WhitelistResponse> {
     return this.post<WhitelistResponse>("/analytics/v1/whitelist", {
       tradeAccount: tradeAccountId,
     });
@@ -429,7 +435,6 @@ export class O2Api {
 
   /**
    * Fetch referral code information.
-   * @param code - The referral code.
    */
   async getReferralInfo(code: string): Promise<ReferralInfo> {
     return this.get<ReferralInfo>("/analytics/v1/referral/code-info", { code });
@@ -444,9 +449,6 @@ export class O2Api {
 
   /**
    * Fetch aggregated order book (CoinGecko-compatible).
-   * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
-   * @param depth - Number of levels (default: 500).
-   * @param level - Aggregation level (default: 2).
    */
   async getAggregatedOrderbook(
     marketPair: string,
@@ -472,20 +474,18 @@ export class O2Api {
 
   /**
    * Fetch aggregated trades for a pair (CoinGecko-compatible).
-   * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
    */
   async getAggregatedTrades(marketPair: string): Promise<Trade[]> {
-    return this.get<Trade[]>("/v1/aggregated/trades", {
+    const raw = await this.get<Record<string, unknown>[]>("/v1/aggregated/trades", {
       market_pair: marketPair,
     });
+    return raw.map(parseTrade);
   }
 
   // ── Faucet ──────────────────────────────────────────────────────
 
   /**
    * Mint test tokens to an address (testnet/devnet only).
-   * @param address - The destination address.
-   * @throws {@link O2Error} if faucet is not available on this network.
    */
   async mintToAddress(address: string): Promise<FaucetResponse> {
     if (!this.faucetUrl) {
@@ -508,10 +508,8 @@ export class O2Api {
 
   /**
    * Mint test tokens to a contract (testnet/devnet only).
-   * @param contractId - The destination contract ID.
-   * @throws {@link O2Error} if faucet is not available on this network.
    */
-  async mintToContract(contractId: string): Promise<FaucetResponse> {
+  async mintToContract(contractId: TradeAccountId): Promise<FaucetResponse> {
     if (!this.faucetUrl) {
       throw new O2Error("Faucet is not available on this network");
     }

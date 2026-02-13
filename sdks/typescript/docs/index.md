@@ -18,9 +18,10 @@ data retrieval, and real-time WebSocket streaming.
 - **Session-based trading** — Delegated signing with automatic nonce management
 - **Market data** — Depth, trades, candles, and ticker data
 - **Real-time streaming** — WebSocket streams via `AsyncGenerator` / `for await`
-- **Full type safety** — Comprehensive TypeScript types for all API responses
-- **Automatic encoding** — Prices and quantities auto-scaled to chain integers
-- **Error handling** — Typed error classes for every API error code
+- **Full type safety** — Branded hex types, `bigint` chain integers, discriminated action union
+- **Dual-mode numerics** — Pass human-readable strings (`"0.02"`) or raw `bigint` chain values
+- **Automatic encoding** — Prices and quantities auto-scaled, FractionalPrice adjusted, min_order validated
+- **Error handling** — Typed error classes for every API error code, `SessionActionsResponse.success` getter
 
 ## Quick Example
 
@@ -28,11 +29,13 @@ data retrieval, and real-time WebSocket streaming.
 import { O2Client, Network } from "@o2exchange/sdk";
 
 const client = new O2Client({ network: Network.TESTNET });
-const wallet = client.generateWallet();
-const { tradeAccountId } = await client.setupAccount(wallet);
-const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
-const { response } = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
-console.log(`Order TX: ${response.tx_id}`);
+const wallet = O2Client.generateWallet();
+await client.setupAccount(wallet);
+await client.createSession(wallet, ["fFUEL/fUSDC"]);
+const response = await client.createOrder("fFUEL/fUSDC", "Buy", "0.02", "50");
+if (response.success) {
+  console.log(`Order TX: ${response.txId}`);
+}
 client.close();
 ```
 
@@ -51,4 +54,5 @@ Requires **Node.js 18+**.
 - **Market Data** — Fetching depth, trades, candles, and tickers
 - **WebSocket Streams** — Real-time data with `for await`
 - **Error Handling** — Error types and recovery patterns
+- **External Signers** — KMS/HSM integration for production deployments
 - **API Reference** — Full type and method documentation (auto-generated below)

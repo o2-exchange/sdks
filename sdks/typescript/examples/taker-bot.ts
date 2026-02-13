@@ -9,7 +9,14 @@
  * Run: npx tsx examples/taker-bot.ts
  */
 
-import { Network, O2Client, O2Error } from "../src/index.js";
+import {
+  boundedMarketOrder,
+  formatPrice,
+  formatQuantity,
+  Network,
+  O2Client,
+  O2Error,
+} from "../src/index.js";
 
 // ── Configuration ─────────────────────────────────────────────────
 
@@ -26,7 +33,7 @@ async function main() {
   const client = new O2Client({ network: CONFIG.network });
 
   // Setup
-  const wallet = client.generateWallet();
+  const wallet = O2Client.generateWallet();
   console.log(`Wallet: ${wallet.b256Address}`);
 
   const { tradeAccountId } = await client.setupAccount(wallet);
@@ -37,21 +44,23 @@ async function main() {
   // Get market
   const markets = await client.getMarkets();
   const market = markets[0];
-  console.log(`Monitoring: ${market.base.symbol}/${market.quote.symbol}`);
+  const pair = `${market.base.symbol}/${market.quote.symbol}`;
+  console.log(`Monitoring: ${pair}`);
 
-  // Create session
-  const session = await client.createSession(wallet, tradeAccountId, [market], 30);
+  // Create session (stored on client, tradeAccountId resolved from wallet)
+  await client.createSession(wallet, [pair], 30);
 
   // Stream depth
   console.log(`Watching for asks below ${CONFIG.buyBelowPrice} ${market.quote.symbol}...`);
-  const depthStream = await client.streamDepth(market, 1);
+  const depthStream = await client.streamDepth(pair, 1);
 
   for await (const update of depthStream) {
     const sells = update.view?.sells ?? update.changes?.sells;
     if (!sells || sells.length === 0) continue;
 
-    const bestAsk = Number(sells[0].price) / 10 ** market.quote.decimals;
-    const bestAskQty = Number(sells[0].quantity) / 10 ** market.base.decimals;
+    // depth levels now have bigint price/quantity
+    const bestAsk = formatPrice(market, sells[0].price);
+    const bestAskQty = formatQuantity(market, sells[0].quantity);
 
     console.log(
       `Best ask: ${bestAsk.toFixed(6)} ${market.quote.symbol} (qty: ${bestAskQty.toFixed(3)})`,
@@ -61,38 +70,37 @@ async function main() {
     if (bestAsk <= CONFIG.buyBelowPrice && bestAsk > 0) {
       console.log(`Target price reached! Executing buy...`);
 
-      const maxPrice = bestAsk * (1 + CONFIG.slippagePercent);
+      // Use bigint prices directly from depth (pass-through path)
+      const bestAskBigint = sells[0].price;
+      const bestAskQtyBigint = sells[0].quantity;
+
+      // Calculate max price with slippage as a string for BoundedMarket
+      const maxPrice = (bestAsk * (1 + CONFIG.slippagePercent)).toFixed(6);
 
       try {
         const response = await client.createOrder(
-          session,
-          market,
+          pair,
           "Buy",
-          bestAsk,
-          Math.min(CONFIG.maxQuantity, bestAskQty),
-          {
-            BoundedMarket: {
-              max_price: scalePriceStr(maxPrice, market.quote.decimals, market.quote.max_precision),
-              min_price: "0",
-            },
-          },
-          true,
-          true,
+          bestAskBigint, // bigint pass-through — already scaled
+          bestAskQtyBigint > scaleQuantity(CONFIG.maxQuantity, market.base.decimals)
+            ? scaleQuantity(CONFIG.maxQuantity, market.base.decimals)
+            : bestAskQtyBigint,
+          { orderType: boundedMarketOrder(maxPrice, "0") },
         );
 
-        console.log(`Buy executed! TX: ${response.tx_id}`);
+        console.log(`Buy executed! TX: ${response.txId}`);
 
         if (response.orders) {
           for (const order of response.orders) {
             console.log(
-              `  Order ${order.order_id}: ${order.side} ${order.quantity} @ ${order.price}`,
+              `  Order ${order.order_id}: ${order.side} ${formatQuantity(market, order.quantity)} @ ${formatPrice(market, order.price)}`,
             );
           }
         }
       } catch (error) {
         if (error instanceof O2Error) {
           console.error(`Trade failed: ${error.message}`);
-          await client.refreshNonce(session);
+          await client.refreshNonce();
         } else {
           console.error("Unexpected error:", error);
         }
@@ -101,10 +109,8 @@ async function main() {
   }
 }
 
-function scalePriceStr(price: number, decimals: number, maxPrecision: number): string {
-  const scaled = BigInt(Math.floor(price * 10 ** decimals));
-  const factor = BigInt(10 ** (decimals - maxPrecision));
-  return ((scaled / factor) * factor).toString();
+function scaleQuantity(humanQty: number, decimals: number): bigint {
+  return BigInt(Math.ceil(humanQty * 10 ** decimals));
 }
 
 function sleep(ms: number): Promise<void> {

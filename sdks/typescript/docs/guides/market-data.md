@@ -33,7 +33,7 @@ const depth = await client.getDepth("fFUEL/fUSDC", 10);
 
 console.log("Top 3 bids:");
 for (const level of depth.buys.slice(0, 3)) {
-  console.log(`  ${level.price} — ${level.quantity}`);
+  console.log(`  ${level.price} — ${level.quantity}`);  // bigint values
 }
 
 console.log("Top 3 asks:");
@@ -42,8 +42,19 @@ for (const level of depth.sells.slice(0, 3)) {
 }
 ```
 
-The `precision` parameter controls the number of price levels returned
-(default: 10).
+Depth level `price` and `quantity` are `bigint` chain integers. Use
+`formatPrice()` and `formatQuantity()` to convert to human-readable:
+
+```ts
+import { formatPrice, formatQuantity } from "@o2exchange/sdk";
+
+const market = await client.getMarket("fFUEL/fUSDC");
+const depth = await client.getDepth(market, 10);
+
+for (const level of depth.buys) {
+  console.log(`${formatPrice(market, level.price)} — ${formatQuantity(market, level.quantity)}`);
+}
+```
 
 ## Recent Trades
 
@@ -51,6 +62,7 @@ The `precision` parameter controls the number of price levels returned
 const trades = await client.getTrades("fFUEL/fUSDC", 20);
 for (const trade of trades) {
   console.log(`${trade.side} ${trade.quantity} @ ${trade.price} — ${trade.timestamp}`);
+  // trade.price, trade.quantity, trade.total are bigint
 }
 ```
 
@@ -92,34 +104,34 @@ Fetch balances for a trading account, keyed by asset symbol:
 const balances = await client.getBalances(tradeAccountId);
 for (const [symbol, bal] of Object.entries(balances)) {
   console.log(`${symbol}:`);
-  console.log(`  Total: ${bal.trading_account_balance}`);
-  console.log(`  Locked: ${bal.total_locked}`);
-  console.log(`  Unlocked: ${bal.total_unlocked}`);
+  console.log(`  Total: ${bal.trading_account_balance}`);   // bigint
+  console.log(`  Locked: ${bal.total_locked}`);              // bigint
+  console.log(`  Unlocked: ${bal.total_unlocked}`);          // bigint
 }
 ```
 
 ## Price and Quantity Formatting
 
-The API returns prices and quantities as **chain integers** (strings).
-Use the helper functions to convert between human-readable and chain formats:
+The API returns prices and quantities as `bigint` chain integers. Use the
+helper functions to convert between human-readable and chain formats:
 
 ```ts
 import { formatPrice, formatQuantity, scalePriceForMarket, scaleQuantityForMarket } from "@o2exchange/sdk";
 
 const market = await client.getMarket("fFUEL/fUSDC");
 
-// Chain integer → human-readable
+// Chain integer (bigint) → human-readable
 const humanPrice = formatPrice(market, 20000000n);      // e.g., 0.02
 const humanQty = formatQuantity(market, 100000000000n);  // e.g., 100.0
 
-// Human-readable → chain integer
+// Human-readable → chain integer (bigint)
 const chainPrice = scalePriceForMarket(market, 0.02);
 const chainQty = scaleQuantityForMarket(market, 100.0);
 ```
 
 ## Low-Level API Access
 
-For advanced use cases, you can access the underlying {@link O2Api} directly
+For advanced use cases, you can access the underlying `O2Api` directly
 through the `api` property:
 
 ```ts
