@@ -420,22 +420,34 @@ export class O2Api {
    * Submit session actions (create/cancel orders, settle balances).
    * @param ownerId - The owner's b256 address.
    * @param request - The signed session actions request.
-   * @throws {@link OnChainRevertError} if the transaction reverts on-chain.
+   *
+   * Preflight validation errors (e.g., invalid nonce, insufficient balance)
+   * are returned as a {@link SessionActionsResponse} with
+   * `isPreflightError === true` rather than thrown.
    */
   async submitActions(
     ownerId: string,
     request: SessionActionsRequest,
   ): Promise<SessionActionsResponse> {
-    const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
-      body: request,
-      headers: { "O2-Owner-Id": ownerId },
-    });
+    try {
+      const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
+        body: request,
+        headers: { "O2-Owner-Id": ownerId },
+      });
 
-    if (isActionsSuccess(body)) {
-      return SessionActionsResponse.fromResponse(body, parseOrder);
+      if (isActionsSuccess(body)) {
+        return SessionActionsResponse.fromResponse(body, parseOrder);
+      }
+
+      throw parseApiError(body);
+    } catch (error) {
+      // Convert preflight validation errors into SessionActionsResponse
+      // so callers can use response.isPreflightError instead of catching
+      if (error instanceof O2Error && error.code != null) {
+        return new SessionActionsResponse(null, null, null, null, error.code, error.message);
+      }
+      throw error;
     }
-
-    throw parseApiError(body);
   }
 
   // ── Account Operations ──────────────────────────────────────────

@@ -1184,8 +1184,10 @@ export class O2Client {
         collect_orders: collectOrders,
       });
 
-      // Increment nonce on success
-      session.nonce += 1n;
+      // Increment nonce on success (preflight errors never reach the chain)
+      if (!response.isPreflightError) {
+        session.nonce += 1n;
+      }
       return response;
     } catch (error) {
       // Nonce increments on-chain even on revert
