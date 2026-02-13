@@ -34,3 +34,6 @@ Thumbs.db
 sdks/python/docs/_build/
 sdks/typescript/docs/_build/
 _site/
+
+# Local notes
+TODO.md
