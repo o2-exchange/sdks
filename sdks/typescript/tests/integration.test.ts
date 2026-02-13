@@ -4,7 +4,40 @@
  * These tests hit the live testnet API and require network access.
  * Run with: O2_INTEGRATION=1 npx vitest run tests/integration.test.ts
  *
- * Tests are idempotent and safe to run repeatedly.
+ * # Order Book Pollution & Pricing Strategy
+ *
+ * Integration tests create ephemeral accounts (new wallets each run), so orders
+ * from prior runs can never be cancelled. Over time, orphaned orders accumulate
+ * at whatever prices tests used. All pricing strategies must tolerate an
+ * arbitrary number of stale orders on the book.
+ *
+ * ## Non-fill tests: PostOnly Buy at minimum price step
+ *
+ * The minimum price step (10^{-max_precision}) is the absolute floor — no sell
+ * can exist below it, so a PostOnly Buy there always rests. The locked quote
+ * value is trivially small regardless of quantity.
+ *
+ * ## Fill tests: Maker PostOnly Buy + Taker FillOrKill Sell
+ *
+ * A taker *buy* walks the sell side from lowest ask upward, paying for every
+ * intermediate order. If stale sells have accumulated at high prices, this
+ * becomes prohibitively expensive. A taker *sell* walks the buy side from
+ * highest bid downward — each fill *pays the taker* rather than costing them.
+ * Stale buys at high prices are harmless (taker gets a better fill), and stale
+ * buys at low prices are never reached.
+ *
+ * FillOrKill for the taker prevents leaving a resting order on the book, which
+ * is the primary vector for adding new pollution.
+ *
+ * ## Cleanup: `cleanupOpenOrders` at test start
+ *
+ * Cleans up leaked orders from earlier tests within the same suite run. Cannot
+ * fix prior runs (different wallets), but prevents intra-run accumulation.
+ *
+ * ## Sizing: 10x min_order
+ *
+ * Comfortable margin above the minimum order threshold to absorb fee deductions
+ * and rounding without rejection.
  */
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -30,19 +63,6 @@ function minQuantityStr(market: Market, priceStr: string): string {
   return withMargin.toFixed(market.base.max_precision);
 }
 
-/**
- * Calculate a safe sell price string from balance constraints alone.
- */
-function safeSellPriceStr(market: Market, baseBalance: bigint): string {
-  const minOrder = Number(market.min_order);
-  const baseFactor = 10 ** market.base.decimals;
-  const quoteFactor = 10 ** market.quote.decimals;
-  const budgetChain = Math.min(Number(baseBalance) * 0.001, 100_000);
-  const budget = Math.max(budgetChain, 1) / baseFactor;
-  const price = (minOrder / (budget * quoteFactor)) * 2.0;
-  return price.toFixed(market.quote.max_precision);
-}
-
 async function mintWithRetry(
   api: InstanceType<typeof O2Client>["api"],
   tradeAccountId: TradeAccountId,
@@ -55,6 +75,44 @@ async function mintWithRetry(
     } catch {
       if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
     }
+  }
+}
+
+async function ensureFunded(
+  client: O2Client,
+  tradeAccountId: TradeAccountId,
+  assetSymbol: string,
+  minBalance: bigint,
+  maxMints = 5,
+): Promise<void> {
+  let mintCount = 0;
+  while (true) {
+    const balances = await client.getBalances(tradeAccountId);
+    const balance = balances[assetSymbol]?.trading_account_balance ?? 0n;
+
+    if (balance >= minBalance) {
+      if (mintCount > 0) {
+        console.error(`Balance for ${assetSymbol} is now ${balance} (needed ${minBalance})`);
+      }
+      break;
+    }
+
+    if (mintCount >= maxMints) {
+      console.error(
+        `Warning: Balance for ${assetSymbol} is ${balance} after ${mintCount} mints (need ${minBalance})`,
+      );
+      break;
+    }
+
+    console.error(
+      `Balance for ${assetSymbol} is ${balance} (need ${minBalance}), minting... (attempt ${mintCount + 1}/${maxMints})`,
+    );
+
+    await mintWithRetry(client.api, tradeAccountId, 3);
+    mintCount++;
+
+    // Allow time for on-chain balance to update after mint
+    await new Promise((r) => setTimeout(r, 10_000));
   }
 }
 
@@ -77,7 +135,7 @@ async function whitelistWithRetry(
 async function createOrderWithWhitelistRetry(
   client: O2Client,
   market: string | Market,
-  side: "Buy" | "Sell",
+  side: "buy" | "sell",
   price: Numeric,
   quantity: Numeric,
   orderType: string,
@@ -175,6 +233,16 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     takerTradeAccountId = taker.tradeAccountId;
     await whitelistWithRetry(takerClient.api, takerTradeAccountId);
     await mintWithRetry(takerClient.api, takerTradeAccountId);
+
+    // Verify both accounts have sufficient balances
+    const markets = await makerClient.getMarkets();
+    const market = markets[0];
+    const baseSymbol = market.base.symbol;
+    const quoteSymbol = market.quote.symbol;
+    await ensureFunded(makerClient, makerTradeAccountId, baseSymbol, 50_000_000n);
+    await ensureFunded(makerClient, makerTradeAccountId, quoteSymbol, 50_000_000n);
+    await ensureFunded(takerClient, takerTradeAccountId, baseSymbol, 50_000_000n);
+    await ensureFunded(takerClient, takerTradeAccountId, quoteSymbol, 50_000_000n);
   }, 600_000);
 
   it("integration: fetches markets", async () => {
@@ -248,7 +316,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const response = await createOrderWithWhitelistRetry(
       makerClient,
       market,
-      "Buy",
+      "buy",
       priceStr,
       quantityStr,
       "PostOnly",
@@ -274,23 +342,26 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
     await whitelistWithRetry(takerClient.api, takerTradeAccountId, 2);
 
-    // Check maker base balance (bigint)
-    const balances = await makerClient.getBalances(makerTradeAccountId);
-    const baseSymbol = market.base.symbol;
-    expect(balances[baseSymbol]).toBeDefined();
-    const baseBalance = balances[baseSymbol].trading_account_balance;
-    expect(baseBalance).toBeGreaterThan(0n);
+    // Cancel leaked orders from earlier tests in this run
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await cleanupOpenOrders(takerClient, takerWallet, market);
 
-    const sellPriceStr = safeSellPriceStr(market, baseBalance);
-    const quantityStr = minQuantityStr(market, sellPriceStr);
+    // Maker buys (needs quote), taker sells (needs base)
+    await ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 50_000_000n);
+    await ensureFunded(takerClient, takerTradeAccountId, market.base.symbol, 50_000_000n);
 
-    // Maker: PostOnly Sell
+    // Moderate price below any stale sells — maker buy rests safely.
+    // Taker sell walks buys from highest bid down, which is free (receives funds).
+    const priceStr = moderateFillPriceStr(market);
+    const quantityStr = fillQuantityStr(market, priceStr);
+
+    // Maker: PostOnly Buy at moderate price — rests below all stale sells
     await makerClient.createSession(makerWallet, [market], 30);
     const makerResponse = await createOrderWithWhitelistRetry(
       makerClient,
       market,
-      "Sell",
-      sellPriceStr,
+      "buy",
+      priceStr,
       quantityStr,
       "PostOnly",
       makerTradeAccountId,
@@ -303,29 +374,34 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(makerOrder!.order_id).toBeTruthy();
     expect(makerOrder!.cancel).not.toBe(true);
 
-    // Taker: buy 3x maker quantity
-    const takerQtyNum = Number.parseFloat(quantityStr) * 3.0;
-    const takerQuantityStr = takerQtyNum.toFixed(market.base.max_precision);
-
+    // Taker: FillOrKill Sell — fills against maker (or stale buys), never rests
     await takerClient.createSession(takerWallet, [market], 30);
     const takerResponse = await createOrderWithWhitelistRetry(
       takerClient,
       market,
-      "Buy",
-      sellPriceStr,
-      takerQuantityStr,
-      "Spot",
+      "sell",
+      priceStr,
+      quantityStr,
+      "FillOrKill",
       takerTradeAccountId,
     );
 
     expect(takerResponse.txId).toBeTruthy();
 
-    // Cleanup: cancel maker order if still open
+    // Cleanup: cancel both orders if still open
     try {
       await makerClient.cancelOrder(makerOrder!.order_id, market);
     } catch {
       // Already filled/closed
     }
+
+    // Settle balances to release locked funds for both accounts
+    try {
+      await makerClient.settleBalance(market);
+    } catch {}
+    try {
+      await takerClient.settleBalance(market);
+    } catch {}
   });
 
   it("integration: fetches account info", async () => {
@@ -388,7 +464,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const makerResponse = await createOrderWithWhitelistRetry(
         makerClient,
         market,
-        "Buy",
+        "buy",
         priceStr,
         quantityStr,
         "PostOnly",
@@ -402,7 +478,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       await createOrderWithWhitelistRetry(
         takerClient,
         market,
-        "Sell",
+        "sell",
         priceStr,
         quantityStr,
         "FillOrKill",
@@ -455,7 +531,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const response = await createOrderWithWhitelistRetry(
         makerClient,
         market,
-        "Buy",
+        "buy",
         priceStr,
         quantityStr,
         "PostOnly",
@@ -513,7 +589,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const response = await createOrderWithWhitelistRetry(
         makerClient,
         market,
-        "Buy",
+        "buy",
         priceStr,
         quantityStr,
         "PostOnly",
@@ -571,7 +647,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const response = await createOrderWithWhitelistRetry(
         makerClient,
         market,
-        "Buy",
+        "buy",
         priceStr,
         quantityStr,
         "PostOnly",
@@ -649,7 +725,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const response = await createOrderWithWhitelistRetry(
         makerClient,
         market,
-        "Buy",
+        "buy",
         priceStr,
         quantityStr,
         "PostOnly",
@@ -743,7 +819,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const makerResponse = await createOrderWithWhitelistRetry(
         makerClient,
         market,
-        "Buy",
+        "buy",
         priceStr,
         quantityStr,
         "PostOnly",
@@ -757,7 +833,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       await createOrderWithWhitelistRetry(
         takerClient,
         market,
-        "Sell",
+        "sell",
         priceStr,
         quantityStr,
         "FillOrKill",

@@ -14,7 +14,7 @@
  * const wallet = O2Client.generateWallet();
  * await client.setupAccount(wallet);
  * await client.createSession(wallet, ["fFUEL/fUSDC"]);
- * const response = await client.createOrder("fFUEL/fUSDC", "Buy", "0.02", "50");
+ * const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
  * console.log(`Order TX: ${response.txId}`);
  * client.close();
  * ```
@@ -367,14 +367,14 @@ export class O2Client {
    * - `bigint` — raw chain integer (e.g., `20000000n`) — pass-through
    *
    * @param market - Market pair string or Market object.
-   * @param side - Order side (`"Buy"` or `"Sell"`).
+   * @param side - Order side (`"buy"` or `"sell"`).
    * @param price - Order price as decimal string or raw bigint.
    * @param quantity - Order quantity as decimal string or raw bigint.
    * @param options - Optional order parameters.
    */
   async createOrder(
     market: string | Market,
-    side: "Buy" | "Sell",
+    side: "buy" | "sell",
     price: Numeric,
     quantity: Numeric,
     options?: CreateOrderOptions,
@@ -554,8 +554,8 @@ export class O2Client {
    * await client.batchActions([
    *   { market: "fFUEL/fUSDC", actions: [
    *     settleBalanceAction(),
-   *     createOrderAction("Buy", "0.02", "100"),
-   *     createOrderAction("Sell", "0.05", "50", "PostOnly"),
+   *     createOrderAction("buy", "0.02", "100"),
+   *     createOrderAction("sell", "0.05", "50", "PostOnly"),
    *   ]}
    * ], true);
    * ```

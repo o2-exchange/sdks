@@ -20,13 +20,13 @@ import type { Identity, OrderId, OrderType, Side } from "./models.js";
  * @example
  * ```ts
  * // Human-readable (auto-scaled):
- * createOrderAction("Buy", "0.02", "100")
+ * createOrderAction("buy", "0.02", "100")
  *
  * // Raw chain integer (pass-through):
- * createOrderAction("Buy", 20000000n, 100000000000n)
+ * createOrderAction("buy", 20000000n, 100000000000n)
  *
  * // Mix modes:
- * createOrderAction("Buy", "0.02", 100000000000n)
+ * createOrderAction("buy", "0.02", 100000000000n)
  * ```
  */
 export type Numeric = string | bigint;
@@ -54,7 +54,7 @@ export type Action =
 /**
  * Create a CreateOrder action.
  *
- * @param side - Order side (`"Buy"` or `"Sell"`)
+ * @param side - Order side (`"buy"` or `"sell"`)
  * @param price - Price as human-readable string or raw bigint
  * @param quantity - Quantity as human-readable string or raw bigint
  * @param orderType - Order type (default: `"Spot"`)
@@ -62,11 +62,11 @@ export type Action =
  * @example
  * ```ts
  * // Human-readable strings (auto-scaled by SDK):
- * createOrderAction("Buy", "0.02", "100")
- * createOrderAction("Sell", "0.05", "50", "PostOnly")
+ * createOrderAction("buy", "0.02", "100")
+ * createOrderAction("sell", "0.05", "50", "PostOnly")
  *
  * // Raw bigints (pass-through, already scaled):
- * createOrderAction("Buy", 20000000n, 100000000000n)
+ * createOrderAction("buy", 20000000n, 100000000000n)
  * ```
  */
 export function createOrderAction(
@@ -119,8 +119,8 @@ export function registerRefererAction(to: Identity): Action {
  *     market: "fFUEL/fUSDC",
  *     actions: [
  *       settleBalanceAction(),
- *       createOrderAction("Buy", "0.02", "100"),
- *       createOrderAction("Sell", "0.05", "50", "PostOnly"),
+ *       createOrderAction("buy", "0.02", "100"),
+ *       createOrderAction("sell", "0.05", "50", "PostOnly"),
  *     ],
  *   },
  * ];

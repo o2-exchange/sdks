@@ -122,7 +122,7 @@ describe("Models Module", () => {
     it("parses order with various order types", () => {
       const spotOrder: Order = {
         order_id: "0x1122",
-        side: "Buy",
+        side: "buy",
         order_type: "Spot",
         quantity: "5000000000",
         price: "100000000",
@@ -133,7 +133,7 @@ describe("Models Module", () => {
 
       const limitOrder: Order = {
         order_id: "0x3344",
-        side: "Sell",
+        side: "sell",
         order_type: { Limit: ["100000000", "1734876543210"] },
         quantity: "5000000000",
         price: "100000000",
@@ -160,14 +160,14 @@ describe("Models Module", () => {
     it("parses trade response", () => {
       const trade: Trade = {
         trade_id: "12345",
-        side: "Buy",
+        side: "buy",
         total: "500000000000",
         quantity: "5000000000",
         price: "100000000",
         timestamp: "1734876543",
       };
 
-      expect(trade.side).toBe("Buy");
+      expect(trade.side).toBe("buy");
       expect(BigInt(trade.quantity)).toBe(5000000000n);
     });
   });

@@ -80,7 +80,7 @@ async function main() {
       try {
         const response = await client.createOrder(
           pair,
-          "Buy",
+          "buy",
           bestAskBigint, // bigint pass-through — already scaled
           bestAskQtyBigint > scaleQuantity(CONFIG.maxQuantity, market.base.decimals)
             ? scaleQuantity(CONFIG.maxQuantity, market.base.decimals)

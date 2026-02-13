@@ -106,8 +106,8 @@ async function main() {
       actions.push(settleBalanceAction());
 
       // Place new orders (string prices are auto-scaled by the SDK)
-      actions.push(createOrderAction("Buy", buyPrice, CONFIG.orderQuantity, "Spot"));
-      actions.push(createOrderAction("Sell", sellPrice, CONFIG.orderQuantity, "Spot"));
+      actions.push(createOrderAction("buy", buyPrice, CONFIG.orderQuantity, "Spot"));
+      actions.push(createOrderAction("sell", sellPrice, CONFIG.orderQuantity, "Spot"));
 
       // Submit batch — market resolution and accounts registry handled internally
       const marketActionGroups: MarketActionGroup[] = [{ market: CONFIG.marketPair, actions }];
@@ -122,7 +122,7 @@ async function main() {
 
       if (result.orders) {
         for (const order of result.orders) {
-          if (order.side === "Buy") {
+          if (order.side === "buy") {
             activeBuyId = order.order_id;
             console.log(`New buy order: ${order.order_id}`);
           } else {

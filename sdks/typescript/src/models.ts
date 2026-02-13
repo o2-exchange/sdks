@@ -405,9 +405,9 @@ export interface SessionResponse {
 // ── Orders ──────────────────────────────────────────────────────────
 
 /**
- * Order side: `"Buy"` or `"Sell"`.
+ * Order side: `"buy"` or `"sell"`.
  */
-export type Side = "Buy" | "Sell";
+export type Side = "buy" | "sell";
 
 /**
  * Order type variants.
@@ -694,7 +694,7 @@ export interface SessionActionsRequest {
  *
  * @example
  * ```ts
- * const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", "0.02", "100");
+ * const response = await client.createOrder(session, "fFUEL/fUSDC", "buy", "0.02", "100");
  * if (response.success) {
  *   console.log(`TX: ${response.txId}`);
  *   console.log(`Orders: ${response.orders?.length}`);
@@ -1007,9 +1007,7 @@ export function parseBigInt(value: unknown): bigint {
 
 /** Parse a raw API order object into a typed {@link Order}. */
 export function parseOrder(raw: Record<string, unknown>): Order {
-  // Normalize side: API returns lowercase "buy"/"sell", our type is "Buy"/"Sell"
-  const rawSide = raw.side as string;
-  const side = (rawSide.charAt(0).toUpperCase() + rawSide.slice(1)) as Side;
+  const side = raw.side as Side;
 
   // Normalize order_type: API returns BoundedMarket prices as numbers
   let orderType = raw.order_type as OrderType;
@@ -1048,13 +1046,9 @@ export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
 
 /** Parse a raw trade into a typed {@link Trade}. */
 export function parseTrade(raw: Record<string, unknown>): Trade {
-  // Normalize side: API returns lowercase "buy"/"sell"
-  const rawSide = raw.side as string;
-  const side = (rawSide.charAt(0).toUpperCase() + rawSide.slice(1)) as Side;
-
   return {
     ...(raw as unknown as Trade),
-    side,
+    side: raw.side as Side,
     price: parseBigInt(raw.price),
     quantity: parseBigInt(raw.quantity),
     total: parseBigInt(raw.total),

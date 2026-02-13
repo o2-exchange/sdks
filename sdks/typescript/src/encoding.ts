@@ -237,7 +237,7 @@ export interface MarketInfo {
 
 export interface CreateOrderAction {
   CreateOrder: {
-    side: "Buy" | "Sell";
+    side: "buy" | "sell";
     price: string;
     quantity: string;
     order_type: OrderTypeJSON;
@@ -337,7 +337,7 @@ export function actionToCall(
     let amount: bigint;
     let assetId: Uint8Array;
 
-    if (data.side === "Buy") {
+    if (data.side === "buy") {
       amount = (price * quantity) / BigInt(10 ** baseDecimals);
       assetId = hexToBytes(market.quote.asset);
     } else {

@@ -23,7 +23,7 @@
  * @example
  * ```ts
  * try {
- *   await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 100.0);
+ *   await client.createOrder(session, "fFUEL/fUSDC", "buy", 0.02, 100.0);
  * } catch (error) {
  *   if (error instanceof O2Error) {
  *     console.log(error.code, error.message, error.reason);

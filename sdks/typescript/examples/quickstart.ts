@@ -63,7 +63,7 @@ async function main() {
   );
 
   try {
-    const response = await client.createOrder(pair, "Buy", buyPrice, buyQuantity);
+    const response = await client.createOrder(pair, "buy", buyPrice, buyQuantity);
 
     console.log(`Transaction: ${response.txId}`);
     if (response.success && response.orders && response.orders.length > 0) {
