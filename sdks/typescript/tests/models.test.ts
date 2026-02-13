@@ -11,6 +11,11 @@ import {
   type Market,
   type MarketsResponse,
   type Order,
+  parseBigInt,
+  parseDepthLevel,
+  parseDesiredQuantity,
+  parseOrder,
+  parseTrade,
   scalePriceForMarket,
   scaleQuantityForMarket,
   type Trade,
@@ -169,6 +174,216 @@ describe("Models Module", () => {
 
       expect(trade.side).toBe("buy");
       expect(BigInt(trade.quantity)).toBe(5000000000n);
+    });
+  });
+
+  describe("Parse functions", () => {
+    describe("parseBigInt", () => {
+      it("converts string to bigint", () => {
+        expect(parseBigInt("123")).toBe(123n);
+      });
+
+      it("converts number to bigint", () => {
+        expect(parseBigInt(42)).toBe(42n);
+      });
+
+      it("passes through bigint", () => {
+        expect(parseBigInt(99n)).toBe(99n);
+      });
+
+      it("throws TypeError on undefined", () => {
+        expect(() => parseBigInt(undefined)).toThrow(TypeError);
+      });
+
+      it("throws TypeError on null", () => {
+        expect(() => parseBigInt(null)).toThrow(TypeError);
+      });
+
+      it("throws TypeError on boolean", () => {
+        expect(() => parseBigInt(true)).toThrow(TypeError);
+      });
+
+      it("throws TypeError on object", () => {
+        expect(() => parseBigInt({})).toThrow(TypeError);
+      });
+    });
+
+    describe("parseOrder", () => {
+      it("parses a complete raw order", () => {
+        const raw = {
+          order_id: "0xABC",
+          side: "Buy",
+          order_type: "Spot",
+          price: "100000000",
+          quantity: "5000000000",
+          timestamp: "1734876543",
+          close: false,
+        };
+        const order = parseOrder(raw);
+        expect(order.order_id).toBe("0xabc");
+        expect(order.side).toBe("buy");
+        expect(order.price).toBe(100000000n);
+        expect(order.quantity).toBe(5000000000n);
+      });
+
+      it("defaults price to 0n when missing", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "buy",
+          order_type: "Spot",
+          quantity: "100",
+          timestamp: "0",
+          close: false,
+        };
+        const order = parseOrder(raw);
+        expect(order.price).toBe(0n);
+      });
+
+      it("defaults quantity to 0n when missing", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "sell",
+          order_type: "Spot",
+          price: "100",
+          timestamp: "0",
+          close: false,
+        };
+        const order = parseOrder(raw);
+        expect(order.quantity).toBe(0n);
+      });
+
+      it("normalizes side to lowercase", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "Sell",
+          order_type: "Spot",
+          price: "1",
+          quantity: "1",
+          timestamp: "0",
+          close: false,
+        };
+        expect(parseOrder(raw).side).toBe("sell");
+      });
+
+      it("parses Quote desired_quantity from API", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "Buy",
+          order_type: "Spot",
+          price: "100",
+          quantity: "500",
+          timestamp: "0",
+          close: false,
+          desired_quantity: {
+            Quote: {
+              desired_base_quantity: { Quantity: 500 },
+              remaining_quote_token: 9000,
+            },
+          },
+        };
+        const order = parseOrder(raw);
+        expect(order.desired_quantity).toEqual({
+          Quote: {
+            desired_base_quantity: { Quantity: 500n },
+            remaining_quote_token: 9000n,
+          },
+        });
+      });
+    });
+
+    describe("parseDesiredQuantity", () => {
+      it("returns undefined for null", () => {
+        expect(parseDesiredQuantity(null)).toBeUndefined();
+      });
+
+      it("returns undefined for undefined", () => {
+        expect(parseDesiredQuantity(undefined)).toBeUndefined();
+      });
+
+      it("parses Base variant (sell orders)", () => {
+        const raw = { Base: { remaining_quantity: "1000000000" } };
+        expect(parseDesiredQuantity(raw)).toEqual({
+          Base: { remaining_quantity: 1000000000n },
+        });
+      });
+
+      it("parses Quote variant with Quantity (buy limit)", () => {
+        const raw = {
+          Quote: {
+            desired_base_quantity: { Quantity: 500 },
+            remaining_quote_token: "9000",
+          },
+        };
+        expect(parseDesiredQuantity(raw)).toEqual({
+          Quote: {
+            desired_base_quantity: { Quantity: 500n },
+            remaining_quote_token: 9000n,
+          },
+        });
+      });
+
+      it("parses Quote variant with Infinite (buy market)", () => {
+        const raw = {
+          Quote: {
+            desired_base_quantity: "Infinite",
+            remaining_quote_token: 90000000000,
+          },
+        };
+        expect(parseDesiredQuantity(raw)).toEqual({
+          Quote: {
+            desired_base_quantity: "Infinite",
+            remaining_quote_token: 90000000000n,
+          },
+        });
+      });
+    });
+
+    describe("parseDepthLevel", () => {
+      it("parses a complete raw depth level", () => {
+        const level = parseDepthLevel({ price: "500", quantity: "200" });
+        expect(level.price).toBe(500n);
+        expect(level.quantity).toBe(200n);
+      });
+
+      it("defaults price to 0n when undefined", () => {
+        const level = parseDepthLevel({ quantity: "200" });
+        expect(level.price).toBe(0n);
+      });
+
+      it("defaults quantity to 0n when undefined", () => {
+        const level = parseDepthLevel({ price: "500" });
+        expect(level.quantity).toBe(0n);
+      });
+    });
+
+    describe("parseTrade", () => {
+      it("parses a complete raw trade", () => {
+        const raw = {
+          trade_id: "42",
+          side: "Buy",
+          price: "100",
+          quantity: "50",
+          total: "5000",
+          timestamp: "1734876543",
+        };
+        const trade = parseTrade(raw);
+        expect(trade.price).toBe(100n);
+        expect(trade.quantity).toBe(50n);
+        expect(trade.total).toBe(5000n);
+        expect(trade.side).toBe("buy");
+      });
+
+      it("defaults price, quantity, total to 0n when missing", () => {
+        const raw = {
+          trade_id: "1",
+          side: "sell",
+          timestamp: "0",
+        };
+        const trade = parseTrade(raw);
+        expect(trade.price).toBe(0n);
+        expect(trade.quantity).toBe(0n);
+        expect(trade.total).toBe(0n);
+      });
     });
   });
 

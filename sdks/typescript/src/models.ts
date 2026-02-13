@@ -506,6 +506,21 @@ export function boundedMarketOrder(maxPrice: Numeric, minPrice: Numeric): OrderT
 }
 
 /**
+ * Base quantity: either a concrete value or infinite (for market orders).
+ */
+export type BaseQuantity = { Quantity: bigint } | "Infinite";
+
+/**
+ * The underlying asset tracking for an order's desired quantity.
+ *
+ * - `Base` — Sell orders: tracks remaining base quantity.
+ * - `Quote` — Buy orders: tracks desired base quantity and remaining quote tokens.
+ */
+export type DesiredQuantity =
+  | { Base: { remaining_quantity: bigint } }
+  | { Quote: { desired_base_quantity: BaseQuantity; remaining_quote_token: bigint } };
+
+/**
  * An order on the O2 Exchange.
  *
  * @example
@@ -527,8 +542,8 @@ export interface Order {
   quantity: bigint;
   /** Filled quantity (chain integer). */
   quantity_fill?: bigint;
-  /** Originally desired quantity. */
-  desired_quantity?: bigint;
+  /** Originally desired quantity (underlying asset tracking). */
+  desired_quantity?: DesiredQuantity;
   /** Order price (chain integer). */
   price: bigint;
   /** Volume-weighted fill price. */
@@ -1239,6 +1254,34 @@ export function parseBigInt(value: unknown): bigint {
   throw new TypeError(`Cannot convert ${typeof value} to bigint: ${JSON.stringify(value)}`);
 }
 
+/** Parse a raw `desired_quantity` (UnderlyingAsset enum) from the API. */
+export function parseDesiredQuantity(value: unknown): DesiredQuantity | undefined {
+  if (value == null || typeof value !== "object") return undefined;
+  const obj = value as Record<string, unknown>;
+
+  if ("Base" in obj) {
+    const base = obj.Base as Record<string, unknown>;
+    return { Base: { remaining_quantity: parseBigInt(base.remaining_quantity) } };
+  }
+
+  if ("Quote" in obj) {
+    const quote = obj.Quote as Record<string, unknown>;
+    const rawBq = quote.desired_base_quantity;
+    const baseQty: BaseQuantity =
+      rawBq === "Infinite"
+        ? "Infinite"
+        : { Quantity: parseBigInt((rawBq as Record<string, unknown>).Quantity) };
+    return {
+      Quote: {
+        desired_base_quantity: baseQty,
+        remaining_quote_token: parseBigInt(quote.remaining_quote_token),
+      },
+    };
+  }
+
+  return undefined;
+}
+
 /** Parse a raw API order object into a typed {@link Order}. */
 export function parseOrder(raw: Record<string, unknown>): Order {
   const side = (raw.side as string).toLowerCase() as Side;
@@ -1261,11 +1304,11 @@ export function parseOrder(raw: Record<string, unknown>): Order {
     order_id: orderId(raw.order_id as string),
     side,
     order_type: orderType,
-    price: parseBigInt(raw.price),
-    quantity: parseBigInt(raw.quantity),
+    price: raw.price != null ? parseBigInt(raw.price) : 0n,
+    quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
     quantity_fill: raw.quantity_fill != null ? parseBigInt(raw.quantity_fill) : undefined,
     price_fill: raw.price_fill != null ? parseBigInt(raw.price_fill) : undefined,
-    desired_quantity: raw.desired_quantity != null ? parseBigInt(raw.desired_quantity) : undefined,
+    desired_quantity: parseDesiredQuantity(raw.desired_quantity),
     market_id: raw.market_id != null ? marketId(raw.market_id as string) : undefined,
   };
 }
@@ -1273,8 +1316,8 @@ export function parseOrder(raw: Record<string, unknown>): Order {
 /** Parse a raw depth level into a typed {@link DepthLevel}. */
 export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
   return {
-    price: parseBigInt(raw.price),
-    quantity: parseBigInt(raw.quantity),
+    price: raw.price != null ? parseBigInt(raw.price) : 0n,
+    quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
   };
 }
 
@@ -1283,9 +1326,9 @@ export function parseTrade(raw: Record<string, unknown>): Trade {
   return {
     ...(raw as unknown as Trade),
     side: (raw.side as string).toLowerCase() as Side,
-    price: parseBigInt(raw.price),
-    quantity: parseBigInt(raw.quantity),
-    total: parseBigInt(raw.total),
+    price: raw.price != null ? parseBigInt(raw.price) : 0n,
+    quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
+    total: raw.total != null ? parseBigInt(raw.total) : 0n,
   };
 }
 
