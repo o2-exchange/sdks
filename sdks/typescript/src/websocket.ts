@@ -39,6 +39,8 @@ export interface O2WebSocketOptions {
   reconnectDelayMs?: number;
   /** Heartbeat ping interval in milliseconds (default: `30000`). */
   pingIntervalMs?: number;
+  /** Pong timeout in milliseconds — triggers reconnect if no pong received (default: `60000`). */
+  pongTimeoutMs?: number;
 }
 
 type MessageHandler = (data: Record<string, unknown>) => void;
@@ -69,11 +71,14 @@ export class O2WebSocket {
   private readonly maxReconnectAttempts: number;
   private readonly reconnectDelayMs: number;
   private readonly pingIntervalMs: number;
+  private readonly pongTimeoutMs: number;
   private reconnectAttempts = 0;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private handlers = new Map<string, Set<MessageHandler>>();
   private connected = false;
   private closing = false;
+  private terminated = false;
+  private lastPong = 0;
   private pendingSubscriptions: Array<Record<string, unknown>> = [];
 
   constructor(options: O2WebSocketOptions) {
@@ -82,17 +87,20 @@ export class O2WebSocket {
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
+    this.pongTimeoutMs = options.pongTimeoutMs ?? 60000;
   }
 
   /** Connect to the WebSocket server. */
   async connect(): Promise<void> {
     this.closing = false;
+    this.terminated = false;
     return new Promise<void>((resolve, reject) => {
       this.ws = new WebSocket(this.url);
 
       this.ws.on("open", () => {
         this.connected = true;
         this.reconnectAttempts = 0;
+        this.lastPong = Date.now();
         this.startPingInterval();
         // Re-subscribe after reconnect
         for (const sub of this.pendingSubscriptions) {
@@ -102,6 +110,7 @@ export class O2WebSocket {
       });
 
       this.ws.on("message", (data: WebSocket.Data) => {
+        this.lastPong = Date.now();
         try {
           const msg = JSON.parse(data.toString()) as Record<string, unknown>;
           const action = msg.action as string | undefined;
@@ -136,7 +145,7 @@ export class O2WebSocket {
       });
 
       this.ws.on("pong", () => {
-        // Pong received, connection is alive
+        this.lastPong = Date.now();
       });
     });
   }
@@ -162,6 +171,11 @@ export class O2WebSocket {
   /** Check if connected. */
   isConnected(): boolean {
     return this.connected;
+  }
+
+  /** Check if permanently terminated (max reconnect attempts exhausted or disconnected). */
+  isTerminated(): boolean {
+    return this.terminated;
   }
 
   // ── Subscription streams ────────────────────────────────────────
@@ -342,6 +356,11 @@ export class O2WebSocket {
     this.stopPingInterval();
     this.pingInterval = setInterval(() => {
       if (this.ws && this.connected) {
+        // Check pong timeout
+        if (this.lastPong > 0 && Date.now() - this.lastPong > this.pongTimeoutMs) {
+          this.ws.close();
+          return;
+        }
         this.ws.ping();
       }
     }, this.pingIntervalMs);
@@ -356,6 +375,12 @@ export class O2WebSocket {
 
   private attemptReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      // Max attempts exhausted — signal all generators to terminate
+      this.terminated = true;
+      const closeHandlers = this.handlers.get("__close__");
+      if (closeHandlers) {
+        for (const handler of closeHandlers) handler({});
+      }
       return;
     }
 

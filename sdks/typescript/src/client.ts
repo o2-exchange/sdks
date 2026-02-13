@@ -692,6 +692,9 @@ export class O2Client {
   // ── WebSocket streaming ─────────────────────────────────────────
 
   private async ensureWs(): Promise<O2WebSocket> {
+    if (this.wsClient?.isTerminated()) {
+      this.wsClient = null;
+    }
     if (!this.wsClient) {
       this.wsClient = new O2WebSocket({ config: this.config });
       await this.wsClient.connect();
