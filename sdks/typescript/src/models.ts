@@ -1286,7 +1286,7 @@ export function parseDesiredQuantity(value: unknown): DesiredQuantity | undefine
 
 /** Parse a raw API order object into a typed {@link Order}. */
 export function parseOrder(raw: Record<string, unknown>): Order {
-  const side = (raw.side as string).toLowerCase() as Side;
+  const side = parseRequiredSide(raw.side);
 
   // Normalize order_type: API returns BoundedMarket prices as numbers
   let orderType = raw.order_type as OrderType;
@@ -1327,10 +1327,44 @@ export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
 export function parseTrade(raw: Record<string, unknown>): Trade {
   return {
     ...(raw as unknown as Trade),
-    side: (raw.side as string).toLowerCase() as Side,
+    side: parseRequiredSide(raw.side),
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
     quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
     total: raw.total != null ? parseBigInt(raw.total) : 0n,
+  };
+}
+
+function parseSideValue(value: unknown): Side | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.toLowerCase();
+  if (normalized === "buy" || normalized === "sell") return normalized;
+  return null;
+}
+
+function parseRequiredSide(value: unknown): Side {
+  const side = parseSideValue(value);
+  if (!side) {
+    throw new TypeError(`Invalid side value: ${JSON.stringify(value)}`);
+  }
+  return side;
+}
+
+/** Parse a raw aggregated trade into a typed {@link Trade}. */
+export function parseAggregatedTrade(raw: Record<string, unknown>): Trade {
+  const side =
+    parseSideValue(raw.side) ??
+    parseSideValue((raw as { type?: unknown }).type) ??
+    // CoinGecko-style payloads may omit side; keep parser resilient.
+    "buy";
+
+  return {
+    ...(raw as unknown as Trade),
+    trade_id: raw.trade_id != null ? String(raw.trade_id) : "",
+    side,
+    price: raw.price != null ? parseBigInt(raw.price) : 0n,
+    quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
+    total: raw.total != null ? parseBigInt(raw.total) : 0n,
+    timestamp: raw.timestamp != null ? String(raw.timestamp) : "0",
   };
 }
 

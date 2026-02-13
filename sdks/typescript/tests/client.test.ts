@@ -48,6 +48,10 @@ const LOW_PRECISION_MARKET: Market = {
     ...MARKET.base,
     max_precision: 3,
   },
+  quote: {
+    ...MARKET.quote,
+    max_precision: 3,
+  },
 };
 
 const MARKETS_RESPONSE: MarketsResponse = {
@@ -186,7 +190,7 @@ describe("O2Client nonce sourcing", () => {
   });
 });
 
-describe("O2Client bigint quantity precision", () => {
+describe("O2Client bigint precision", () => {
   it("createOrder rejects bigint quantity that exceeds market max_precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());
@@ -215,6 +219,37 @@ describe("O2Client bigint quantity precision", () => {
         },
       ]),
     ).rejects.toThrow("Quantity must be a multiple of 1000000");
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it("createOrder rejects bigint price that exceeds market max_precision", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(client.createOrder("fFUEL/fUSDC", "buy", 123456789n, 123000000n)).rejects.toThrow(
+      "Price must be a multiple of 1000000",
+    );
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it("batchActions rejects bigint price that exceeds market max_precision", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(
+      client.batchActions([
+        {
+          market: "fFUEL/fUSDC",
+          actions: [{ type: "createOrder", side: "buy", price: 123456789n, quantity: 123000000n }],
+        },
+      ]),
+    ).rejects.toThrow("Price must be a multiple of 1000000");
     expect(submitActionsSpy).not.toHaveBeenCalled();
   });
 });

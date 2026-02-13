@@ -483,6 +483,7 @@ export class O2Client {
     const normalizedPrice = ensureNumeric(price, "price");
     if (typeof normalizedPrice === "bigint") {
       scaledPrice = normalizedPrice;
+      this.ensureBigIntPricePrecision(scaledPrice, resolved);
     } else {
       scaledPrice = scalePriceString(
         normalizedPrice,
@@ -1120,6 +1121,24 @@ export class O2Client {
     }
   }
 
+  /**
+   * Validate bigint prices against the market precision step.
+   *
+   * Bigint prices are treated as already-scaled chain integers.
+   * They must still align to `max_precision` to avoid on-chain rejects.
+   */
+  private ensureBigIntPricePrecision(price: bigint, market: Market): void {
+    const precisionDelta = market.quote.decimals - market.quote.max_precision;
+    const priceStep = precisionDelta <= 0 ? 1n : BigInt(10 ** precisionDelta);
+    if (price % priceStep !== 0n) {
+      throw new O2Error(
+        `Invalid bigint price precision for ${market.base.symbol}/${market.quote.symbol}. ` +
+          `Price must be a multiple of ${priceStep.toString()}. ` +
+          `Pass price as a decimal string to auto-scale.`,
+      );
+    }
+  }
+
   /** Convert a type-safe Action to the wire-format ActionPayload. */
   private actionToPayload(action: Action, market: Market): ActionPayload {
     const session = this.ensureSession();
@@ -1131,6 +1150,7 @@ export class O2Client {
         const normalizedPrice = ensureNumeric(action.price, "action.price");
         if (typeof normalizedPrice === "bigint") {
           scaledPrice = normalizedPrice;
+          this.ensureBigIntPricePrecision(scaledPrice, market);
         } else {
           scaledPrice = scalePriceString(
             normalizedPrice,

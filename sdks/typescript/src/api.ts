@@ -38,6 +38,7 @@ import {
   type PairSummary,
   type PairTicker,
   parseAccountInfo,
+  parseAggregatedTrade,
   parseBalanceResponse,
   parseDepthLevel,
   parseMarket,
@@ -282,7 +283,7 @@ export class O2Api {
     startTimestamp?: number,
     startTradeId?: string,
   ): Promise<Trade[]> {
-    const raw = await this.get<Record<string, unknown>[]>("/v1/trades_by_account", {
+    const data = await this.get<unknown>("/v1/trades_by_account", {
       market_id: marketId,
       contract,
       direction,
@@ -290,7 +291,8 @@ export class O2Api {
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
     });
-    return raw.map(parseTrade);
+    const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
+    return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
 
   /**
@@ -522,10 +524,11 @@ export class O2Api {
    * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
    */
   async getAggregatedTrades(marketPair: string): Promise<Trade[]> {
-    const raw = await this.get<Record<string, unknown>[]>("/v1/aggregated/trades", {
+    const data = await this.get<unknown>("/v1/aggregated/trades", {
       market_pair: marketPair,
     });
-    return raw.map(parseTrade);
+    const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
+    return (rawArr as Record<string, unknown>[]).map(parseAggregatedTrade);
   }
 
   // ── Faucet ──────────────────────────────────────────────────────
