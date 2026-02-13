@@ -57,7 +57,8 @@ async def _create_order_with_whitelist_retry(client, max_retries=5, **kwargs):
         try:
             return await client.create_order(**kwargs)
         except Exception as e:
-            if "TraderNotWhiteListed" in str(e) and attempt < max_retries - 1:
+            err_text = str(e) + (getattr(e, "reason", None) or "")
+            if "TraderNotWhiteListed" in err_text and attempt < max_retries - 1:
                 # Re-whitelist and retry with increasing backoff
                 trade_account_id = session.trade_account_id if session else None
                 if trade_account_id:
