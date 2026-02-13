@@ -1,14 +1,19 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { keccak_256 } from "@noble/hashes/sha3.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
+  evmPersonalSignDigest,
   evmPersonalSign,
+  ExternalEvmSigner,
+  ExternalSigner,
   evmWalletFromPrivateKey,
   fuelCompactSign,
+  fuelPersonalSignDigest,
   generateEvmWallet,
   generateWallet,
   personalSign,
   rawSign,
+  toFuelCompactSignature,
   walletFromPrivateKey,
 } from "../src/crypto.js";
 import { bytesToHex, hexToBytes } from "../src/encoding.js";
@@ -127,6 +132,78 @@ describe("Crypto Module", () => {
       // Different from Fuel personalSign
       const fuelSig = personalSign(testKeyBytes, message);
       expect(bytesToHex(sig)).not.toBe(bytesToHex(fuelSig));
+    });
+  });
+
+  describe("Digest helpers", () => {
+    it("fuelPersonalSignDigest matches Fuel personalSign framing", () => {
+      const message = new TextEncoder().encode("digest fuel");
+      const digest = fuelPersonalSignDigest(message);
+      const prefix = new TextEncoder().encode("\x19Fuel Signed Message:\n");
+      const lengthStr = new TextEncoder().encode(String(message.length));
+      const expected = sha256(
+        new Uint8Array([...prefix, ...lengthStr, ...message]),
+      );
+      expect(bytesToHex(digest)).toBe(bytesToHex(expected));
+    });
+
+    it("evmPersonalSignDigest matches Ethereum personal_sign framing", () => {
+      const message = new TextEncoder().encode("digest evm");
+      const digest = evmPersonalSignDigest(message);
+      const prefix = new TextEncoder().encode(`\x19Ethereum Signed Message:\n${message.length}`);
+      const expected = keccak_256(new Uint8Array([...prefix, ...message]));
+      expect(bytesToHex(digest)).toBe(bytesToHex(expected));
+    });
+  });
+
+  describe("toFuelCompactSignature", () => {
+    it("packs r+s and embeds recovery bit in first s byte", () => {
+      const r = new Uint8Array(32).fill(0x11);
+      const s = new Uint8Array(32).fill(0x22);
+      s[0] = 0x12;
+
+      const sig0 = toFuelCompactSignature(r, s, 0);
+      const sig1 = toFuelCompactSignature(r, s, 1);
+
+      expect(sig0.length).toBe(64);
+      expect(sig1.length).toBe(64);
+      expect(sig0.slice(0, 32)).toEqual(r);
+      expect(sig1.slice(0, 32)).toEqual(r);
+      expect(sig0[32]).toBe(0x12);
+      expect(sig1[32]).toBe(0x92);
+      expect(sig0.slice(33)).toEqual(s.slice(1));
+      expect(sig1.slice(33)).toEqual(s.slice(1));
+    });
+  });
+
+  describe("External signers", () => {
+    it("ExternalSigner computes Fuel digest and delegates to callback", () => {
+      const callbackSig = new Uint8Array(64).fill(0x5a);
+      const signDigest = vi.fn((_digest: Uint8Array) => callbackSig);
+      const signer = new ExternalSigner("0x1234", signDigest);
+      const message = new TextEncoder().encode("external fuel");
+
+      const sig = signer.personalSign(message);
+
+      expect(signer.b256Address).toBe("0x1234");
+      expect(signDigest).toHaveBeenCalledTimes(1);
+      expect(signDigest.mock.calls[0][0]).toEqual(fuelPersonalSignDigest(message));
+      expect(sig).toBe(callbackSig);
+    });
+
+    it("ExternalEvmSigner computes EVM digest and delegates to callback", () => {
+      const callbackSig = new Uint8Array(64).fill(0x7b);
+      const signDigest = vi.fn((_digest: Uint8Array) => callbackSig);
+      const signer = new ExternalEvmSigner("0x5678", "0xabcd", signDigest);
+      const message = new TextEncoder().encode("external evm");
+
+      const sig = signer.personalSign(message);
+
+      expect(signer.b256Address).toBe("0x5678");
+      expect(signer.evmAddress).toBe("0xabcd");
+      expect(signDigest).toHaveBeenCalledTimes(1);
+      expect(signDigest.mock.calls[0][0]).toEqual(evmPersonalSignDigest(message));
+      expect(sig).toBe(callbackSig);
     });
   });
 
