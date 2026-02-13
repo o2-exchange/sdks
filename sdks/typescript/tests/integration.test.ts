@@ -165,14 +165,34 @@ async function setupWithRetry(
   wallet: WalletState,
   maxRetries = 4,
 ): Promise<{ tradeAccountId: TradeAccountId; nonce: bigint }> {
+  let lastError: unknown = null;
+
+  const formatError = (error: unknown): string => {
+    if (error instanceof Error) {
+      const apiCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+      const reason = "reason" in error ? (error as { reason?: unknown }).reason : undefined;
+      const parts = [error.name, error.message];
+      if (apiCode !== undefined) parts.push(`code=${String(apiCode)}`);
+      if (reason !== undefined) parts.push(`reason=${String(reason)}`);
+      return parts.join(" | ");
+    }
+    return String(error);
+  };
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       return await client.setupAccount(wallet);
-    } catch {
+    } catch (error: unknown) {
+      lastError = error;
+      console.error(
+        `[integration] setupAccount attempt ${attempt + 1}/${maxRetries} failed for ${wallet.b256Address.slice(0, 12)}...: ${formatError(error)}`,
+      );
       if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
-  throw new Error("setupAccount failed after retries");
+  throw new Error(
+    `setupAccount failed after retries. Last error: ${lastError ? formatError(lastError) : "unknown"}`,
+  );
 }
 
 function moderateFillPriceStr(market: Market): string {

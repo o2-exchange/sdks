@@ -92,11 +92,13 @@ Unit tests (no network required):
 npm test
 ```
 
-Integration tests (requires `O2_PRIVATE_KEY` and `O2_INTEGRATION` env vars):
+Integration tests (live testnet access required):
 
 ```bash
-O2_INTEGRATION=1 O2_PRIVATE_KEY=0x... npm test
+npm run test:integration
 ```
+
+Note: these tests require outbound DNS/HTTPS/WebSocket access to O2 testnet endpoints. In sandboxed environments, run them outside the sandbox (unsandboxed) to avoid `fetch failed`/DNS resolution errors.
 
 ## AI Agent Integration
 

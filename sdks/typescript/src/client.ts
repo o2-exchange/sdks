@@ -382,8 +382,8 @@ export class O2Client {
     // Generate session keypair
     const sessionWallet = generateWallet();
 
-    // Get current nonce
-    const nonce = accountInfo.trade_account?.nonce ?? 0n;
+    // Fetch nonce by trade account ID (owner lookups may omit trade_account state)
+    const nonce = await this.getNonce(tradeAccountId);
 
     // Calculate expiry
     const expiry = BigInt(Math.floor(Date.now() / 1000) + expiryDays * 24 * 60 * 60);
@@ -894,8 +894,8 @@ export class O2Client {
       throw new O2Error("No trade account found for this wallet. Call setupAccount() first.");
     }
 
-    // Get current nonce and chain_id
-    const nonce = accountInfo.trade_account?.nonce ?? 0n;
+    // Fetch nonce by trade account ID (owner lookups may omit trade_account state)
+    const nonce = await this.getNonce(tradeAccountId);
 
     const marketsData = await this.fetchMarkets();
     const chainIdRaw = marketsData.chain_id;
