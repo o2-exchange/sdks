@@ -105,7 +105,7 @@ export function registerRefererAction(to: Identity): Action {
  *     ],
  *   },
  * ];
- * await client.batchActions(session, groups, true);
+ * await client.batchActions(groups, true);
  * ```
  */
 export interface MarketActionGroup {

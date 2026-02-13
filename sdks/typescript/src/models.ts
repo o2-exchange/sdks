@@ -716,7 +716,7 @@ export interface SessionActionsRequest {
  *
  * @example
  * ```ts
- * const response = await client.createOrder(session, "fFUEL/fUSDC", "buy", "0.02", "100");
+ * const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
  * if (response.success) {
  *   console.log(`TX: ${response.txId}`);
  *   console.log(`Orders: ${response.orders?.length}`);

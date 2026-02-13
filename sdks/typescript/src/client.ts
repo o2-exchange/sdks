@@ -280,7 +280,7 @@ export class O2Client {
    * 2. Create if needed
    * 3. Mint via faucet (testnet/devnet) - non-fatal on cooldown
    * 4. Whitelist account
-   * 5. Return trade_account_id
+   * 5. Return trade_account_id and nonce
    */
   async setupAccount(wallet: Signer): Promise<{ tradeAccountId: TradeAccountId; nonce: bigint }> {
     // 1. Check if account already exists

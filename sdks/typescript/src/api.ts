@@ -222,7 +222,7 @@ export class O2Api {
   /**
    * Fetch the order book depth snapshot.
    * @param marketId - The market identifier.
-   * @param precision - Number of price levels to return (default: 10).
+   * @param precision - Price aggregation precision (default: 10).
    */
   async getDepth(marketId: MarketId, precision = 10): Promise<DepthSnapshot> {
     const data = await this.get<Record<string, unknown>>("/v1/depth", {
