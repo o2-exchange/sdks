@@ -1241,7 +1241,7 @@ export function parseBigInt(value: unknown): bigint {
 
 /** Parse a raw API order object into a typed {@link Order}. */
 export function parseOrder(raw: Record<string, unknown>): Order {
-  const side = raw.side as Side;
+  const side = (raw.side as string).toLowerCase() as Side;
 
   // Normalize order_type: API returns BoundedMarket prices as numbers
   let orderType = raw.order_type as OrderType;
@@ -1282,7 +1282,7 @@ export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
 export function parseTrade(raw: Record<string, unknown>): Trade {
   return {
     ...(raw as unknown as Trade),
-    side: raw.side as Side,
+    side: (raw.side as string).toLowerCase() as Side,
     price: parseBigInt(raw.price),
     quantity: parseBigInt(raw.quantity),
     total: parseBigInt(raw.total),
