@@ -77,6 +77,8 @@ import type {
 import { assetId as toAssetId } from "./models.js";
 import { O2WebSocket } from "./websocket.js";
 
+const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
+
 /** Capitalize side for the API wire format: "buy" → "Buy", "sell" → "Sell". */
 function capitalizeSide(side: string): string {
   return side.charAt(0).toUpperCase() + side.slice(1);
@@ -129,6 +131,8 @@ export interface O2ClientOptions {
   network?: Network;
   /** Custom network configuration (overrides `network`). */
   config?: NetworkConfig;
+  /** Markets cache TTL in milliseconds (default: `60_000`). */
+  marketsCacheTtlMs?: number;
 }
 
 /**
@@ -164,11 +168,14 @@ export class O2Client {
   private readonly config: NetworkConfig;
   private marketsCache: MarketsResponse | null = null;
   private marketsCacheTime = 0;
+  private marketsRefreshPromise: Promise<MarketsResponse> | null = null;
+  private readonly marketsCacheTtlMs: number;
   private _session: SessionState | null = null;
 
   constructor(options: O2ClientOptions = {}) {
     this.config = options.config ?? getNetworkConfig(options.network ?? Network.TESTNET);
     this.api = new O2Api({ config: this.config });
+    this.marketsCacheTtlMs = options.marketsCacheTtlMs ?? DEFAULT_MARKETS_CACHE_TTL_MS;
   }
 
   /** The active trading session, or `null` if no session has been created. */
@@ -641,7 +648,7 @@ export class O2Client {
 
   // ── Market data ─────────────────────────────────────────────────
 
-  /** Fetch all available markets. Results are cached for 60 seconds. */
+  /** Fetch all available markets. Results are cached with stale-while-revalidate. */
   async getMarkets(): Promise<Market[]> {
     const data = await this.fetchMarkets();
     return data.markets;
@@ -826,6 +833,7 @@ export class O2Client {
   close(): void {
     this.disconnectWs();
     this.marketsCache = null;
+    this.marketsRefreshPromise = null;
   }
 
   /** Enables `await using client = new O2Client(...)`. */
@@ -924,12 +932,30 @@ export class O2Client {
 
   private async fetchMarkets(): Promise<MarketsResponse> {
     const now = Date.now();
-    // Cache for 60 seconds
-    if (this.marketsCache && now - this.marketsCacheTime < 60_000) {
+    if (this.marketsCache && now - this.marketsCacheTime < this.marketsCacheTtlMs) {
       return this.marketsCache;
     }
+    if (this.marketsCache) {
+      // Stale — return immediately, refresh in background
+      if (!this.marketsRefreshPromise) {
+        this.marketsRefreshPromise = this.api.getMarkets().then(
+          (data) => {
+            this.marketsCache = data;
+            this.marketsCacheTime = Date.now();
+            this.marketsRefreshPromise = null;
+            return data;
+          },
+          () => {
+            this.marketsRefreshPromise = null;
+            return this.marketsCache!;
+          },
+        );
+      }
+      return this.marketsCache;
+    }
+    // No cache — must block
     this.marketsCache = await this.api.getMarkets();
-    this.marketsCacheTime = now;
+    this.marketsCacheTime = Date.now();
     return this.marketsCache;
   }
 
