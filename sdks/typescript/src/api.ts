@@ -429,25 +429,24 @@ export class O2Api {
     ownerId: string,
     request: SessionActionsRequest,
   ): Promise<SessionActionsResponse> {
-    try {
-      const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
-        body: request,
-        headers: { "O2-Owner-Id": ownerId },
-      });
+    const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+    });
 
-      if (isActionsSuccess(body)) {
-        return SessionActionsResponse.fromResponse(body, parseOrder);
-      }
-
-      throw parseApiError(body);
-    } catch (error) {
-      // Convert preflight validation errors into SessionActionsResponse
-      // so callers can use response.isPreflightError instead of catching
-      if (error instanceof O2Error && error.code != null) {
-        return new SessionActionsResponse(null, null, null, null, error.code, error.message);
-      }
-      throw error;
+    if (isActionsSuccess(body)) {
+      return SessionActionsResponse.fromResponse(body, parseOrder);
     }
+
+    const error = parseApiError(body);
+
+    // Preflight validation errors may be returned with HTTP 200 by this endpoint.
+    // Convert only those response-body errors to SessionActionsResponse.
+    if (error.code != null) {
+      return new SessionActionsResponse(null, null, null, null, error.code, error.message);
+    }
+
+    throw error;
   }
 
   // ── Account Operations ──────────────────────────────────────────
