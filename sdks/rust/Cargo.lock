@@ -822,6 +822,7 @@ version = "0.1.0"
 dependencies = [
  "futures-util",
  "hex",
+ "log",
  "rand",
  "reqwest",
  "rust_decimal",

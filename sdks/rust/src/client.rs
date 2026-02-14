@@ -5,6 +5,8 @@
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use log::debug;
+
 use crate::api::O2Api;
 use crate::config::{Network, NetworkConfig};
 use crate::crypto::SignableWallet;
@@ -55,8 +57,10 @@ impl O2Client {
     }
 
     async fn retry_whitelist_account(&self, trade_account_id: &str) -> bool {
+        debug!("client.retry_whitelist_account trade_account_id={trade_account_id}");
         // Whitelist is testnet-only for current environments.
         if !self.config.api_base.contains("api.testnet.o2.app") {
+            debug!("client.retry_whitelist_account skipped (non-testnet)");
             return true;
         }
 
@@ -69,7 +73,14 @@ impl O2Client {
             }
 
             match self.api.whitelist_account(trade_account_id).await {
-                Ok(_) => return true,
+                Ok(_) => {
+                    debug!(
+                        "client.retry_whitelist_account success attempt={} trade_account_id={}",
+                        idx + 1,
+                        trade_account_id
+                    );
+                    return true;
+                }
                 Err(e) => {
                     last_error = e.to_string();
                     if idx < delays_secs.len() - 1 {
@@ -94,8 +105,10 @@ impl O2Client {
     }
 
     async fn retry_mint_to_contract(&self, trade_account_id: &str) -> bool {
+        debug!("client.retry_mint_to_contract trade_account_id={trade_account_id}");
         // Faucet currently exists only on non-mainnet configs.
         if self.config.faucet_url.is_none() {
+            debug!("client.retry_mint_to_contract skipped (no faucet url)");
             return true;
         }
 
@@ -118,7 +131,14 @@ impl O2Client {
             }
 
             match self.api.mint_to_contract(trade_account_id).await {
-                Ok(resp) if resp.error.is_none() => return true,
+                Ok(resp) if resp.error.is_none() => {
+                    debug!(
+                        "client.retry_mint_to_contract success attempt={} trade_account_id={}",
+                        idx + 1,
+                        trade_account_id
+                    );
+                    return true;
+                }
                 Ok(resp) => {
                     last_error = resp
                         .error
@@ -153,6 +173,33 @@ impl O2Client {
         false
     }
 
+    async fn should_faucet_account(&mut self, trade_account_id: &str) -> bool {
+        let account_id = TradeAccountId::from(trade_account_id.to_string());
+        match self.get_balances(&account_id).await {
+            Ok(balances) => {
+                let has_non_zero_balance = balances.values().any(|balance| {
+                    balance.trading_account_balance > 0
+                        || balance.total_locked > 0
+                        || balance.total_unlocked > 0
+                });
+                debug!(
+                    "client.should_faucet_account trade_account_id={} assets={} has_non_zero_balance={}",
+                    trade_account_id,
+                    balances.len(),
+                    has_non_zero_balance
+                );
+                !has_non_zero_balance
+            }
+            Err(e) => {
+                debug!(
+                    "client.should_faucet_account balance_check_failed trade_account_id={} error={} fallback_should_faucet=true",
+                    trade_account_id, e
+                );
+                true
+            }
+        }
+    }
+
     /// Create a new O2Client for the given network.
     pub fn new(network: Network) -> Self {
         let config = NetworkConfig::from_network(network);
@@ -180,22 +227,26 @@ impl O2Client {
 
     /// Generate a new Fuel-native wallet.
     pub fn generate_wallet(&self) -> Result<Wallet, O2Error> {
+        debug!("client.generate_wallet");
         generate_keypair()
     }
 
     /// Generate a new EVM-compatible wallet.
     pub fn generate_evm_wallet(&self) -> Result<EvmWallet, O2Error> {
+        debug!("client.generate_evm_wallet");
         generate_evm_keypair()
     }
 
     /// Load a Fuel-native wallet from a private key hex string.
     pub fn load_wallet(&self, private_key_hex: &str) -> Result<Wallet, O2Error> {
+        debug!("client.load_wallet");
         let key = parse_hex_32(private_key_hex)?;
         load_wallet(&key)
     }
 
     /// Load an EVM wallet from a private key hex string.
     pub fn load_evm_wallet(&self, private_key_hex: &str) -> Result<EvmWallet, O2Error> {
+        debug!("client.load_evm_wallet");
         let key = parse_hex_32(private_key_hex)?;
         load_evm_wallet(&key)
     }
@@ -206,6 +257,7 @@ impl O2Client {
 
     /// Fetch and cache markets.
     pub async fn fetch_markets(&mut self) -> Result<&MarketsResponse, O2Error> {
+        debug!("client.fetch_markets");
         let resp = self.api.get_markets().await?;
         self.markets_cache = Some(resp);
         Ok(self.markets_cache.as_ref().unwrap())
@@ -221,12 +273,14 @@ impl O2Client {
 
     /// Get all markets.
     pub async fn get_markets(&mut self) -> Result<Vec<Market>, O2Error> {
+        debug!("client.get_markets");
         let resp = self.ensure_markets().await?;
         Ok(resp.markets.clone())
     }
 
     /// Get a market by symbol pair (e.g., "FUEL/USDC").
     pub async fn get_market(&mut self, symbol: &MarketSymbol) -> Result<Market, O2Error> {
+        debug!("client.get_market symbol={symbol}");
         let resp = self.ensure_markets().await?;
         for market in &resp.markets {
             if market.symbol_pair() == *symbol {
@@ -241,6 +295,7 @@ impl O2Client {
 
     /// Get a market by hex market ID.
     pub async fn get_market_by_id(&mut self, market_id: &MarketId) -> Result<Market, O2Error> {
+        debug!("client.get_market_by_id market_id={market_id}");
         let resp = self.ensure_markets().await?;
         for market in &resp.markets {
             if market.market_id == *market_id {
@@ -273,6 +328,7 @@ impl O2Client {
         &mut self,
         wallet: &W,
     ) -> Result<AccountResponse, O2Error> {
+        debug!("client.setup_account");
         let owner_hex = to_hex_string(wallet.b256_address());
 
         // 1. Check if account already exists
@@ -285,8 +341,15 @@ impl O2Client {
             created.trade_account_id
         };
 
-        // 3. Mint via faucet (non-fatal; retry to reduce flaky setup on cooldown windows)
-        let _ = self.retry_mint_to_contract(trade_account_id.as_str()).await;
+        // 3. Mint via faucet only when the account currently has no balances.
+        if self.should_faucet_account(trade_account_id.as_str()).await {
+            let _ = self.retry_mint_to_contract(trade_account_id.as_str()).await;
+        } else {
+            debug!(
+                "client.setup_account skipping_faucet trade_account_id={} (non-zero balance detected)",
+                trade_account_id
+            );
+        }
 
         // 4. Whitelist account (testnet-only, non-fatal; retry for transient failures)
         let _ = self
@@ -309,6 +372,11 @@ impl O2Client {
         market_names: &[&MarketSymbol],
         expiry_days: u64,
     ) -> Result<Session, O2Error> {
+        debug!(
+            "client.create_session markets={} expiry_days={}",
+            market_names.len(),
+            expiry_days
+        );
         let owner_hex = to_hex_string(owner.b256_address());
 
         // Resolve market names to contract_ids
@@ -414,6 +482,10 @@ impl O2Client {
         settle_first: bool,
         collect_orders: bool,
     ) -> Result<SessionActionsResponse, O2Error> {
+        debug!(
+            "client.create_order market={} settle_first={} collect_orders={}",
+            market_name, settle_first, collect_orders
+        );
         let mut actions = Vec::new();
         if settle_first {
             actions.push(Action::SettleBalance);
@@ -435,6 +507,10 @@ impl O2Client {
         order_id: &OrderId,
         market_name: &MarketSymbol,
     ) -> Result<SessionActionsResponse, O2Error> {
+        debug!(
+            "client.cancel_order market={} order_id={}",
+            market_name, order_id
+        );
         self.batch_actions(
             session,
             market_name,
@@ -452,6 +528,7 @@ impl O2Client {
         session: &mut Session,
         market_name: &MarketSymbol,
     ) -> Result<Vec<SessionActionsResponse>, O2Error> {
+        debug!("client.cancel_all_orders market={}", market_name);
         Self::check_session_expiry(session)?;
         let market = self.get_market(market_name).await?;
         let orders_resp = self
@@ -502,6 +579,12 @@ impl O2Client {
         actions: Vec<Action>,
         collect_orders: bool,
     ) -> Result<SessionActionsResponse, O2Error> {
+        debug!(
+            "client.batch_actions market={} actions={} collect_orders={}",
+            market_name,
+            actions.len(),
+            collect_orders
+        );
         self.batch_actions_multi(session, &[(market_name, actions)], collect_orders)
             .await
     }
@@ -513,6 +596,16 @@ impl O2Client {
         market_actions: &[(&MarketSymbol, Vec<Action>)],
         collect_orders: bool,
     ) -> Result<SessionActionsResponse, O2Error> {
+        let total_actions: usize = market_actions
+            .iter()
+            .map(|(_, actions)| actions.len())
+            .sum();
+        debug!(
+            "client.batch_actions_multi markets={} actions={} collect_orders={}",
+            market_actions.len(),
+            total_actions,
+            collect_orders
+        );
         Self::check_session_expiry(session)?;
 
         // Extract accounts_registry_id in a block so the borrow on self ends
@@ -580,6 +673,7 @@ impl O2Client {
         session: &mut Session,
         market_name: &MarketSymbol,
     ) -> Result<SessionActionsResponse, O2Error> {
+        debug!("client.settle_balance market={}", market_name);
         self.batch_actions(session, market_name, vec![Action::SettleBalance], false)
             .await
     }
@@ -594,6 +688,10 @@ impl O2Client {
         market_name: &MarketSymbol,
         precision: u64,
     ) -> Result<DepthSnapshot, O2Error> {
+        debug!(
+            "client.get_depth market={} precision={}",
+            market_name, precision
+        );
         let market = self.get_market(market_name).await?;
         self.api
             .get_depth(market.market_id.as_str(), precision)
@@ -606,6 +704,7 @@ impl O2Client {
         market_name: &MarketSymbol,
         count: u32,
     ) -> Result<TradesResponse, O2Error> {
+        debug!("client.get_trades market={} count={}", market_name, count);
         let market = self.get_market(market_name).await?;
         self.api
             .get_trades(market.market_id.as_str(), "desc", count, None, None)
@@ -620,6 +719,10 @@ impl O2Client {
         from_ts: u64,
         to_ts: u64,
     ) -> Result<Vec<Bar>, O2Error> {
+        debug!(
+            "client.get_bars market={} resolution={} from_ts={} to_ts={}",
+            market_name, resolution, from_ts, to_ts
+        );
         let market = self.get_market(market_name).await?;
         self.api
             .get_bars(market.market_id.as_str(), from_ts, to_ts, resolution)
@@ -631,6 +734,7 @@ impl O2Client {
         &mut self,
         market_name: &MarketSymbol,
     ) -> Result<MarketTicker, O2Error> {
+        debug!("client.get_ticker market={}", market_name);
         let market = self.get_market(market_name).await?;
         let tickers = self
             .api
@@ -651,6 +755,7 @@ impl O2Client {
         &mut self,
         trade_account_id: &TradeAccountId,
     ) -> Result<HashMap<String, BalanceResponse>, O2Error> {
+        debug!("client.get_balances trade_account_id={}", trade_account_id);
         let markets = self.get_markets().await?;
         let mut balances = HashMap::new();
         let mut seen_assets = std::collections::HashSet::new();
@@ -687,6 +792,10 @@ impl O2Client {
         is_open: Option<bool>,
         count: u32,
     ) -> Result<OrdersResponse, O2Error> {
+        debug!(
+            "client.get_orders trade_account_id={} market={} is_open={:?} count={}",
+            trade_account_id, market_name, is_open, count
+        );
         let market = self.get_market(market_name).await?;
         self.api
             .get_orders(
@@ -707,6 +816,10 @@ impl O2Client {
         market_name: &MarketSymbol,
         order_id: &str,
     ) -> Result<Order, O2Error> {
+        debug!(
+            "client.get_order market={} order_id={}",
+            market_name, order_id
+        );
         let market = self.get_market(market_name).await?;
         self.api
             .get_order(market.market_id.as_str(), order_id)
@@ -719,6 +832,7 @@ impl O2Client {
 
     /// Get the current nonce for a trading account.
     pub async fn get_nonce(&self, trade_account_id: &str) -> Result<u64, O2Error> {
+        debug!("client.get_nonce trade_account_id={}", trade_account_id);
         let account = self.api.get_account_by_id(trade_account_id).await?;
         Self::parse_account_nonce(
             account.trade_account.as_ref().map(|ta| ta.nonce),
@@ -728,6 +842,10 @@ impl O2Client {
 
     /// Refresh the nonce on a session from the API.
     pub async fn refresh_nonce(&self, session: &mut Session) -> Result<u64, O2Error> {
+        debug!(
+            "client.refresh_nonce trade_account_id={}",
+            session.trade_account_id
+        );
         let nonce = self.get_nonce(session.trade_account_id.as_str()).await?;
         session.nonce = nonce;
         Ok(nonce)
@@ -747,6 +865,10 @@ impl O2Client {
         amount: &str,
         to: Option<&str>,
     ) -> Result<WithdrawResponse, O2Error> {
+        debug!(
+            "client.withdraw trade_account_id={} asset_id={} amount={} to={:?}",
+            session.trade_account_id, asset_id, amount, to
+        );
         let owner_hex = to_hex_string(owner.b256_address());
         let to_address_hex = to.unwrap_or(&owner_hex);
         let to_address_bytes = parse_hex_32(to_address_hex)?;
@@ -791,6 +913,7 @@ impl O2Client {
         ws_slot: &mut Option<crate::websocket::O2WebSocket>,
         ws_url: &str,
     ) -> Result<(), O2Error> {
+        debug!("client.ensure_ws url={}", ws_url);
         if ws_slot.as_ref().is_some_and(|ws| ws.is_terminated()) {
             *ws_slot = None;
         }
@@ -806,6 +929,10 @@ impl O2Client {
         market_id: &str,
         precision: &str,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
+        debug!(
+            "client.stream_depth market_id={} precision={}",
+            market_id, precision
+        );
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard
@@ -820,6 +947,7 @@ impl O2Client {
         &self,
         identities: &[Identity],
     ) -> Result<TypedStream<OrderUpdate>, O2Error> {
+        debug!("client.stream_orders identities={}", identities.len());
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard.as_ref().unwrap().stream_orders(identities).await
@@ -830,6 +958,7 @@ impl O2Client {
         &self,
         market_id: &str,
     ) -> Result<TypedStream<TradeUpdate>, O2Error> {
+        debug!("client.stream_trades market_id={}", market_id);
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard.as_ref().unwrap().stream_trades(market_id).await
@@ -840,6 +969,7 @@ impl O2Client {
         &self,
         identities: &[Identity],
     ) -> Result<TypedStream<BalanceUpdate>, O2Error> {
+        debug!("client.stream_balances identities={}", identities.len());
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard.as_ref().unwrap().stream_balances(identities).await
@@ -850,6 +980,7 @@ impl O2Client {
         &self,
         identities: &[Identity],
     ) -> Result<TypedStream<NonceUpdate>, O2Error> {
+        debug!("client.stream_nonce identities={}", identities.len());
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard.as_ref().unwrap().stream_nonce(identities).await
@@ -857,6 +988,7 @@ impl O2Client {
 
     /// Disconnect the shared WebSocket connection and release resources.
     pub async fn disconnect_ws(&self) -> Result<(), O2Error> {
+        debug!("client.disconnect_ws");
         let mut guard = self.ws.lock().await;
         if let Some(ws) = guard.take() {
             ws.disconnect().await?;
