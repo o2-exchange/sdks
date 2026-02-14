@@ -24,6 +24,13 @@ import type {
   OrderUpdate,
   TradeUpdate,
 } from "./models.js";
+import {
+  parseBalanceUpdate,
+  parseDepthUpdate,
+  parseNonceUpdate,
+  parseOrderUpdate,
+  parseTradeUpdate,
+} from "./models.js";
 
 /**
  * Configuration options for {@link O2WebSocket}.
@@ -193,7 +200,11 @@ export class O2WebSocket {
       market_id: marketId,
       precision: String(precision),
     };
-    yield* this.subscribe<DepthUpdate>(sub, ["subscribe_depth", "subscribe_depth_update"]);
+    yield* this.subscribe<DepthUpdate>(
+      sub,
+      ["subscribe_depth", "subscribe_depth_update"],
+      parseDepthUpdate,
+    );
   }
 
   /**
@@ -202,7 +213,7 @@ export class O2WebSocket {
    */
   async *streamOrders(identities: Identity[]): AsyncGenerator<OrderUpdate> {
     const sub = { action: "subscribe_orders", identities };
-    yield* this.subscribe<OrderUpdate>(sub, ["subscribe_orders"]);
+    yield* this.subscribe<OrderUpdate>(sub, ["subscribe_orders"], parseOrderUpdate);
   }
 
   /**
@@ -211,7 +222,7 @@ export class O2WebSocket {
    */
   async *streamTrades(marketId: string): AsyncGenerator<TradeUpdate> {
     const sub = { action: "subscribe_trades", market_id: marketId };
-    yield* this.subscribe<TradeUpdate>(sub, ["subscribe_trades", "trades"]);
+    yield* this.subscribe<TradeUpdate>(sub, ["subscribe_trades", "trades"], parseTradeUpdate);
   }
 
   /**
@@ -220,7 +231,7 @@ export class O2WebSocket {
    */
   async *streamBalances(identities: Identity[]): AsyncGenerator<BalanceUpdate> {
     const sub = { action: "subscribe_balances", identities };
-    yield* this.subscribe<BalanceUpdate>(sub, ["subscribe_balances"]);
+    yield* this.subscribe<BalanceUpdate>(sub, ["subscribe_balances"], parseBalanceUpdate);
   }
 
   /**
@@ -229,7 +240,7 @@ export class O2WebSocket {
    */
   async *streamNonce(identities: Identity[]): AsyncGenerator<NonceUpdate> {
     const sub = { action: "subscribe_nonce", identities };
-    yield* this.subscribe<NonceUpdate>(sub, ["subscribe_nonce", "nonce"]);
+    yield* this.subscribe<NonceUpdate>(sub, ["subscribe_nonce", "nonce"], parseNonceUpdate);
   }
 
   // ── Unsubscribe ─────────────────────────────────────────────────
@@ -275,6 +286,7 @@ export class O2WebSocket {
   private async *subscribe<T>(
     subscription: Record<string, unknown>,
     actions: string[],
+    transform?: (raw: Record<string, unknown>) => T,
   ): AsyncGenerator<T> {
     // Track for reconnection (deduplicate by content)
     const subKey = JSON.stringify(subscription);
@@ -291,7 +303,15 @@ export class O2WebSocket {
     let done = false;
 
     const handler = (msg: Record<string, unknown>) => {
-      queue.push(msg as T);
+      let parsed: T;
+      try {
+        parsed = transform ? transform(msg) : (msg as T);
+      } catch {
+        // Drop malformed payloads instead of letting parser exceptions
+        // unwind through the WebSocket message event path.
+        return;
+      }
+      queue.push(parsed);
       if (resolve) {
         resolve();
         resolve = null;

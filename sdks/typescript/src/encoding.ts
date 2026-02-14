@@ -237,7 +237,7 @@ export interface MarketInfo {
 
 export interface CreateOrderAction {
   CreateOrder: {
-    side: "Buy" | "Sell";
+    side: "buy" | "sell";
     price: string;
     quantity: string;
     order_type: OrderTypeJSON;
@@ -337,7 +337,7 @@ export function actionToCall(
     let amount: bigint;
     let assetId: Uint8Array;
 
-    if (data.side === "Buy") {
+    if (data.side.toLowerCase() === "buy") {
       amount = (price * quantity) / BigInt(10 ** baseDecimals);
       assetId = hexToBytes(market.quote.asset);
     } else {
@@ -402,6 +402,67 @@ export function actionToCall(
 }
 
 // ── Decimal Helpers ─────────────────────────────────────────────────
+
+/**
+ * Precisely scale a decimal string to a chain integer without float intermediaries.
+ *
+ * Algorithm:
+ * 1. Split on `.` to get whole and fractional parts
+ * 2. Pad/truncate fractional part to `decimals` digits
+ * 3. Concatenate and parse as bigint
+ *
+ * @param value - Decimal string (e.g., `"0.02"`, `"100.5"`)
+ * @param decimals - Number of decimal places to scale to
+ * @returns The scaled bigint value
+ *
+ * @example
+ * ```ts
+ * scaleDecimalString("0.02", 9) // 20000000n
+ * scaleDecimalString("100", 9)  // 100000000000n
+ * ```
+ */
+export function scaleDecimalString(value: string, decimals: number): bigint {
+  if (!/^-?(?:\d+|\d+\.\d*|\.\d+)$/.test(value)) {
+    throw new TypeError(`Invalid decimal string: ${value}`);
+  }
+  const [whole = "0", frac = ""] = value.split(".");
+  const paddedFrac = frac.slice(0, decimals).padEnd(decimals, "0");
+  return BigInt((whole || "0") + paddedFrac);
+}
+
+/**
+ * Scale a decimal string price to a chain integer, truncated to max_precision.
+ * Uses floor truncation for prices. No float intermediary.
+ */
+export function scalePriceString(value: string, decimals: number, maxPrecision: number): bigint {
+  const scaled = scaleDecimalString(value, decimals);
+  const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
+  return (scaled / truncateFactor) * truncateFactor;
+}
+
+/**
+ * Scale a decimal string quantity to a chain integer, truncated to max_precision.
+ * Uses ceil truncation for quantities to avoid rounding to zero. No float intermediary.
+ */
+export function scaleQuantityString(value: string, decimals: number, maxPrecision: number): bigint {
+  let scaled = scaleDecimalString(value, decimals);
+  // If fractional digits beyond `decimals` were non-zero, bump up by 1
+  // so the ceiling step rounds to the minimum representable unit
+  const frac = value.split(".")[1] ?? "";
+  if (
+    frac.length > decimals &&
+    frac
+      .slice(decimals)
+      .split("")
+      .some((c) => c !== "0")
+  ) {
+    scaled += 1n;
+  }
+  const truncateFactor = BigInt(10 ** (decimals - maxPrecision));
+  const remainder = scaled % truncateFactor;
+  if (remainder === 0n) return scaled;
+  return scaled + (truncateFactor - remainder);
+}
 
 /**
  * Scale a human-readable price to a chain integer, truncated to max_precision.

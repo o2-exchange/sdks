@@ -11,6 +11,14 @@ import {
   type Market,
   type MarketsResponse,
   type Order,
+  parseBalanceResponse,
+  parseBigInt,
+  parseDepthLevel,
+  parseDepthUpdate,
+  parseDesiredQuantity,
+  parseOrder,
+  parseOrderBookBalance,
+  parseTrade,
   scalePriceForMarket,
   scaleQuantityForMarket,
   type Trade,
@@ -122,7 +130,7 @@ describe("Models Module", () => {
     it("parses order with various order types", () => {
       const spotOrder: Order = {
         order_id: "0x1122",
-        side: "Buy",
+        side: "buy",
         order_type: "Spot",
         quantity: "5000000000",
         price: "100000000",
@@ -133,7 +141,7 @@ describe("Models Module", () => {
 
       const limitOrder: Order = {
         order_id: "0x3344",
-        side: "Sell",
+        side: "sell",
         order_type: { Limit: ["100000000", "1734876543210"] },
         quantity: "5000000000",
         price: "100000000",
@@ -146,7 +154,7 @@ describe("Models Module", () => {
     it("parses balance response", () => {
       const balance: BalanceResponse = {
         order_books: {
-          "0x9ad52fb8": { locked: "2000000000", unlocked: "34878720000" },
+          "0x9ad52fb8": { locked: "2000000000", unlocked: "34878720000", fee: "500000" },
         },
         total_locked: "2000000000",
         total_unlocked: "34878720000",
@@ -160,15 +168,294 @@ describe("Models Module", () => {
     it("parses trade response", () => {
       const trade: Trade = {
         trade_id: "12345",
-        side: "Buy",
+        side: "buy",
         total: "500000000000",
         quantity: "5000000000",
         price: "100000000",
         timestamp: "1734876543",
       };
 
-      expect(trade.side).toBe("Buy");
+      expect(trade.side).toBe("buy");
       expect(BigInt(trade.quantity)).toBe(5000000000n);
+    });
+  });
+
+  describe("Parse functions", () => {
+    describe("parseBigInt", () => {
+      it("converts string to bigint", () => {
+        expect(parseBigInt("123")).toBe(123n);
+      });
+
+      it("converts number to bigint", () => {
+        expect(parseBigInt(42)).toBe(42n);
+      });
+
+      it("passes through bigint", () => {
+        expect(parseBigInt(99n)).toBe(99n);
+      });
+
+      it("throws TypeError on undefined", () => {
+        expect(() => parseBigInt(undefined)).toThrow(TypeError);
+      });
+
+      it("throws TypeError on null", () => {
+        expect(() => parseBigInt(null)).toThrow(TypeError);
+      });
+
+      it("throws TypeError on boolean", () => {
+        expect(() => parseBigInt(true)).toThrow(TypeError);
+      });
+
+      it("throws TypeError on object", () => {
+        expect(() => parseBigInt({})).toThrow(TypeError);
+      });
+    });
+
+    describe("parseOrder", () => {
+      it("parses a complete raw order", () => {
+        const raw = {
+          order_id: "0xABC",
+          side: "Buy",
+          order_type: "Spot",
+          price: "100000000",
+          quantity: "5000000000",
+          timestamp: "1734876543",
+          close: false,
+        };
+        const order = parseOrder(raw);
+        expect(order.order_id).toBe("0xabc");
+        expect(order.side).toBe("buy");
+        expect(order.price).toBe(100000000n);
+        expect(order.quantity).toBe(5000000000n);
+      });
+
+      it("defaults price to 0n when missing", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "buy",
+          order_type: "Spot",
+          quantity: "100",
+          timestamp: "0",
+          close: false,
+        };
+        const order = parseOrder(raw);
+        expect(order.price).toBe(0n);
+      });
+
+      it("defaults quantity to 0n when missing", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "sell",
+          order_type: "Spot",
+          price: "100",
+          timestamp: "0",
+          close: false,
+        };
+        const order = parseOrder(raw);
+        expect(order.quantity).toBe(0n);
+      });
+
+      it("normalizes side to lowercase", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "Sell",
+          order_type: "Spot",
+          price: "1",
+          quantity: "1",
+          timestamp: "0",
+          close: false,
+        };
+        expect(parseOrder(raw).side).toBe("sell");
+      });
+
+      it("parses Quote desired_quantity from API", () => {
+        const raw = {
+          order_id: "0x1",
+          side: "Buy",
+          order_type: "Spot",
+          price: "100",
+          quantity: "500",
+          timestamp: "0",
+          close: false,
+          desired_quantity: {
+            Quote: {
+              desired_base_quantity: { Quantity: 500 },
+              remaining_quote_token: 9000,
+            },
+          },
+        };
+        const order = parseOrder(raw);
+        expect(order.desired_quantity).toEqual({
+          Quote: {
+            desired_base_quantity: { Quantity: 500n },
+            remaining_quote_token: 9000n,
+          },
+        });
+      });
+    });
+
+    describe("parseDesiredQuantity", () => {
+      it("returns undefined for null", () => {
+        expect(parseDesiredQuantity(null)).toBeUndefined();
+      });
+
+      it("returns undefined for undefined", () => {
+        expect(parseDesiredQuantity(undefined)).toBeUndefined();
+      });
+
+      it("parses Base variant (sell orders)", () => {
+        const raw = { Base: { remaining_quantity: "1000000000" } };
+        expect(parseDesiredQuantity(raw)).toEqual({
+          Base: { remaining_quantity: 1000000000n },
+        });
+      });
+
+      it("parses Quote variant with Quantity (buy limit)", () => {
+        const raw = {
+          Quote: {
+            desired_base_quantity: { Quantity: 500 },
+            remaining_quote_token: "9000",
+          },
+        };
+        expect(parseDesiredQuantity(raw)).toEqual({
+          Quote: {
+            desired_base_quantity: { Quantity: 500n },
+            remaining_quote_token: 9000n,
+          },
+        });
+      });
+
+      it("parses Quote variant with Infinite (buy market)", () => {
+        const raw = {
+          Quote: {
+            desired_base_quantity: "Infinite",
+            remaining_quote_token: 90000000000,
+          },
+        };
+        expect(parseDesiredQuantity(raw)).toEqual({
+          Quote: {
+            desired_base_quantity: "Infinite",
+            remaining_quote_token: 90000000000n,
+          },
+        });
+      });
+    });
+
+    describe("parseDepthLevel", () => {
+      it("parses a complete raw depth level", () => {
+        const level = parseDepthLevel({ price: "500", quantity: "200" });
+        expect(level.price).toBe(500n);
+        expect(level.quantity).toBe(200n);
+      });
+
+      it("defaults price to 0n when undefined", () => {
+        const level = parseDepthLevel({ quantity: "200" });
+        expect(level.price).toBe(0n);
+      });
+
+      it("defaults quantity to 0n when undefined", () => {
+        const level = parseDepthLevel({ price: "500" });
+        expect(level.quantity).toBe(0n);
+      });
+    });
+
+    describe("parseTrade", () => {
+      it("parses a complete raw trade", () => {
+        const raw = {
+          trade_id: "42",
+          side: "Buy",
+          price: "100",
+          quantity: "50",
+          total: "5000",
+          timestamp: "1734876543",
+        };
+        const trade = parseTrade(raw);
+        expect(trade.price).toBe(100n);
+        expect(trade.quantity).toBe(50n);
+        expect(trade.total).toBe(5000n);
+        expect(trade.side).toBe("buy");
+      });
+
+      it("defaults price, quantity, total to 0n when missing", () => {
+        const raw = {
+          trade_id: "1",
+          side: "sell",
+          timestamp: "0",
+        };
+        const trade = parseTrade(raw);
+        expect(trade.price).toBe(0n);
+        expect(trade.quantity).toBe(0n);
+        expect(trade.total).toBe(0n);
+      });
+    });
+
+    describe("parseOrderBookBalance", () => {
+      it("parses locked, unlocked, and fee", () => {
+        const bal = parseOrderBookBalance({
+          locked: "2000000000",
+          unlocked: "34878720000",
+          fee: "500000",
+        });
+        expect(bal.locked).toBe(2000000000n);
+        expect(bal.unlocked).toBe(34878720000n);
+        expect(bal.fee).toBe(500000n);
+      });
+    });
+
+    describe("parseBalanceResponse", () => {
+      it("parses order_books with fee field", () => {
+        const bal = parseBalanceResponse({
+          order_books: {
+            "0x9ad52fb8": { locked: "100", unlocked: "200", fee: "10" },
+          },
+          total_locked: "100",
+          total_unlocked: "200",
+          trading_account_balance: "300",
+        });
+        expect(bal.order_books["0x9ad52fb8"].fee).toBe(10n);
+      });
+    });
+
+    describe("parseDepthUpdate", () => {
+      it("parses view with precision", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth",
+          market_id: "0xabc",
+          view: {
+            precision: 3,
+            buys: [{ price: "100", quantity: "50" }],
+            sells: [{ price: "200", quantity: "30" }],
+          },
+        });
+        expect(update.view?.precision).toBe(3);
+        expect(update.view?.buys[0].price).toBe(100n);
+        expect(update.view?.sells[0].price).toBe(200n);
+      });
+
+      it("parses view without precision", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth",
+          market_id: "0xabc",
+          view: {
+            buys: [],
+            sells: [],
+          },
+        });
+        expect(update.view?.precision).toBeUndefined();
+      });
+
+      it("parses changes (no view)", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth_update",
+          market_id: "0xabc",
+          changes: {
+            buys: [{ price: "100", quantity: "50" }],
+            sells: [],
+          },
+        });
+        expect(update.view).toBeUndefined();
+        expect(update.changes?.buys[0].price).toBe(100n);
+      });
     });
   });
 

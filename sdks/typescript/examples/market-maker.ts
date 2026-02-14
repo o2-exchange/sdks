@@ -12,12 +12,14 @@
  */
 
 import {
-  type ActionPayload,
-  type Market,
-  type MarketActions,
+  cancelOrderAction,
+  createOrderAction,
+  type MarketActionGroup,
   Network,
   O2Client,
   O2Error,
+  type OrderId,
+  settleBalanceAction,
 } from "../src/index.js";
 
 // ── Configuration ─────────────────────────────────────────────────
@@ -26,7 +28,7 @@ const CONFIG = {
   network: Network.TESTNET,
   marketPair: "fFUEL/fUSDC", // Adjust to match your testnet market
   spreadPercent: 0.02, // 2% spread
-  orderQuantity: 100.0, // Base quantity per side
+  orderQuantity: "100.0", // Base quantity per side (human-readable)
   cycleIntervalMs: 10000, // 10 seconds between cycles
   referencePrice: 0.025, // Fallback reference price
 };
@@ -37,7 +39,7 @@ async function main() {
   const client = new O2Client({ network: CONFIG.network });
 
   // Setup wallet and account
-  const wallet = client.generateWallet();
+  const wallet = O2Client.generateWallet();
   console.log(`Wallet: ${wallet.b256Address}`);
 
   const { tradeAccountId } = await client.setupAccount(wallet);
@@ -46,18 +48,13 @@ async function main() {
   // Wait for faucet
   await sleep(3000);
 
-  // Fetch markets
-  const markets = await client.getMarkets();
-  const market = findMarket(markets, CONFIG.marketPair);
-  console.log(`Trading: ${market.base.symbol}/${market.quote.symbol}`);
-
-  // Create session
-  const session = await client.createSession(wallet, tradeAccountId, [market], 30);
-  console.log(`Session: ${session.sessionAddress}`);
+  // Create session (stored on client, tradeAccountId resolved from wallet)
+  await client.createSession(wallet, [CONFIG.marketPair], 30);
+  console.log(`Session: ${client.session!.sessionAddress}`);
 
   // Subscribe to order updates for fill detection
-  let activeBuyId: string | null = null;
-  let activeSellId: string | null = null;
+  let activeBuyId: OrderId | null = null;
+  let activeSellId: OrderId | null = null;
 
   const orderStream = await client.streamOrders(tradeAccountId);
 
@@ -88,75 +85,36 @@ async function main() {
       // Get reference price (in production, fetch from external source)
       const refPrice = CONFIG.referencePrice;
 
-      // Calculate spread prices
-      const buyPrice = refPrice * (1 - CONFIG.spreadPercent);
-      const sellPrice = refPrice * (1 + CONFIG.spreadPercent);
+      // Calculate spread prices (human-readable strings — auto-scaled by SDK)
+      const buyPrice = (refPrice * (1 - CONFIG.spreadPercent)).toFixed(6);
+      const sellPrice = (refPrice * (1 + CONFIG.spreadPercent)).toFixed(6);
 
-      console.log(`Ref: ${refPrice}, Buy: ${buyPrice.toFixed(6)}, Sell: ${sellPrice.toFixed(6)}`);
+      console.log(`Ref: ${refPrice}, Buy: ${buyPrice}, Sell: ${sellPrice}`);
 
-      // Build actions (max 5 per batch)
-      const actions: ActionPayload[] = [];
+      // Build type-safe actions using factory functions
+      const actions = [];
 
       // Cancel stale orders (if they haven't been filled)
       if (activeBuyId) {
-        actions.push({ CancelOrder: { order_id: activeBuyId } });
+        actions.push(cancelOrderAction(activeBuyId));
       }
       if (activeSellId) {
-        actions.push({ CancelOrder: { order_id: activeSellId } });
+        actions.push(cancelOrderAction(activeSellId));
       }
 
       // Settle balance
-      actions.push({
-        SettleBalance: { to: { ContractId: tradeAccountId } },
-      });
+      actions.push(settleBalanceAction());
 
-      // Place new orders
-      const buyPriceScaled = scalePriceStr(
-        buyPrice,
-        market.quote.decimals,
-        market.quote.max_precision,
-      );
-      const sellPriceScaled = scalePriceStr(
-        sellPrice,
-        market.quote.decimals,
-        market.quote.max_precision,
-      );
-      const quantityScaled = scaleQuantityStr(
-        CONFIG.orderQuantity,
-        market.base.decimals,
-        market.base.max_precision,
-      );
+      // Place new orders (string prices are auto-scaled by the SDK)
+      actions.push(createOrderAction("buy", buyPrice, CONFIG.orderQuantity, "Spot"));
+      actions.push(createOrderAction("sell", sellPrice, CONFIG.orderQuantity, "Spot"));
 
-      actions.push({
-        CreateOrder: {
-          side: "Buy",
-          price: buyPriceScaled,
-          quantity: quantityScaled,
-          order_type: "Spot",
-        },
-      });
+      // Submit batch — market resolution and accounts registry handled internally
+      const marketActionGroups: MarketActionGroup[] = [{ market: CONFIG.marketPair, actions }];
 
-      actions.push({
-        CreateOrder: {
-          side: "Sell",
-          price: sellPriceScaled,
-          quantity: quantityScaled,
-          order_type: "Spot",
-        },
-      });
+      const result = await client.batchActions(marketActionGroups, true);
 
-      // Submit batch
-      const marketActions: MarketActions[] = [{ market_id: market.market_id, actions }];
-
-      const result = await client.batchActions(
-        session,
-        marketActions,
-        market,
-        (await client.api.getMarkets()).accounts_registry_id,
-        true, // collect_orders
-      );
-
-      console.log(`TX: ${result.tx_id}`);
+      console.log(`TX: ${result.txId}`);
 
       // Track new order IDs
       activeBuyId = null;
@@ -164,7 +122,7 @@ async function main() {
 
       if (result.orders) {
         for (const order of result.orders) {
-          if (order.side === "Buy") {
+          if (order.side === "buy") {
             activeBuyId = order.order_id;
             console.log(`New buy order: ${order.order_id}`);
           } else {
@@ -185,7 +143,7 @@ async function main() {
         }
 
         // Refresh nonce on any error
-        await client.refreshNonce(session);
+        await client.refreshNonce();
       } else {
         console.error("Unexpected error:", error);
       }
@@ -196,37 +154,6 @@ async function main() {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────
-
-function findMarket(markets: Market[], pair: string): Market {
-  const [base, quote] = pair.split("/");
-  const found = markets.find(
-    (m) =>
-      m.base.symbol.toLowerCase() === base.toLowerCase() &&
-      m.quote.symbol.toLowerCase() === quote.toLowerCase(),
-  );
-  if (!found) {
-    console.log(
-      `Available: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`,
-    );
-    // Fallback to first market
-    return markets[0];
-  }
-  return found;
-}
-
-function scalePriceStr(price: number, decimals: number, maxPrecision: number): string {
-  const scaled = BigInt(Math.floor(price * 10 ** decimals));
-  const factor = BigInt(10 ** (decimals - maxPrecision));
-  return ((scaled / factor) * factor).toString();
-}
-
-function scaleQuantityStr(qty: number, decimals: number, maxPrecision: number): string {
-  const scaled = BigInt(Math.ceil(qty * 10 ** decimals));
-  const factor = BigInt(10 ** (decimals - maxPrecision));
-  const remainder = scaled % factor;
-  if (remainder === 0n) return scaled.toString();
-  return (scaled + (factor - remainder)).toString();
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

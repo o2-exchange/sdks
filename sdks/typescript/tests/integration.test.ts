@@ -4,29 +4,120 @@
  * These tests hit the live testnet API and require network access.
  * Run with: O2_INTEGRATION=1 npx vitest run tests/integration.test.ts
  *
- * Tests are idempotent and safe to run repeatedly.
+ * # Order Book Pollution & Pricing Strategy
+ *
+ * Integration tests persist maker/taker wallets in a local gitignored file to
+ * speed up repeated runs and reduce faucet dependence. Because accounts are
+ * reused, cleanup at startup is important to remove stale open orders.
+ *
+ * ## Non-fill tests: PostOnly Buy at minimum price step
+ *
+ * The minimum price step (10^{-max_precision}) is the absolute floor — no sell
+ * can exist below it, so a PostOnly Buy there always rests. The locked quote
+ * value is trivially small regardless of quantity.
+ *
+ * ## Fill tests: Maker PostOnly Buy + Taker FillOrKill Sell
+ *
+ * A taker *buy* walks the sell side from lowest ask upward, paying for every
+ * intermediate order. If stale sells have accumulated at high prices, this
+ * becomes prohibitively expensive. A taker *sell* walks the buy side from
+ * highest bid downward — each fill *pays the taker* rather than costing them.
+ * Stale buys at high prices are harmless (taker gets a better fill), and stale
+ * buys at low prices are never reached.
+ *
+ * FillOrKill for the taker prevents leaving a resting order on the book, which
+ * is the primary vector for adding new pollution.
+ *
+ * ## Cleanup: `cleanupOpenOrders` at test start
+ *
+ * Cleans up leaked orders from earlier tests within the same suite run. Cannot
+ * fix prior runs (different wallets), but prevents intra-run accumulation.
+ *
+ * ## Sizing: 10x min_order
+ *
+ * Comfortable margin above the minimum order threshold to absorb fee deductions
+ * and rounding without rejection.
  */
 
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
-import { Network, O2Client } from "../src/index.js";
-import type { Market, WalletState } from "../src/models.js";
+import { Network, type Numeric, O2Client } from "../src/index.js";
+import type { Market, SessionActionsResponse, TradeAccountId, WalletState } from "../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
+const INTEGRATION_WALLETS_FILE = fileURLToPath(
+  new URL("../.integration-wallets.json", import.meta.url),
+);
 
-function minQuantityForMinOrder(market: Market, price: number): number {
-  const minOrder = Number(market.min_order) || 1_000_000;
+interface PersistedIntegrationWallets {
+  makerPrivateKey: string;
+  takerPrivateKey: string;
+}
+
+function isPrivateKeyHex(value: unknown): value is string {
+  return typeof value === "string" && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
+function privateKeyToHex(privateKey: Uint8Array): string {
+  return `0x${Array.from(privateKey)
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("")}`;
+}
+
+function loadOrCreateIntegrationWallets(): { makerWallet: WalletState; takerWallet: WalletState } {
+  if (existsSync(INTEGRATION_WALLETS_FILE)) {
+    try {
+      const raw = JSON.parse(
+        readFileSync(INTEGRATION_WALLETS_FILE, "utf8"),
+      ) as Partial<PersistedIntegrationWallets>;
+      if (isPrivateKeyHex(raw.makerPrivateKey) && isPrivateKeyHex(raw.takerPrivateKey)) {
+        return {
+          makerWallet: O2Client.loadWallet(raw.makerPrivateKey),
+          takerWallet: O2Client.loadWallet(raw.takerPrivateKey),
+        };
+      }
+      console.error(
+        `[integration] wallet cache at ${INTEGRATION_WALLETS_FILE} is invalid, regenerating`,
+      );
+    } catch (error) {
+      console.error(
+        `[integration] failed to read wallet cache at ${INTEGRATION_WALLETS_FILE}, regenerating: ${String(error)}`,
+      );
+    }
+  }
+
+  const makerWallet = O2Client.generateWallet();
+  const takerWallet = O2Client.generateWallet();
+  const persisted: PersistedIntegrationWallets = {
+    makerPrivateKey: privateKeyToHex(makerWallet.privateKey),
+    takerPrivateKey: privateKeyToHex(takerWallet.privateKey),
+  };
+  writeFileSync(INTEGRATION_WALLETS_FILE, `${JSON.stringify(persisted, null, 2)}\n`);
+  console.error(`[integration] wrote wallet cache to ${INTEGRATION_WALLETS_FILE}`);
+  return { makerWallet, takerWallet };
+}
+
+/**
+ * Compute the minimum quantity (as human-readable string) that satisfies
+ * min_order for a given price string. Returns a string for the Numeric path.
+ */
+function minQuantityStr(market: Market, priceStr: string): string {
+  const minOrder = Number(market.min_order);
   const quoteFactor = 10 ** market.quote.decimals;
   const baseFactor = 10 ** market.base.decimals;
+  const price = Number.parseFloat(priceStr);
   const minQty = minOrder / (price * quoteFactor);
   const truncateFactor = 10 ** (market.base.decimals - market.base.max_precision);
   const step = truncateFactor / baseFactor;
   const rounded = Math.ceil(minQty / step) * step;
-  return rounded * 1.1;
+  const withMargin = rounded * 1.1;
+  return withMargin.toFixed(market.base.max_precision);
 }
 
 async function mintWithRetry(
   api: InstanceType<typeof O2Client>["api"],
-  tradeAccountId: string,
+  tradeAccountId: TradeAccountId,
   maxRetries = 4,
 ) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -34,58 +125,84 @@ async function mintWithRetry(
       await api.mintToContract(tradeAccountId);
       return;
     } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 5_000 * (attempt + 1)));
     }
+  }
+}
+
+async function ensureFunded(
+  client: O2Client,
+  tradeAccountId: TradeAccountId,
+  assetSymbol: string,
+  minBalance: bigint,
+  maxMints = 5,
+): Promise<void> {
+  let mintCount = 0;
+  while (true) {
+    const balances = await client.getBalances(tradeAccountId);
+    const balance = balances[assetSymbol]?.trading_account_balance ?? 0n;
+
+    if (balance >= minBalance) {
+      if (mintCount > 0) {
+        console.error(`Balance for ${assetSymbol} is now ${balance} (needed ${minBalance})`);
+      }
+      break;
+    }
+
+    if (mintCount >= maxMints) {
+      console.error(
+        `Warning: Balance for ${assetSymbol} is ${balance} after ${mintCount} mints (need ${minBalance})`,
+      );
+      break;
+    }
+
+    console.error(
+      `Balance for ${assetSymbol} is ${balance} (need ${minBalance}), minting... (attempt ${mintCount + 1}/${maxMints})`,
+    );
+
+    await mintWithRetry(client.api, tradeAccountId, 3);
+    mintCount++;
+
+    // Allow time for on-chain balance to update after mint
+    await new Promise((r) => setTimeout(r, 10_000));
   }
 }
 
 async function whitelistWithRetry(
   api: InstanceType<typeof O2Client>["api"],
-  tradeAccountId: string,
+  tradeAccountId: TradeAccountId,
   maxRetries = 4,
 ) {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
       await api.whitelistAccount(tradeAccountId);
-      // Allow time for on-chain whitelist propagation
-      await new Promise((r) => setTimeout(r, 10_000));
+      await new Promise((r) => setTimeout(r, 5_000));
       return;
     } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
 }
 
 async function createOrderWithWhitelistRetry(
   client: O2Client,
-  session: ReturnType<typeof client.createSession> extends Promise<infer T> ? T : never,
-  market: Market,
-  side: "Buy" | "Sell",
-  price: number,
-  quantity: number,
+  market: string | Market,
+  side: "buy" | "sell",
+  price: Numeric,
+  quantity: Numeric,
   orderType: string,
-  settleFirst: boolean,
-  collectOrders: boolean,
-  tradeAccountId: string,
+  tradeAccountId: TradeAccountId,
   maxRetries = 5,
-): Promise<any> {
+): Promise<SessionActionsResponse> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await client.createOrder(
-        session,
-        market,
-        side,
-        price,
-        quantity,
-        orderType,
-        settleFirst,
-        collectOrders,
-      );
+      return await client.createOrder(market, side, price, quantity, {
+        orderType: orderType as any,
+      });
     } catch (e: any) {
       const msg = String(e?.message ?? e);
       if (msg.includes("TraderNotWhiteListed") && attempt < maxRetries - 1) {
         await whitelistWithRetry(client.api, tradeAccountId, 2);
-        // Additional backoff on top of whitelist propagation delay
         await new Promise((r) => setTimeout(r, 5_000 * (attempt + 1)));
         continue;
       }
@@ -95,77 +212,135 @@ async function createOrderWithWhitelistRetry(
   throw new Error("unreachable");
 }
 
-async function setupWithRetry(
+async function ensureAccount(
+  client: O2Client,
+  wallet: WalletState,
+): Promise<{ tradeAccountId: TradeAccountId; nonce: bigint }> {
+  const existing = await client.api.getAccount({ owner: wallet.b256Address });
+
+  let tradeAccountId = existing.trade_account_id;
+  if (!tradeAccountId) {
+    const created = await client.api.createAccount({ Address: wallet.b256Address });
+    tradeAccountId = created.trade_account_id;
+  }
+
+  await whitelistWithRetry(client.api, tradeAccountId, 2);
+
+  const info = await client.api.getAccount({ tradeAccountId });
+  return {
+    tradeAccountId,
+    nonce: info.trade_account?.nonce ?? 0n,
+  };
+}
+
+async function ensureAccountWithRetry(
   client: O2Client,
   wallet: WalletState,
   maxRetries = 4,
-): Promise<{ tradeAccountId: string; nonce: bigint }> {
+): Promise<{ tradeAccountId: TradeAccountId; nonce: bigint }> {
+  let lastError: unknown = null;
+
+  const formatError = (error: unknown): string => {
+    if (error instanceof Error) {
+      const apiCode = "code" in error ? (error as { code?: unknown }).code : undefined;
+      const reason = "reason" in error ? (error as { reason?: unknown }).reason : undefined;
+      const parts = [error.name, error.message];
+      if (apiCode !== undefined) parts.push(`code=${String(apiCode)}`);
+      if (reason !== undefined) parts.push(`reason=${String(reason)}`);
+      return parts.join(" | ");
+    }
+    return String(error);
+  };
+
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     try {
-      return await client.setupAccount(wallet);
-    } catch {
-      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 65_000));
+      return await ensureAccount(client, wallet);
+    } catch (error: unknown) {
+      lastError = error;
+      console.error(
+        `[integration] ensureAccount attempt ${attempt + 1}/${maxRetries} failed for ${wallet.b256Address.slice(0, 12)}...: ${formatError(error)}`,
+      );
+      if (attempt < maxRetries - 1) await new Promise((r) => setTimeout(r, 15_000));
     }
   }
-  throw new Error("setupAccount failed after retries");
+  throw new Error(
+    `ensureAccount failed after retries. Last error: ${lastError ? formatError(lastError) : "unknown"}`,
+  );
 }
 
-function moderateFillPrice(market: Market): number {
-  const minOrder = Number(market.min_order) || 1_000_000;
+function moderateFillPriceStr(market: Market): string {
+  const minOrder = Number(market.min_order);
   const basePrecisionFactor = 10 ** market.base.max_precision;
   const quoteFactor = 10 ** market.quote.decimals;
-  return (minOrder * basePrecisionFactor) / quoteFactor;
+  const price = (minOrder * basePrecisionFactor) / quoteFactor;
+  return price.toFixed(market.quote.max_precision);
 }
 
-function fillQuantity(market: Market, price: number): number {
-  const minOrder = Number(market.min_order) || 1_000_000;
+function fillQuantityStr(market: Market, priceStr: string): string {
+  const minOrder = Number(market.min_order);
   const quoteFactor = 10 ** market.quote.decimals;
   const baseFactor = 10 ** market.base.decimals;
+  const price = Number.parseFloat(priceStr);
   const qty = (10 * minOrder) / (price * quoteFactor);
   const truncateFactor = 10 ** (market.base.decimals - market.base.max_precision);
   const step = truncateFactor / baseFactor;
-  return Math.ceil(qty / step) * step;
+  const rounded = Math.ceil(qty / step) * step;
+  return rounded.toFixed(market.base.max_precision);
 }
 
-async function cleanupOpenOrders(
-  cl: O2Client,
-  wallet: WalletState,
-  tradeAccountId: string,
-  market: Market,
-): Promise<void> {
+async function cleanupOpenOrders(cl: O2Client, wallet: WalletState, market: Market): Promise<void> {
   try {
-    const session = await cl.createSession(wallet, tradeAccountId, [market], 1);
+    await cl.createSession(wallet, [market], 1);
     try {
-      await cl.cancelAllOrders(session, market);
+      await cl.cancelAllOrders(market);
     } catch {}
     try {
-      await cl.settleBalance(session, market);
+      await cl.settleBalance(market);
     } catch {}
   } catch {}
 }
 
 describe.skipIf(!INTEGRATION)("integration", () => {
-  const client = new O2Client({ network: Network.TESTNET });
+  // Separate clients for maker/taker — each stores its own session
+  const makerClient = new O2Client({ network: Network.TESTNET });
+  const takerClient = new O2Client({ network: Network.TESTNET });
+  // Shared read-only client for market data queries (no session needed)
+  const client = makerClient;
 
   let makerWallet: WalletState;
-  let makerTradeAccountId: string;
+  let makerTradeAccountId: TradeAccountId;
   let takerWallet: WalletState;
-  let takerTradeAccountId: string;
+  let takerTradeAccountId: TradeAccountId;
 
   beforeAll(async () => {
-    // Set up maker account (with rate-limit retries)
-    makerWallet = client.generateWallet();
-    const maker = await setupWithRetry(client, makerWallet);
-    makerTradeAccountId = maker.tradeAccountId;
-    await whitelistWithRetry(client.api, makerTradeAccountId);
-    await mintWithRetry(client.api, makerTradeAccountId);
+    // Load persistent maker/taker wallets (or create on first run)
+    ({ makerWallet, takerWallet } = loadOrCreateIntegrationWallets());
 
-    // Set up taker account (with rate-limit retries)
-    takerWallet = client.generateWallet();
-    const taker = await setupWithRetry(client, takerWallet);
+    // Ensure both accounts exist/are whitelisted, without unconditional faucet mints
+    const [maker, taker] = await Promise.all([
+      ensureAccountWithRetry(makerClient, makerWallet),
+      ensureAccountWithRetry(takerClient, takerWallet),
+    ]);
+    makerTradeAccountId = maker.tradeAccountId;
     takerTradeAccountId = taker.tradeAccountId;
-    await whitelistWithRetry(client.api, takerTradeAccountId);
-    await mintWithRetry(client.api, takerTradeAccountId);
+
+    // Verify both accounts have sufficient balances (runs ensureFunded in parallel per account)
+    const markets = await makerClient.getMarkets();
+    const market = markets[0];
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await cleanupOpenOrders(takerClient, takerWallet, market);
+    const baseSymbol = market.base.symbol;
+    const quoteSymbol = market.quote.symbol;
+    await Promise.all([
+      Promise.all([
+        ensureFunded(makerClient, makerTradeAccountId, baseSymbol, 50_000_000n),
+        ensureFunded(makerClient, makerTradeAccountId, quoteSymbol, 50_000_000n),
+      ]),
+      Promise.all([
+        ensureFunded(takerClient, takerTradeAccountId, baseSymbol, 50_000_000n),
+        ensureFunded(takerClient, takerTradeAccountId, quoteSymbol, 50_000_000n),
+      ]),
+    ]);
   }, 600_000);
 
   it("integration: fetches markets", async () => {
@@ -195,7 +370,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
   });
 
   it("integration: creates account idempotently", async () => {
-    const wallet = client.generateWallet();
+    const wallet = O2Client.generateWallet();
     const { tradeAccountId, nonce } = await client.setupAccount(wallet);
     expect(tradeAccountId).toMatch(/^0x/);
     expect(typeof nonce).toBe("bigint");
@@ -219,118 +394,112 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    // Re-whitelist before trading (handles propagation delays)
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
+    // Re-whitelist before trading
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
 
-    // Use minimum price step — guaranteed below any ask on the book.
-    // Buy cost is always ≈ min_order regardless of price, so this is affordable.
-    const priceStep = 10 ** -market.quote.max_precision;
-    const buyPrice = priceStep;
-    const quantity = minQuantityForMinOrder(market, buyPrice);
+    // Use minimum price step — string decimal
+    const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+    const quantityStr = minQuantityStr(market, priceStr);
 
-    // Verify quote balance
-    const balances = await client.getBalances(makerTradeAccountId);
+    // Verify quote balance (bigint fields)
+    const balances = await makerClient.getBalances(makerTradeAccountId);
     const quoteSymbol = market.quote.symbol;
     expect(balances[quoteSymbol]).toBeDefined();
-    expect(BigInt(balances[quoteSymbol].trading_account_balance)).toBeGreaterThan(0n);
+    expect(balances[quoteSymbol].trading_account_balance).toBeGreaterThan(0n);
 
-    const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+    // createSession stores session on makerClient
+    await makerClient.createSession(makerWallet, [market], 30);
 
-    // Place PostOnly Buy at minimum price — guaranteed to rest on the book
+    // Place PostOnly Buy at minimum price
     const response = await createOrderWithWhitelistRetry(
-      client,
-      session,
+      makerClient,
       market,
-      "Buy",
-      buyPrice,
-      quantity,
+      "buy",
+      priceStr,
+      quantityStr,
       "PostOnly",
-      true,
-      true,
       makerTradeAccountId,
     );
 
-    expect(response.tx_id).toBeTruthy();
+    expect(response.txId).toBeTruthy();
     expect(response.orders).toBeDefined();
     expect(response.orders?.length).toBeGreaterThan(0);
     const order = response.orders?.[0];
-    expect(order.order_id).toBeTruthy();
-    expect(order.cancel).not.toBe(true);
+    expect(order!.order_id).toBeTruthy();
+    expect(order!.cancel).not.toBe(true);
 
-    // Cancel the order (session nonce was updated in-place)
-    const cancelResponse = await client.cancelOrder(session, order.order_id, market);
-    expect(cancelResponse.tx_id).toBeTruthy();
+    // Cancel the order
+    const cancelResponse = await makerClient.cancelOrder(order!.order_id, market);
+    expect(cancelResponse.txId).toBeTruthy();
   });
 
   it("integration: cross-account fill", async () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    // Re-whitelist both accounts before trading
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await whitelistWithRetry(client.api, takerTradeAccountId, 2);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await whitelistWithRetry(takerClient.api, takerTradeAccountId, 2);
 
-    // Cleanup leaked orders from earlier tests
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
-    await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+    // Cancel leaked orders from earlier tests in this run
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await cleanupOpenOrders(takerClient, takerWallet, market);
 
-    // Moderate price below stale sells — maker buy rests safely.
-    // Taker FillOrKill sell targets the maker directly, avoiding
-    // the gas cost of walking through many intermediate orders.
-    const price = moderateFillPrice(market);
-    const quantity = fillQuantity(market, price);
+    // Maker buys (needs quote), taker sells (needs base)
+    await ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 50_000_000n);
+    await ensureFunded(takerClient, takerTradeAccountId, market.base.symbol, 50_000_000n);
 
-    // Check maker has enough quote to buy
-    const balances = await client.getBalances(makerTradeAccountId);
-    const quoteSymbol = market.quote.symbol;
-    expect(balances[quoteSymbol]).toBeDefined();
-    expect(BigInt(balances[quoteSymbol].trading_account_balance)).toBeGreaterThan(0n);
+    // Moderate price below any stale sells — maker buy rests safely.
+    // Taker sell walks buys from highest bid down, which is free (receives funds).
+    const priceStr = moderateFillPriceStr(market);
+    const quantityStr = fillQuantityStr(market, priceStr);
 
-    // Maker: PostOnly Buy at moderate price → rests below stale sells
-    const makerSession = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+    // Maker: PostOnly Buy at moderate price — rests below all stale sells
+    await makerClient.createSession(makerWallet, [market], 30);
     const makerResponse = await createOrderWithWhitelistRetry(
-      client,
-      makerSession,
+      makerClient,
       market,
-      "Buy",
-      price,
-      quantity,
+      "buy",
+      priceStr,
+      quantityStr,
       "PostOnly",
-      true,
-      true,
       makerTradeAccountId,
     );
 
-    expect(makerResponse.tx_id).toBeTruthy();
+    expect(makerResponse.txId).toBeTruthy();
     expect(makerResponse.orders).toBeDefined();
     expect(makerResponse.orders?.length).toBeGreaterThan(0);
     const makerOrder = makerResponse.orders?.[0];
-    expect(makerOrder.order_id).toBeTruthy();
-    expect(makerOrder.cancel).not.toBe(true);
+    expect(makerOrder!.order_id).toBeTruthy();
+    expect(makerOrder!.cancel).not.toBe(true);
 
-    // Taker: FillOrKill Sell — fills against maker, never rests on the book
-    const takerSession = await client.createSession(takerWallet, takerTradeAccountId, [market], 30);
+    // Taker: FillOrKill Sell — fills against maker (or stale buys), never rests
+    await takerClient.createSession(takerWallet, [market], 30);
     const takerResponse = await createOrderWithWhitelistRetry(
-      client,
-      takerSession,
+      takerClient,
       market,
-      "Sell",
-      price,
-      quantity,
+      "sell",
+      priceStr,
+      quantityStr,
       "FillOrKill",
-      true,
-      true,
       takerTradeAccountId,
     );
 
-    expect(takerResponse.tx_id).toBeTruthy();
+    expect(takerResponse.txId).toBeTruthy();
 
-    // Cleanup: cancel maker order if still open
+    // Cleanup: cancel both orders if still open
     try {
-      await client.cancelOrder(makerSession, makerOrder.order_id, market);
+      await makerClient.cancelOrder(makerOrder!.order_id, market);
     } catch {
       // Already filled/closed
     }
+
+    // Settle balances to release locked funds for both accounts
+    try {
+      await makerClient.settleBalance(market);
+    } catch {}
+    try {
+      await takerClient.settleBalance(market);
+    } catch {}
   });
 
   it("integration: fetches account info", async () => {
@@ -354,7 +523,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     for await (const update of stream) {
       expect(update).toBeDefined();
       received = true;
-      break; // Just need one message
+      break;
     }
 
     expect(received).toBe(true);
@@ -365,11 +534,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await whitelistWithRetry(client.api, takerTradeAccountId, 2);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await whitelistWithRetry(takerClient.api, takerTradeAccountId, 2);
 
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
-    await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await cleanupOpenOrders(takerClient, takerWallet, market);
 
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
@@ -386,47 +555,31 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const price = moderateFillPrice(market);
-      const quantity = fillQuantity(market, price);
+      const priceStr = moderateFillPriceStr(market);
+      const quantityStr = fillQuantityStr(market, priceStr);
 
-      const makerSession = await client.createSession(
-        makerWallet,
-        makerTradeAccountId,
-        [market],
-        30,
-      );
+      await makerClient.createSession(makerWallet, [market], 30);
       const makerResponse = await createOrderWithWhitelistRetry(
-        client,
-        makerSession,
+        makerClient,
         market,
-        "Buy",
-        price,
-        quantity,
+        "buy",
+        priceStr,
+        quantityStr,
         "PostOnly",
-        true,
-        true,
         makerTradeAccountId,
       );
       expect(makerResponse.orders?.length).toBeGreaterThan(0);
       const makerOrder = makerResponse.orders?.[0];
-      expect(makerOrder.cancel).not.toBe(true);
+      expect(makerOrder!.cancel).not.toBe(true);
 
-      const takerSession = await client.createSession(
-        takerWallet,
-        takerTradeAccountId,
-        [market],
-        30,
-      );
+      await takerClient.createSession(takerWallet, [market], 30);
       await createOrderWithWhitelistRetry(
-        client,
-        takerSession,
+        takerClient,
         market,
-        "Sell",
-        price,
-        quantity,
+        "sell",
+        priceStr,
+        quantityStr,
         "FillOrKill",
-        true,
-        true,
         takerTradeAccountId,
       );
 
@@ -442,8 +595,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(Array.isArray(update.trades)).toBe(true);
     } finally {
       wsClient.disconnectWs();
-      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
-      await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+      await cleanupOpenOrders(makerClient, makerWallet, market);
+      await cleanupOpenOrders(takerClient, takerWallet, market);
     }
   }, 120_000);
 
@@ -451,8 +604,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
 
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
@@ -469,20 +622,17 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const priceStep = 10 ** -market.quote.max_precision;
-      const quantity = minQuantityForMinOrder(market, priceStep);
+      const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+      const quantityStr = minQuantityStr(market, priceStr);
 
-      const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+      await makerClient.createSession(makerWallet, [market], 30);
       const response = await createOrderWithWhitelistRetry(
-        client,
-        session,
+        makerClient,
         market,
-        "Buy",
-        priceStep,
-        quantity,
+        "buy",
+        priceStr,
+        quantityStr,
         "PostOnly",
-        true,
-        true,
         makerTradeAccountId,
       );
       expect(response.orders?.length).toBeGreaterThan(0);
@@ -500,11 +650,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(Array.isArray(update.orders)).toBe(true);
 
       try {
-        await client.cancelOrder(session, order.order_id, market);
+        await makerClient.cancelOrder(order!.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
-      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+      await cleanupOpenOrders(makerClient, makerWallet, market);
     }
   }, 60_000);
 
@@ -512,8 +662,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
 
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
@@ -530,20 +680,17 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const priceStep = 10 ** -market.quote.max_precision;
-      const quantity = minQuantityForMinOrder(market, priceStep);
+      const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+      const quantityStr = minQuantityStr(market, priceStr);
 
-      const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+      await makerClient.createSession(makerWallet, [market], 30);
       const response = await createOrderWithWhitelistRetry(
-        client,
-        session,
+        makerClient,
         market,
-        "Buy",
-        priceStep,
-        quantity,
+        "buy",
+        priceStr,
+        quantityStr,
         "PostOnly",
-        true,
-        true,
         makerTradeAccountId,
       );
       expect(response.orders?.length).toBeGreaterThan(0);
@@ -561,11 +708,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(Array.isArray(update.balance)).toBe(true);
 
       try {
-        await client.cancelOrder(session, order.order_id, market);
+        await makerClient.cancelOrder(order!.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
-      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+      await cleanupOpenOrders(makerClient, makerWallet, market);
     }
   }, 60_000);
 
@@ -573,8 +720,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
 
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
@@ -591,20 +738,17 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const priceStep = 10 ** -market.quote.max_precision;
-      const quantity = minQuantityForMinOrder(market, priceStep);
+      const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+      const quantityStr = minQuantityStr(market, priceStr);
 
-      const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+      await makerClient.createSession(makerWallet, [market], 30);
       const response = await createOrderWithWhitelistRetry(
-        client,
-        session,
+        makerClient,
         market,
-        "Buy",
-        priceStep,
-        quantity,
+        "buy",
+        priceStr,
+        quantityStr,
         "PostOnly",
-        true,
-        true,
         makerTradeAccountId,
       );
       expect(response.orders?.length).toBeGreaterThan(0);
@@ -621,11 +765,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(update.nonce).toBeDefined();
 
       try {
-        await client.cancelOrder(session, order.order_id, market);
+        await makerClient.cancelOrder(order!.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
-      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+      await cleanupOpenOrders(makerClient, makerWallet, market);
     }
   }, 60_000);
 
@@ -633,12 +777,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
 
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
-      // Subscribe to all three streams concurrently on one WS connection
       const ordersStream = await wsClient.streamOrders(makerTradeAccountId);
       const balancesStream = await wsClient.streamBalances(makerTradeAccountId);
       const nonceStream = await wsClient.streamNonce(makerTradeAccountId);
@@ -673,21 +816,17 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      // Place one order — triggers orders, balances, and nonce updates
-      const priceStep = 10 ** -market.quote.max_precision;
-      const quantity = minQuantityForMinOrder(market, priceStep);
+      const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+      const quantityStr = minQuantityStr(market, priceStr);
 
-      const session = await client.createSession(makerWallet, makerTradeAccountId, [market], 30);
+      await makerClient.createSession(makerWallet, [market], 30);
       const response = await createOrderWithWhitelistRetry(
-        client,
-        session,
+        makerClient,
         market,
-        "Buy",
-        priceStep,
-        quantity,
+        "buy",
+        priceStr,
+        quantityStr,
         "PostOnly",
-        true,
-        true,
         makerTradeAccountId,
       );
       expect(response.orders?.length).toBeGreaterThan(0);
@@ -696,14 +835,12 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const timeout = (ms: number) =>
         new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), ms));
 
-      // Wait for all three with timeout
       const [ordersUpdate, balancesUpdate, nonceUpdate] = await Promise.all([
         Promise.race([ordersFirst, timeout(30_000)]),
         Promise.race([balancesFirst, timeout(30_000)]),
         Promise.race([nonceFirst, timeout(30_000)]),
       ]);
 
-      // Verify each stream received only its correct type
       expect(ordersUpdate.orders).toBeDefined();
       expect(Array.isArray(ordersUpdate.orders)).toBe(true);
       expect(ordersUpdate.balance).toBeUndefined();
@@ -719,11 +856,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(nonceUpdate.balance).toBeUndefined();
 
       try {
-        await client.cancelOrder(session, order.order_id, market);
+        await makerClient.cancelOrder(order!.order_id, market);
       } catch {}
     } finally {
       wsClient.disconnectWs();
-      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
+      await cleanupOpenOrders(makerClient, makerWallet, market);
     }
   }, 120_000);
 
@@ -731,15 +868,14 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
 
-    await whitelistWithRetry(client.api, makerTradeAccountId, 2);
-    await whitelistWithRetry(client.api, takerTradeAccountId, 2);
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await whitelistWithRetry(takerClient.api, takerTradeAccountId, 2);
 
-    await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
-    await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await cleanupOpenOrders(takerClient, takerWallet, market);
 
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
-      // Subscribe to trades, orders, and balances concurrently
       const tradesStream = await wsClient.streamTrades(market);
       const ordersStream = await wsClient.streamOrders(makerTradeAccountId);
       const balancesStream = await wsClient.streamBalances(makerTradeAccountId);
@@ -774,48 +910,31 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      // Cross-account fill
-      const price = moderateFillPrice(market);
-      const quantity = fillQuantity(market, price);
+      const priceStr = moderateFillPriceStr(market);
+      const quantityStr = fillQuantityStr(market, priceStr);
 
-      const makerSession = await client.createSession(
-        makerWallet,
-        makerTradeAccountId,
-        [market],
-        30,
-      );
+      await makerClient.createSession(makerWallet, [market], 30);
       const makerResponse = await createOrderWithWhitelistRetry(
-        client,
-        makerSession,
+        makerClient,
         market,
-        "Buy",
-        price,
-        quantity,
+        "buy",
+        priceStr,
+        quantityStr,
         "PostOnly",
-        true,
-        true,
         makerTradeAccountId,
       );
       expect(makerResponse.orders?.length).toBeGreaterThan(0);
       const makerOrder = makerResponse.orders?.[0];
-      expect(makerOrder.cancel).not.toBe(true);
+      expect(makerOrder!.cancel).not.toBe(true);
 
-      const takerSession = await client.createSession(
-        takerWallet,
-        takerTradeAccountId,
-        [market],
-        30,
-      );
+      await takerClient.createSession(takerWallet, [market], 30);
       await createOrderWithWhitelistRetry(
-        client,
-        takerSession,
+        takerClient,
         market,
-        "Sell",
-        price,
-        quantity,
+        "sell",
+        priceStr,
+        quantityStr,
         "FillOrKill",
-        true,
-        true,
         takerTradeAccountId,
       );
 
@@ -828,7 +947,6 @@ describe.skipIf(!INTEGRATION)("integration", () => {
         Promise.race([balancesFirst, timeout(30_000)]),
       ]);
 
-      // Verify each stream received only its correct type
       expect(tradesUpdate.trades).toBeDefined();
       expect(Array.isArray(tradesUpdate.trades)).toBe(true);
       expect(tradesUpdate.orders).toBeUndefined();
@@ -845,8 +963,8 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       expect(balancesUpdate.orders).toBeUndefined();
     } finally {
       wsClient.disconnectWs();
-      await cleanupOpenOrders(client, makerWallet, makerTradeAccountId, market);
-      await cleanupOpenOrders(client, takerWallet, takerTradeAccountId, market);
+      await cleanupOpenOrders(makerClient, makerWallet, market);
+      await cleanupOpenOrders(takerClient, takerWallet, market);
     }
   }, 120_000);
 });

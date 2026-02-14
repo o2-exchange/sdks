@@ -51,11 +51,11 @@ secp.hashes.sha256 = (...msgs: Uint8Array[]) => {
  * ```ts
  * // Using the built-in wallet (implements Signer)
  * const wallet = client.generateWallet();
- * const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
+ * await client.createSession(wallet, ["fFUEL/fUSDC"]);
  *
  * // Using an external signer
  * const signer = new ExternalSigner("0x1234...abcd", myKmsSignDigest);
- * const session = await client.createSession(signer, tradeAccountId, ["fFUEL/fUSDC"]);
+ * await client.createSession(signer, ["fFUEL/fUSDC"]);
  * ```
  */
 export interface Signer {
@@ -321,7 +321,7 @@ export function toFuelCompactSignature(
  *   return toFuelCompactSignature(r, s, recoveryId);
  * });
  *
- * const session = await client.createSession(signer, tradeAccountId, ["fFUEL/fUSDC"]);
+ * await client.createSession(signer, ["fFUEL/fUSDC"]);
  * ```
  */
 export class ExternalSigner implements Signer {

@@ -15,7 +15,7 @@ const client = new O2Client({ network: Network.TESTNET });
 ```
 
 The client connects to the O2 testnet by default. Pass `Network.MAINNET`
-for production trading. You can also provide a custom {@link NetworkConfig}
+for production trading. You can also provide a custom `NetworkConfig`
 for private deployments:
 
 ```ts
@@ -31,20 +31,22 @@ const client = new O2Client({
 
 ## Step 2: Create a Wallet
 
+Wallet creation is a static method — no client instance needed:
+
 ```ts
 // Fuel-native wallet
-const wallet = client.generateWallet();
+const wallet = O2Client.generateWallet();
 console.log(wallet.b256Address); // 0x-prefixed, 66-character hex
 
 // — or load an existing private key —
-const loaded = client.loadWallet("0xabcd...1234");
+const loaded = O2Client.loadWallet("0xabcd...1234");
 ```
 
 The SDK supports both Fuel-native wallets and EVM-compatible wallets:
 
 ```ts
 // EVM wallet (Ethereum-style address, zero-padded for Fuel)
-const evmWallet = client.generateEvmWallet();
+const evmWallet = O2Client.generateEvmWallet();
 console.log(evmWallet.evmAddress);   // 0x-prefixed, 42-character hex
 console.log(evmWallet.b256Address);  // zero-padded to 32 bytes
 ```
@@ -59,8 +61,8 @@ const { tradeAccountId } = await client.setupAccount(wallet);
 console.log(tradeAccountId);
 ```
 
-{@link O2Client.setupAccount} is **idempotent** — it is safe to call on
-every bot startup. It performs the following steps automatically:
+`setupAccount` is **idempotent** — it is safe to call on every bot startup.
+It performs the following steps automatically:
 
 1. Checks whether an account already exists for the wallet address
 2. Creates a new trading account if needed
@@ -70,44 +72,50 @@ every bot startup. It performs the following steps automatically:
 ## Step 4: Create a Trading Session
 
 ```ts
-const session = await client.createSession(
+await client.createSession(
   wallet,
-  tradeAccountId,
   ["fFUEL/fUSDC"],
   30, // expiry in days (default)
 );
 ```
 
-A **session** delegates signing authority from your owner wallet to a
+The trade account ID is resolved automatically from the wallet address.
+The session is **stored on the client** and used implicitly by all trading
+methods. A **session** delegates signing authority from your owner wallet to a
 temporary session key. This allows the SDK to sign trade actions without
 needing the owner key for every request. Sessions are scoped to specific
 markets and expire after the specified number of days.
 
-> **Note:** Session creation uses `personalSign` (Fuel prefix + SHA-256 for
-> Fuel-native wallets, or Ethereum prefix + keccak-256 for EVM wallets).
-> Session *actions* use `rawSign` (plain SHA-256). The SDK handles this
-> distinction automatically.
+To restore a previously serialized session (e.g., from a database or file),
+use `setSession()`:
+
+```ts
+client.setSession(deserializedSession);
+```
 
 ## Step 5: Place an Order
 
+Prices and quantities accept dual-mode `Numeric` values:
+- **`string`** — human-readable decimal (e.g., `"0.02"`, `"100"`) — auto-scaled
+- **`bigint`** — raw chain integer (e.g., `20000000n`) — pass-through
+
 ```ts
-const { response } = await client.createOrder(
-  session,
+const response = await client.createOrder(
   "fFUEL/fUSDC",
-  "Buy",
-  0.02,   // price
-  100.0,  // quantity
+  "buy",
+  "0.02",   // price (human-readable string, auto-scaled)
+  "100",    // quantity
 );
 
-console.log(`Order placed! tx_id=${response.tx_id}`);
-if (response.orders) {
-  console.log(`Order ID: ${response.orders[0].order_id}`);
+if (response.success) {
+  console.log(`Order placed! txId=${response.txId}`);
+  if (response.orders) {
+    console.log(`Order ID: ${response.orders[0].order_id}`);
+  }
+} else {
+  console.log(`Failed: ${response.reason ?? response.message}`);
 }
 ```
-
-Prices and quantities are specified as **human-readable numbers**. The SDK
-scales them to on-chain integer representation automatically, honoring the
-market's precision and dust constraints.
 
 ## Cleanup
 
@@ -115,6 +123,13 @@ Always close the client when done to release WebSocket connections:
 
 ```ts
 client.close();
+```
+
+Or use `Symbol.asyncDispose` for automatic cleanup:
+
+```ts
+await using client = new O2Client({ network: Network.TESTNET });
+// client.close() called automatically when scope exits
 ```
 
 ## Complete Example
@@ -126,24 +141,19 @@ async function main() {
   const client = new O2Client({ network: Network.TESTNET });
 
   // Wallet + account
-  const wallet = client.generateWallet();
+  const wallet = O2Client.generateWallet();
   const { tradeAccountId } = await client.setupAccount(wallet);
 
-  // Session
-  const session = await client.createSession(
-    wallet,
-    tradeAccountId,
-    ["fFUEL/fUSDC"],
-  );
+  // Session (stored on client, tradeAccountId resolved from wallet)
+  await client.createSession(wallet, ["fFUEL/fUSDC"]);
 
-  // Place order
-  const { response } = await client.createOrder(
-    session, "fFUEL/fUSDC", "Buy",
-    0.02, 100.0,
-  );
-  console.log(`tx_id=${response.tx_id}`);
+  // Place order (string prices, auto-scaled — session used implicitly)
+  const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  if (response.success) {
+    console.log(`txId=${response.txId}`);
+  }
 
-  // Check balances
+  // Check balances (fields are bigint)
   const balances = await client.getBalances(tradeAccountId);
   for (const [symbol, bal] of Object.entries(balances)) {
     console.log(`${symbol}: ${bal.trading_account_balance}`);

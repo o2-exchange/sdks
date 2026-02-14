@@ -11,6 +11,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./internals": {
+      "types": "./dist/internals.d.ts",
+      "import": "./dist/internals.js",
+      "require": "./dist/internals.cjs"
     }
   },
   "files": [
@@ -24,7 +29,7 @@
     "build": "tsup",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:integration": "vitest run --grep integration",
+    "test:integration": "O2_INTEGRATION=1 vitest run tests/integration.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src tests examples && tsc --noEmit",
     "format": "biome format --write src tests examples",

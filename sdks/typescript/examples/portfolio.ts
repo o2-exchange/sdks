@@ -9,7 +9,14 @@
  * Run: npx tsx examples/portfolio.ts
  */
 
-import { type BalanceResponse, type Market, Network, O2Client } from "../src/index.js";
+import {
+  type BalanceResponse,
+  formatPrice,
+  formatQuantity,
+  type Market,
+  Network,
+  O2Client,
+} from "../src/index.js";
 
 // ── Main ──────────────────────────────────────────────────────────
 
@@ -17,7 +24,7 @@ async function main() {
   const client = new O2Client({ network: Network.TESTNET });
 
   // Setup
-  const wallet = client.generateWallet();
+  const wallet = O2Client.generateWallet();
   console.log(`Wallet: ${wallet.b256Address}`);
 
   const { tradeAccountId } = await client.setupAccount(wallet);
@@ -29,7 +36,7 @@ async function main() {
   const markets = await client.getMarkets();
   console.log(`Markets: ${markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`);
 
-  // Display initial balances
+  // Display initial balances (fields are bigint)
   console.log("\n=== Portfolio Balances ===");
   const balances = await client.getBalances(tradeAccountId);
   for (const [symbol, balance] of Object.entries(balances)) {
@@ -44,11 +51,10 @@ async function main() {
       if (orders.length > 0) {
         console.log(`\n${market.base.symbol}/${market.quote.symbol}:`);
         for (const order of orders) {
-          const price = Number(order.price) / 10 ** market.quote.decimals;
-          const qty = Number(order.quantity) / 10 ** market.base.decimals;
-          const filled = order.quantity_fill
-            ? Number(order.quantity_fill) / 10 ** market.base.decimals
-            : 0;
+          // order.price and order.quantity are bigint — use formatters
+          const price = formatPrice(market, order.price);
+          const qty = formatQuantity(market, order.quantity);
+          const filled = order.quantity_fill ? formatQuantity(market, order.quantity_fill) : 0;
           console.log(
             `  ${order.side} ${qty.toFixed(3)} @ ${price.toFixed(6)} ` +
               `(filled: ${filled.toFixed(3)}) [${order.order_id.slice(0, 10)}...]`,
@@ -68,9 +74,11 @@ async function main() {
     console.log(`\n--- Balance Update (${new Date().toISOString()}) ---`);
     for (const entry of update.balance) {
       const symbol = findSymbol(entry.asset_id, markets) ?? entry.asset_id.slice(0, 10);
-      const tradingBalance = Number(entry.trading_account_balance) / 10 ** 9;
-      const locked = Number(entry.total_locked) / 10 ** 9;
-      const unlocked = Number(entry.total_unlocked) / 10 ** 9;
+      const decimals = findDecimals(symbol, markets) ?? 9;
+      // entry fields are now bigint — convert to human-readable
+      const tradingBalance = Number(entry.trading_account_balance) / 10 ** decimals;
+      const locked = Number(entry.total_locked) / 10 ** decimals;
+      const unlocked = Number(entry.total_unlocked) / 10 ** decimals;
 
       console.log(
         `  ${symbol}: available=${tradingBalance.toFixed(3)}, ` +
@@ -84,6 +92,7 @@ async function main() {
 
 function displayBalance(symbol: string, balance: BalanceResponse, markets: Market[]) {
   const decimals = findDecimals(symbol, markets) ?? 9;
+  // balance fields are bigint
   const trading = Number(balance.trading_account_balance) / 10 ** decimals;
   const locked = Number(balance.total_locked) / 10 ** decimals;
   const unlocked = Number(balance.total_unlocked) / 10 ** decimals;

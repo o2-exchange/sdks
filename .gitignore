@@ -37,3 +37,6 @@ _site/
 
 # Local notes
 TODO.md
+
+.claude
+sdks/typescript/.integration-wallets.json

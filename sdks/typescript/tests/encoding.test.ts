@@ -15,8 +15,11 @@ import {
   functionSelector,
   GAS_MAX,
   hexToBytes,
+  scaleDecimalString,
   scalePrice,
+  scalePriceString,
   scaleQuantity,
+  scaleQuantityString,
   u64BE,
   validateFractionalPrice,
   validateMinOrder,
@@ -333,6 +336,22 @@ describe("Encoding Module", () => {
       // 1.234 * 10^9 = 1234000000, truncate_factor = 10^6
       // 1234000000 % 1000000 = 0, so no rounding needed
       expect(result).toBe(1234000000n);
+    });
+
+    it("scaleDecimalString rejects malformed multi-dot decimals", () => {
+      expect(() => scaleDecimalString("1.2.3", 9)).toThrow("Invalid decimal string");
+    });
+
+    it("scaleDecimalString rejects non-numeric decimal strings", () => {
+      expect(() => scaleDecimalString("abc", 9)).toThrow("Invalid decimal string");
+    });
+
+    it("scalePriceString rejects malformed decimal strings", () => {
+      expect(() => scalePriceString("1..2", 9, 9)).toThrow("Invalid decimal string");
+    });
+
+    it("scaleQuantityString rejects malformed decimal strings", () => {
+      expect(() => scaleQuantityString("1.2.3", 9, 3)).toThrow("Invalid decimal string");
     });
 
     it("formatDecimal converts back correctly", () => {

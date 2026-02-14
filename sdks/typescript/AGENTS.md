@@ -14,10 +14,10 @@ Requires Node.js 18+.
 import { O2Client, Network } from "@o2exchange/sdk";
 
 const client = new O2Client({ network: Network.TESTNET });
-const wallet = client.generateWallet();
-const { tradeAccountId } = await client.setupAccount(wallet);
-const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
-const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
+const wallet = O2Client.generateWallet();
+await client.setupAccount(wallet);
+await client.createSession(wallet, ["fFUEL/fUSDC"]);
+const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 ```
 
 ## API Reference
@@ -26,25 +26,26 @@ const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 5
 
 | Method | Params | Returns | Description |
 |--------|--------|---------|-------------|
-| `constructor` | `{ network?: Network, config?: NetworkConfig }` | `O2Client` | Create client (default: TESTNET) |
-| `generateWallet()` | — | `WalletState` | Generate Fuel-native wallet |
-| `generateEvmWallet()` | — | `WalletState` | Generate EVM wallet |
-| `loadWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load Fuel wallet from hex |
-| `loadEvmWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load EVM wallet from hex |
+| `constructor` | `{ network?: Network, config?: NetworkConfig, marketsCacheTtlMs?: number }` | `O2Client` | Create client (default: TESTNET) |
+| `O2Client.generateWallet()` | — | `WalletState` | Generate Fuel-native wallet |
+| `O2Client.generateEvmWallet()` | — | `WalletState` | Generate EVM wallet |
+| `O2Client.loadWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load Fuel wallet from hex |
+| `O2Client.loadEvmWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load EVM wallet from hex |
+| `setSession(session)` | `SessionState` | `void` | Restore a serialized session |
 | `setupAccount(wallet)` | `Signer` | `{ tradeAccountId, nonce }` | Idempotent account setup |
-| `createSession(wallet, tradeAccountId, markets, expiryDays?)` | `Signer`, id, markets, days | `SessionState` | Create trading session |
-| `createOrder(session, market, side, price, quantity, orderType?, settleFirst?, collectOrders?)` | session, market, params | `SessionActionsResponse` | Place order (nonce auto-managed) |
-| `cancelOrder(session, orderId, market)` | session, orderId, market | `SessionActionsResponse` | Cancel an order |
-| `cancelAllOrders(session, market)` | session, market | `SessionActionsResponse[] \| null` | Cancel all open orders |
-| `settleBalance(session, market)` | session, market | `SessionActionsResponse` | Settle filled balances |
-| `batchActions(session, marketActions, market, registryId, collectOrders?)` | raw actions | `SessionActionsResponse` | Submit raw action batch |
+| `createSession(wallet, markets, expiryDays?)` | `Signer`, market list, days | `SessionState` | Create and store trading session |
+| `createOrder(market, side, price, quantity, options?)` | market, `"buy"\|"sell"`, `Numeric`, `Numeric`, options | `SessionActionsResponse` | Place order (nonce auto-managed) |
+| `cancelOrder(orderId, market)` | orderId, market | `SessionActionsResponse` | Cancel an order |
+| `cancelAllOrders(market)` | market | `SessionActionsResponse[] \| null` | Cancel all open orders |
+| `settleBalance(market)` | market | `SessionActionsResponse` | Settle filled balances |
+| `batchActions(marketActions, collectOrders?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
 | `getMarkets()` | — | `Market[]` | Fetch all markets |
 | `getMarket(pair)` | `"FUEL/USDC"` | `Market` | Resolve market by pair |
 | `getDepth(market, precision?)` | market, precision | `DepthSnapshot` | Get order book depth |
 | `getTrades(market, count?)` | market, count | `Trade[]` | Get recent trades |
 | `getBars(market, resolution, from, to)` | market, params | `Bar[]` | Get OHLCV candles |
 | `getTicker(market)` | market | `MarketTicker` | Get ticker data |
-| `getBalances(tradeAccountId)` | id | `Record<string, BalanceResponse>` | Get all balances by symbol |
+| `getBalances(tradeAccountId)` | id | `Record<string, BalanceResponse>` | Get balances keyed by symbol |
 | `getOrders(tradeAccountId, market, isOpen?, count?)` | id, market, params | `Order[]` | Get orders |
 | `getOrder(market, orderId)` | market, orderId | `Order` | Get single order |
 | `streamDepth(market, precision?)` | market | `AsyncGenerator<DepthUpdate>` | Stream order book |
@@ -53,13 +54,20 @@ const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 5
 | `streamBalances(tradeAccountId)` | id | `AsyncGenerator<BalanceUpdate>` | Stream balances |
 | `streamNonce(tradeAccountId)` | id | `AsyncGenerator<NonceUpdate>` | Stream nonce updates |
 | `getNonce(tradeAccountId)` | id | `bigint` | Fetch current nonce |
-| `refreshNonce(session)` | session | `bigint` | Re-fetch nonce from API |
-| `withdraw(wallet, tradeAccountId, assetId, amount, to?)` | `Signer`, params | `WithdrawResponse` | Withdraw funds |
+| `refreshNonce()` | — | `bigint` | Re-fetch nonce and update stored session |
+| `withdraw(wallet, asset, amount, to?)` | owner signer, symbol/assetId, `Numeric`, address? | `WithdrawResponse` | Withdraw funds |
 | `disconnectWs()` | — | `void` | Close WebSocket connection |
+| `close()` | — | `void` | Close all resources (WebSocket + cache) |
 
 ### Low-Level Modules
 
-#### Crypto (`crypto.ts`)
+Low-level crypto and encoding helpers are exported from:
+
+```ts
+import { ... } from "@o2exchange/sdk/internals";
+```
+
+#### Crypto (`internals`)
 
 | Function | Params | Returns | Description |
 |----------|--------|---------|-------------|
@@ -71,13 +79,11 @@ const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 5
 | `personalSign(privKey, message)` | key, message | `Uint8Array(64)` | Fuel personalSign (session creation) |
 | `rawSign(privKey, message)` | key, message | `Uint8Array(64)` | Raw SHA-256 sign (session actions) |
 | `evmPersonalSign(privKey, message)` | key, message | `Uint8Array(64)` | EVM personalSign (EVM owner sessions) |
-| `fuelPersonalSignDigest(message)` | message bytes | `Uint8Array(32)` | Fuel personalSign digest (for external signers) |
-| `evmPersonalSignDigest(message)` | message bytes | `Uint8Array(32)` | EVM personal_sign digest (for external signers) |
-| `toFuelCompactSignature(r, s, v)` | 32B r, 32B s, 0\|1 | `Uint8Array(64)` | Convert (r,s,v) to Fuel compact format |
-| `new ExternalSigner(addr, fn)` | b256 address, `SignDigestFn` | `ExternalSigner` | Fuel-native external signer |
-| `new ExternalEvmSigner(addr, evm, fn)` | b256, evm address, `SignDigestFn` | `ExternalEvmSigner` | EVM external signer |
+| `fuelPersonalSignDigest(message)` | message bytes | `Uint8Array(32)` | Fuel personalSign digest (external signers) |
+| `evmPersonalSignDigest(message)` | message bytes | `Uint8Array(32)` | EVM personal_sign digest (external signers) |
+| `toFuelCompactSignature(r, s, v)` | 32B r, 32B s, 0\|1 | `Uint8Array(64)` | Convert `(r,s,v)` to Fuel compact format |
 
-#### Encoding (`encoding.ts`)
+#### Encoding (`internals`)
 
 | Function | Params | Returns | Description |
 |----------|--------|---------|-------------|
@@ -100,33 +106,33 @@ const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 5
 
 ```ts
 const client = new O2Client({ network: Network.TESTNET });
-const wallet = client.generateWallet();
+const wallet = O2Client.generateWallet();
 const { tradeAccountId } = await client.setupAccount(wallet);
-const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
-const response = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
-console.log(`Order TX: ${response.tx_id}`);
+await client.createSession(wallet, ["fFUEL/fUSDC"]);
+const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+console.log(`Order TX: ${response.txId}`);
 ```
 
 ### 2. Market Maker Loop
 
 ```ts
+import { cancelOrderAction, createOrderAction, settleBalanceAction } from "@o2exchange/sdk";
+
 let buyId: string | null = null;
 let sellId: string | null = null;
 
 while (true) {
-  const actions: ActionPayload[] = [];
-  if (buyId) actions.push({ CancelOrder: { order_id: buyId } });
-  if (sellId) actions.push({ CancelOrder: { order_id: sellId } });
-  actions.push({ SettleBalance: { to: { ContractId: tradeAccountId } } });
-  actions.push({ CreateOrder: { side: "Buy", price: buyPrice, quantity: qty, order_type: "Spot" } });
-  actions.push({ CreateOrder: { side: "Sell", price: sellPrice, quantity: qty, order_type: "Spot" } });
+  const actions = [];
+  if (buyId) actions.push(cancelOrderAction(buyId));
+  if (sellId) actions.push(cancelOrderAction(sellId));
+  actions.push(settleBalanceAction());
+  actions.push(createOrderAction("buy", buyPrice, qty, "PostOnly"));
+  actions.push(createOrderAction("sell", sellPrice, qty, "PostOnly"));
 
-  const response = await client.batchActions(
-    session, [{ market_id: market.market_id, actions }], market, registryId, true
-  );
-  buyId = response.orders?.find(o => o.side === "Buy")?.order_id ?? null;
-  sellId = response.orders?.find(o => o.side === "Sell")?.order_id ?? null;
-  await sleep(10000);
+  const response = await client.batchActions([{ market: "fFUEL/fUSDC", actions }], true);
+  buyId = response.orders?.find((o) => o.side === "buy")?.order_id ?? null;
+  sellId = response.orders?.find((o) => o.side === "sell")?.order_id ?? null;
+  await sleep(10_000);
 }
 ```
 
@@ -144,33 +150,26 @@ for await (const update of depthStream) {
 ### 4. Order Management
 
 ```ts
-// Cancel specific order
-await client.cancelOrder(session, orderId, "fFUEL/fUSDC");
-
-// Cancel all open orders
-await client.cancelAllOrders(session, "fFUEL/fUSDC");
-
-// Settle balance
-await client.settleBalance(session, "fFUEL/fUSDC");
-
-// Refresh nonce after errors
-await client.refreshNonce(session);
+await client.cancelOrder(orderId, "fFUEL/fUSDC");
+await client.cancelAllOrders("fFUEL/fUSDC");
+await client.settleBalance("fFUEL/fUSDC");
+await client.refreshNonce();
 ```
 
 ### 5. External Signer (KMS/HSM)
 
 ```ts
-import { ExternalSigner, toFuelCompactSignature } from "@o2exchange/sdk";
+import { ExternalSigner } from "@o2exchange/sdk";
+import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
 const signer = new ExternalSigner("0x1234...abcd", (digest) => {
   const { r, s, recoveryId } = myKms.sign(digest);
   return toFuelCompactSignature(r, s, recoveryId);
 });
 
-// Use exactly like a wallet — all client methods accept Signer
-const { tradeAccountId } = await client.setupAccount(signer);
-const session = await client.createSession(signer, tradeAccountId, ["FUEL/USDC"]);
-const response = await client.createOrder(session, "FUEL/USDC", "Buy", 0.02, 100.0);
+await client.setupAccount(signer);
+await client.createSession(signer, ["FUEL/USDC"]);
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 ```
 
 ### 6. Balance Tracking & Withdrawals
@@ -181,8 +180,7 @@ for (const [symbol, bal] of Object.entries(balances)) {
   console.log(`${symbol}: ${bal.trading_account_balance}`);
 }
 
-// Withdraw
-await client.withdraw(wallet, tradeAccountId, assetId, "1000000000");
+await client.withdraw(wallet, "fUSDC", "100.0");
 ```
 
 ## Error Handling
@@ -198,11 +196,11 @@ await client.withdraw(wallet, tradeAccountId, assetId, "1000000000");
 | 4002 | AccountNotFound | Call setupAccount() |
 | 7004 | TooManyActions | Max 5 actions per batch |
 
-On-chain reverts have no `code` field — check `error.reason` for revert name (e.g., `"NotEnoughBalance"`, `"TraderNotWhiteListed"`, `"PricePrecision"`, `"FractionalPrice"`).
+On-chain reverts have no `code` field — check `error.reason` for revert name (e.g., `"NotEnoughBalance"`, `"TraderNotWhiteListed"`, `"PricePrecision"`).
 
 ```ts
 try {
-  await client.createOrder(session, market, "Buy", price, qty);
+  await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
 } catch (error) {
   if (error instanceof O2Error) {
     console.log(error.code, error.message, error.reason);
@@ -210,33 +208,12 @@ try {
 }
 ```
 
-## Type Reference
-
-| Type | Key Fields | Description |
-|------|------------|-------------|
-| `Signer` | `b256Address, personalSign(msg)` | Interface for all signers (wallets, KMS, HSM) |
-| `WalletState` | `privateKey, b256Address, isEvm, personalSign(msg)` | In-process wallet (extends `Signer`) |
-| `ExternalSigner` | `b256Address, personalSign(msg)` | Fuel-native external signer (implements `Signer`) |
-| `ExternalEvmSigner` | `b256Address, evmAddress, personalSign(msg)` | EVM external signer (implements `Signer`) |
-| `SessionState` | `sessionPrivateKey, sessionAddress, tradeAccountId, nonce, contractIds` | Session state |
-| `Market` | `contract_id, market_id, base, quote, min_order, dust` | Market config |
-| `MarketAsset` | `symbol, asset, decimals, max_precision` | Asset in a market |
-| `Order` | `order_id, side, price, quantity, order_type, close, cancel` | Order record |
-| `Trade` | `trade_id, side, price, quantity, total, timestamp` | Trade record |
-| `BalanceResponse` | `trading_account_balance, total_locked, total_unlocked, order_books` | Balance info |
-| `DepthSnapshot` | `buys, sells` (each: `{ price, quantity }[]`) | Order book depth |
-| `DepthUpdate` | `action, view?, changes?, market_id` | WebSocket depth update |
-| `Identity` | `{ Address: hex }` or `{ ContractId: hex }` | Fuel identity enum |
-
 ## Critical Implementation Notes
 
-- **Session nonce is managed in-place**: Trading methods (`createOrder`, `cancelOrder`, `batchActions`, etc.) mutate `session.nonce` directly. You pass the same session object to every call — no need to capture or thread a returned session.
-- **External signers**: `setupAccount()`, `createSession()`, and `withdraw()` accept any `Signer` — use `ExternalSigner` or `ExternalEvmSigner` for KMS/HSM. Session actions use the session key, not the owner signer.
-- Session creation uses `personalSign` (Fuel prefix). Session actions use `rawSign` (no prefix).
-- EVM owner wallets use `evmPersonalSign` for session creation. Session wallet always uses Fuel-style.
-- Nonce increments on-chain even on reverts. The SDK auto-refreshes on errors; call `refreshNonce(session)` manually if needed.
-- Function selectors are `u64(len) + utf8(name)`, NOT keccak256 hashes.
-- `chain_id` can be `0` on testnet — this is valid.
-- OrderType encoding is tightly packed (no padding to largest variant).
-- Gas is always `u64::MAX` (18446744073709551615n).
-- `setupAccount()` is idempotent — safe to call on every startup.
+- **Session is stored on the client**: after `createSession()` or `setSession()`, trading methods use that stored session implicitly.
+- **External signers**: `setupAccount()`, `createSession()`, and `withdraw()` accept any `Signer`. Session actions use the session key, not the owner signer.
+- Session creation uses `personalSign` (Fuel/EVM prefixed). Session actions use `rawSign` (no prefix).
+- Nonce increments on-chain even on reverts. The SDK auto-resyncs in many error paths; call `refreshNonce()` after failures if needed.
+- Function selectors are `u64(len) + utf8(name)`, not keccak hashes.
+- `chain_id` can be `0` on testnet and is valid.
+- `setupAccount()` is idempotent and safe to call on startup.
