@@ -26,6 +26,7 @@ Started: 2026-02-14
 | 7 | WebSocket unsubscribe semantics are coarse | Medium | Implemented | No |
 | 8 | Output models overuse `Option<String>`/`Value` | Medium | Implemented | No |
 | 9 | Optionality audit against backend API structs | High | Implemented | No |
+| 10 | Integration test runtime optimization parity with TS SDK | Medium | Implemented | No |
 
 ## Item 1 Notes: `submit_actions` error-path typing
 
@@ -61,6 +62,7 @@ Proposed default (if no preference):
 | 2026-02-14 | 7 | Keep websocket API unchanged; fix unsubscribe bookkeeping to remove only exact matching subscribe payloads | Prevents accidental removal of unrelated subscriptions while minimizing surface change |
 | 2026-02-14 | 8 | Aggressive typing migration: align Rust outputs to strict reusable leaf types (`u64`, typed IDs, normalized `Side` enum), with `serde(default)` for resilience and format normalization during deserialization | Maximizes type-safety/devex while tolerating partial payload drift where explicitly allowed |
 | 2026-02-14 | 9 | Re-audit optional fields directly against backend API code; remove unnecessary `Option` where backend guarantees field presence | Prevent silent shape drift in SDK and improve ergonomics by reducing `unwrap`/branching burden |
+| 2026-02-14 | 10 | Apply TS-like integration test optimizations: persisted wallets, account reuse, conditional faucet funding, and keep read-only tests parallel | Reduce flakiness/runtime and avoid unnecessary faucet/whitelist churn |
 
 ## Change Log
 
@@ -76,6 +78,7 @@ Proposed default (if no preference):
 | 2026-02-14 | 7 | Updated websocket unsubscribe bookkeeping (`orders`, `balances`, `nonce`) to remove only exact matching subscribe payloads | `cargo check`; `cargo test --tests --no-run` |
 | 2026-02-14 | 8 | Refactored core HTTP/WS models from loose `Option<String>`/`Value` fields to stronger reusable typed IDs/enums/`u64` numerics; added side normalization and numeric deserialization support for string/number/0x-hex formats; updated client/examples/tests for new strict model contracts | `cargo check`; `cargo test --no-run`; `cargo test` |
 | 2026-02-14 | 9 | Aligned optionality and shapes to backend source: de-optionalized required REST/WS fields, corrected `/v1/markets/summary` and `/v1/markets/ticker` to `Vec<_>`, corrected `/v1/bars` envelope parsing, and fixed aggregated endpoint models/surfaces (map/list/orderbook/trades/coingecko routes); updated client/example callsites accordingly | `cargo check`; `cargo test --tests --no-run`; `cargo test` |
+| 2026-02-14 | 10 | Reworked `tests/integration_tests.rs` to cache maker/taker wallets in `sdks/rust/.integration-wallets.json`, reuse accounts across runs, avoid unconditional faucet minting, and align assertions with strict model types; added `sdks/rust/.integration-wallets.json` to root `.gitignore` | `cargo test --features integration --test integration_tests --no-run`; `cargo test --tests --no-run` |
 
 ## Item 9 Notes: Optionality audit against backend API
 

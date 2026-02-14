@@ -634,8 +634,7 @@ impl O2WebSocket {
         let unsub = json!({
             "action": "unsubscribe_orders"
         });
-        self.send_json(unsub)
-        .await?;
+        self.send_json(unsub).await?;
         let mut guard = self.inner.lock().await;
         let exact_sub = json!({
             "action": "subscribe_orders"
@@ -665,8 +664,7 @@ impl O2WebSocket {
             "action": "unsubscribe_balances",
             "identities": identities
         });
-        self.send_json(unsub)
-        .await?;
+        self.send_json(unsub).await?;
         let mut guard = self.inner.lock().await;
         let exact_sub = json!({
             "action": "subscribe_balances",
@@ -682,8 +680,7 @@ impl O2WebSocket {
             "action": "unsubscribe_nonce",
             "identities": identities
         });
-        self.send_json(unsub)
-        .await?;
+        self.send_json(unsub).await?;
         let mut guard = self.inner.lock().await;
         let exact_sub = json!({
             "action": "subscribe_nonce",

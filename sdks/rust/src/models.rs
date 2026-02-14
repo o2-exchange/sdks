@@ -498,7 +498,11 @@ impl Market {
             .ok_or_else(|| O2Error::Other(format!("Invalid {field}: 10^{exp} overflows u128")))
     }
 
-    fn checked_truncate_factor(decimals: u32, max_precision: u32, field: &str) -> Result<u64, O2Error> {
+    fn checked_truncate_factor(
+        decimals: u32,
+        max_precision: u32,
+        field: &str,
+    ) -> Result<u64, O2Error> {
         if max_precision > decimals {
             return Err(O2Error::Other(format!(
                 "Invalid {field}: max_precision ({max_precision}) exceeds decimals ({decimals})"

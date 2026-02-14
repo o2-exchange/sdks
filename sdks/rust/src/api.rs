@@ -118,7 +118,10 @@ impl O2Api {
         let resp = self
             .client
             .get(&url)
-            .query(&[("market_id", market_id), ("precision", precision_str.as_str())])
+            .query(&[
+                ("market_id", market_id),
+                ("precision", precision_str.as_str()),
+            ])
             .send()
             .await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
@@ -521,10 +524,7 @@ impl O2Api {
         ticker_id: &str,
         depth: u32,
     ) -> Result<CoingeckoAggregatedOrderbook, O2Error> {
-        let url = format!(
-            "{}/v1/aggregated/coingecko/orderbook",
-            self.config.api_base
-        );
+        let url = format!("{}/v1/aggregated/coingecko/orderbook", self.config.api_base);
         let depth_str = depth.to_string();
         let resp = self
             .client

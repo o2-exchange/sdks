@@ -31,11 +31,12 @@ pub struct O2Client {
 impl O2Client {
     #[cfg(test)]
     fn parse_nonce_value(value: &str, context: &str) -> Result<u64, O2Error> {
-        if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+        if let Some(hex) = value
+            .strip_prefix("0x")
+            .or_else(|| value.strip_prefix("0X"))
+        {
             return u64::from_str_radix(hex, 16).map_err(|e| {
-                O2Error::ParseError(format!(
-                    "Invalid hex nonce in {context}: '{value}' ({e})"
-                ))
+                O2Error::ParseError(format!("Invalid hex nonce in {context}: '{value}' ({e})"))
             });
         }
 
@@ -288,7 +289,9 @@ impl O2Client {
         let _ = self.retry_mint_to_contract(trade_account_id.as_str()).await;
 
         // 4. Whitelist account (testnet-only, non-fatal; retry for transient failures)
-        let _ = self.retry_whitelist_account(trade_account_id.as_str()).await;
+        let _ = self
+            .retry_whitelist_account(trade_account_id.as_str())
+            .await;
 
         // 5. Return current account state
         self.api.get_account_by_id(trade_account_id.as_str()).await
@@ -327,10 +330,7 @@ impl O2Client {
             .ok_or_else(|| O2Error::AccountNotFound("No trade_account_id found".into()))?;
 
         let nonce = Self::parse_account_nonce(
-            account
-                .trade_account
-                .as_ref()
-                .map(|ta| ta.nonce),
+            account.trade_account.as_ref().map(|ta| ta.nonce),
             "create_session account response",
         )?;
 
@@ -632,7 +632,10 @@ impl O2Client {
         market_name: &MarketSymbol,
     ) -> Result<MarketTicker, O2Error> {
         let market = self.get_market(market_name).await?;
-        let tickers = self.api.get_market_ticker(market.market_id.as_str()).await?;
+        let tickers = self
+            .api
+            .get_market_ticker(market.market_id.as_str())
+            .await?;
         tickers
             .into_iter()
             .next()
@@ -665,10 +668,7 @@ impl O2Client {
                         .map_err(|e| {
                             O2Error::Other(format!(
                                 "Failed to fetch balance for asset {} ({}) on account {}: {}",
-                                symbol,
-                                asset_id,
-                                trade_account_id,
-                                e
+                                symbol, asset_id, trade_account_id, e
                             ))
                         })?;
                     balances.insert(symbol.clone(), bal);
@@ -721,10 +721,7 @@ impl O2Client {
     pub async fn get_nonce(&self, trade_account_id: &str) -> Result<u64, O2Error> {
         let account = self.api.get_account_by_id(trade_account_id).await?;
         Self::parse_account_nonce(
-            account
-                .trade_account
-                .as_ref()
-                .map(|ta| ta.nonce),
+            account.trade_account.as_ref().map(|ta| ta.nonce),
             "get_nonce account response",
         )
     }

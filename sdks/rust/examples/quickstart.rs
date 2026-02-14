@@ -91,10 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (symbol, bal) in &balances {
         println!(
             "  {}: available={}, locked={}, unlocked={}",
-            symbol,
-            bal.trading_account_balance,
-            bal.total_locked,
-            bal.total_unlocked,
+            symbol, bal.trading_account_balance, bal.total_locked, bal.total_unlocked,
         );
     }
 
