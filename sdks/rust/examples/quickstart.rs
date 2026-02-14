@@ -60,19 +60,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 if let Some(orders) = &resp.orders {
                     for order in orders {
-                        println!("  Order ID: {}", order.order_id.as_deref().unwrap_or("?"));
-                        println!("  Side: {}", order.side.as_deref().unwrap_or("?"));
-                        println!("  Price: {}", order.price.as_deref().unwrap_or("?"));
-                        println!("  Quantity: {}", order.quantity.as_deref().unwrap_or("?"));
+                        println!("  Order ID: {}", order.order_id);
+                        println!("  Side: {}", order.side);
+                        println!("  Price: {}", order.price);
+                        println!("  Quantity: {}", order.quantity);
 
                         // 6. Cancel the order
-                        if let Some(ref oid) = order.order_id {
-                            println!("\nCancelling order {oid}...");
-                            let cancel = client.cancel_order(&mut session, oid, &market_pair).await;
-                            match cancel {
-                                Ok(_) => println!("Order cancelled successfully."),
-                                Err(e) => println!("Cancel failed: {e}"),
-                            }
+                        let oid = &order.order_id;
+                        println!("\nCancelling order {oid}...");
+                        let cancel = client.cancel_order(&mut session, oid, &market_pair).await;
+                        match cancel {
+                            Ok(_) => println!("Order cancelled successfully."),
+                            Err(e) => println!("Cancel failed: {e}"),
                         }
                     }
                 }
@@ -93,9 +92,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!(
             "  {}: available={}, locked={}, unlocked={}",
             symbol,
-            bal.trading_account_balance.as_deref().unwrap_or("0"),
-            bal.total_locked.as_deref().unwrap_or("0"),
-            bal.total_unlocked.as_deref().unwrap_or("0"),
+            bal.trading_account_balance,
+            bal.total_locked,
+            bal.total_unlocked,
         );
     }
 

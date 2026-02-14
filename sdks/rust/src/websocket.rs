@@ -631,14 +631,16 @@ impl O2WebSocket {
 
     /// Unsubscribe from order updates.
     pub async fn unsubscribe_orders(&self) -> Result<(), O2Error> {
-        self.send_json(json!({
+        let unsub = json!({
             "action": "unsubscribe_orders"
-        }))
+        });
+        self.send_json(unsub)
         .await?;
         let mut guard = self.inner.lock().await;
-        guard
-            .subscriptions
-            .retain(|s| s.get("action").and_then(|a| a.as_str()) != Some("subscribe_orders"));
+        let exact_sub = json!({
+            "action": "subscribe_orders"
+        });
+        guard.subscriptions.retain(|s| s != &exact_sub);
         Ok(())
     }
 
@@ -659,29 +661,35 @@ impl O2WebSocket {
 
     /// Unsubscribe from balance updates.
     pub async fn unsubscribe_balances(&self, identities: &[Identity]) -> Result<(), O2Error> {
-        self.send_json(json!({
+        let unsub = json!({
             "action": "unsubscribe_balances",
             "identities": identities
-        }))
+        });
+        self.send_json(unsub)
         .await?;
         let mut guard = self.inner.lock().await;
-        guard
-            .subscriptions
-            .retain(|s| s.get("action").and_then(|a| a.as_str()) != Some("subscribe_balances"));
+        let exact_sub = json!({
+            "action": "subscribe_balances",
+            "identities": identities
+        });
+        guard.subscriptions.retain(|s| s != &exact_sub);
         Ok(())
     }
 
     /// Unsubscribe from nonce updates.
     pub async fn unsubscribe_nonce(&self, identities: &[Identity]) -> Result<(), O2Error> {
-        self.send_json(json!({
+        let unsub = json!({
             "action": "unsubscribe_nonce",
             "identities": identities
-        }))
+        });
+        self.send_json(unsub)
         .await?;
         let mut guard = self.inner.lock().await;
-        guard
-            .subscriptions
-            .retain(|s| s.get("action").and_then(|a| a.as_str()) != Some("subscribe_nonce"));
+        let exact_sub = json!({
+            "action": "subscribe_nonce",
+            "identities": identities
+        });
+        guard.subscriptions.retain(|s| s != &exact_sub);
         Ok(())
     }
 

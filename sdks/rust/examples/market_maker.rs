@@ -56,9 +56,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let buy_price = config.reference_price * UnsignedDecimal::ONE.try_sub(config.spread_pct)?;
         let sell_price = config.reference_price * (UnsignedDecimal::ONE + config.spread_pct);
 
-        let scaled_buy_price = market.scale_price(&buy_price);
-        let scaled_sell_price = market.scale_price(&sell_price);
-        let scaled_quantity = market.scale_quantity(&config.order_size);
+        let scaled_buy_price = market.scale_price(&buy_price)?;
+        let scaled_sell_price = market.scale_price(&sell_price)?;
+        let scaled_quantity = market.scale_quantity(&config.order_size)?;
 
         println!(
             "Cycle: buy@{} sell@{} qty={}",
@@ -117,10 +117,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     active_sell_id = None;
                     if let Some(orders) = &resp.orders {
                         for order in orders {
-                            match order.side.as_deref() {
-                                Some("Buy") => active_buy_id = order.order_id.clone(),
-                                Some("Sell") => active_sell_id = order.order_id.clone(),
-                                _ => {}
+                            match order.side {
+                                Side::Buy => active_buy_id = Some(order.order_id.clone()),
+                                Side::Sell => active_sell_id = Some(order.order_id.clone()),
                             }
                         }
                     }

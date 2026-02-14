@@ -34,9 +34,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n--- Balances ---");
     let balances = client.get_balances(&trade_account_id).await?;
     for (symbol, bal) in &balances {
-        let available = bal.trading_account_balance.as_deref().unwrap_or("0");
-        let locked = bal.total_locked.as_deref().unwrap_or("0");
-        let unlocked = bal.total_unlocked.as_deref().unwrap_or("0");
+        let available = bal.trading_account_balance;
+        let locked = bal.total_locked;
+        let unlocked = bal.total_unlocked;
         println!("  {symbol}: available={available}, locked={locked}, unlocked={unlocked}");
     }
 
@@ -47,17 +47,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .get_orders(&trade_account_id, &pair, Some(true), 20)
             .await?;
 
-        if let Some(orders) = &orders_resp.orders {
-            if !orders.is_empty() {
-                println!("\n--- Open Orders ({pair}) ---");
-                for order in orders {
-                    let side = order.side.as_deref().unwrap_or("?");
-                    let price = order.price.as_deref().unwrap_or("0");
-                    let qty = order.quantity.as_deref().unwrap_or("0");
-                    let fill = order.quantity_fill.as_deref().unwrap_or("0");
-                    let oid = order.order_id.as_deref().unwrap_or("?");
-                    println!("  {side} {qty} @ {price} (filled: {fill}) [{oid}]");
-                }
+        if !orders_resp.orders.is_empty() {
+            println!("\n--- Open Orders ({pair}) ---");
+            for order in &orders_resp.orders {
+                let side = order.side;
+                let price = order.price;
+                let qty = order.quantity;
+                let fill = order.quantity_fill.unwrap_or(0);
+                let oid = &order.order_id;
+                println!("  {side} {qty} @ {price} (filled: {fill}) [{oid}]");
             }
         }
     }
@@ -66,16 +64,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(market) = markets.first() {
         let pair = market.symbol_pair();
         let trades = client.get_trades(&pair, 10).await?;
-        if let Some(ref trade_list) = trades.trades {
-            if !trade_list.is_empty() {
-                println!("\n--- Recent Trades ({pair}) ---");
-                for trade in trade_list {
-                    let side = trade.side.as_deref().unwrap_or("?");
-                    let price = trade.price.as_deref().unwrap_or("0");
-                    let qty = trade.quantity.as_deref().unwrap_or("0");
-                    let ts = trade.timestamp.as_deref().unwrap_or("?");
-                    println!("  {side} {qty} @ {price} at {ts}");
-                }
+        if !trades.trades.is_empty() {
+            println!("\n--- Recent Trades ({pair}) ---");
+            for trade in &trades.trades {
+                let side = trade.side;
+                let price = trade.price;
+                let qty = trade.quantity;
+                let ts = trade.timestamp;
+                println!("  {side} {qty} @ {price} at {ts}");
             }
         }
     }
@@ -86,20 +82,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut balance_stream = client.stream_balances(&[identity]).await?;
 
     while let Some(Ok(update)) = balance_stream.next().await {
-        if let Some(entries) = &update.balance {
-            for entry in entries {
-                let asset = entry.asset_id.as_deref().unwrap_or("?");
-                let available = entry.trading_account_balance.as_deref().unwrap_or("0");
-                let locked = entry.total_locked.as_deref().unwrap_or("0");
-                let unlocked = entry.total_unlocked.as_deref().unwrap_or("0");
-                println!(
-                    "[balance] asset={} available={} locked={} unlocked={}",
-                    &asset[..10.min(asset.len())],
-                    available,
-                    locked,
-                    unlocked
-                );
-            }
+        for entry in &update.balance {
+            let asset = entry.asset_id.as_str();
+            let available = entry.trading_account_balance;
+            let locked = entry.total_locked;
+            let unlocked = entry.total_unlocked;
+            println!(
+                "[balance] asset={} available={} locked={} unlocked={}",
+                &asset[..10.min(asset.len())],
+                available,
+                locked,
+                unlocked
+            );
         }
     }
 

@@ -29,6 +29,129 @@ pub struct O2Client {
 }
 
 impl O2Client {
+    #[cfg(test)]
+    fn parse_nonce_value(value: &str, context: &str) -> Result<u64, O2Error> {
+        if let Some(hex) = value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")) {
+            return u64::from_str_radix(hex, 16).map_err(|e| {
+                O2Error::ParseError(format!(
+                    "Invalid hex nonce in {context}: '{value}' ({e})"
+                ))
+            });
+        }
+
+        value.parse::<u64>().map_err(|e| {
+            O2Error::ParseError(format!(
+                "Invalid decimal nonce in {context}: '{value}' ({e})"
+            ))
+        })
+    }
+
+    fn parse_account_nonce(raw_nonce: Option<u64>, _context: &str) -> Result<u64, O2Error> {
+        match raw_nonce {
+            Some(v) => Ok(v),
+            None => Ok(0),
+        }
+    }
+
+    async fn retry_whitelist_account(&self, trade_account_id: &str) -> bool {
+        // Whitelist is testnet-only for current environments.
+        if !self.config.api_base.contains("api.testnet.o2.app") {
+            return true;
+        }
+
+        let delays_secs = [0u64, 2, 5];
+        let mut last_error = String::new();
+
+        for (idx, delay) in delays_secs.iter().enumerate() {
+            if *delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_secs(*delay)).await;
+            }
+
+            match self.api.whitelist_account(trade_account_id).await {
+                Ok(_) => return true,
+                Err(e) => {
+                    last_error = e.to_string();
+                    if idx < delays_secs.len() - 1 {
+                        eprintln!(
+                            "whitelist_account attempt {} failed for {}: {} (retrying)",
+                            idx + 1,
+                            trade_account_id,
+                            last_error
+                        );
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "whitelist_account failed after {} attempts for {}: {}",
+            delays_secs.len(),
+            trade_account_id,
+            last_error
+        );
+        false
+    }
+
+    async fn retry_mint_to_contract(&self, trade_account_id: &str) -> bool {
+        // Faucet currently exists only on non-mainnet configs.
+        if self.config.faucet_url.is_none() {
+            return true;
+        }
+
+        // Attempt immediately, then retry with cooldown-aware waits.
+        let attempts = 4usize;
+        let mut last_error = String::new();
+
+        for idx in 0..attempts {
+            if idx > 0 {
+                let lower = last_error.to_ascii_lowercase();
+                let wait_secs = if lower.contains("cooldown")
+                    || lower.contains("rate limit")
+                    || lower.contains("too many")
+                {
+                    65
+                } else {
+                    5
+                };
+                tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+            }
+
+            match self.api.mint_to_contract(trade_account_id).await {
+                Ok(resp) if resp.error.is_none() => return true,
+                Ok(resp) => {
+                    last_error = resp
+                        .error
+                        .unwrap_or_else(|| "faucet returned an unknown error".to_string());
+                    if idx < attempts - 1 {
+                        eprintln!(
+                            "mint_to_contract attempt {} returned error for {}: {} (retrying)",
+                            idx + 1,
+                            trade_account_id,
+                            last_error
+                        );
+                    }
+                }
+                Err(e) => {
+                    last_error = e.to_string();
+                    if idx < attempts - 1 {
+                        eprintln!(
+                            "mint_to_contract attempt {} failed for {}: {} (retrying)",
+                            idx + 1,
+                            trade_account_id,
+                            last_error
+                        );
+                    }
+                }
+            }
+        }
+
+        eprintln!(
+            "mint_to_contract failed after {} attempts for {}: {}",
+            attempts, trade_account_id, last_error
+        );
+        false
+    }
+
     /// Create a new O2Client for the given network.
     pub fn new(network: Network) -> Self {
         let config = NetworkConfig::from_network(network);
@@ -132,7 +255,7 @@ impl O2Client {
     /// Get the chain_id from cached markets.
     async fn get_chain_id(&mut self) -> Result<u64, O2Error> {
         let resp = self.ensure_markets().await?;
-        let chain_id_hex = resp.chain_id.as_deref().unwrap_or("0x0000000000000000");
+        let chain_id_hex = resp.chain_id.as_str();
         let stripped = chain_id_hex.strip_prefix("0x").unwrap_or(chain_id_hex);
         u64::from_str_radix(stripped, 16)
             .map_err(|e| O2Error::Other(format!("Failed to parse chain_id: {e}")))
@@ -158,18 +281,14 @@ impl O2Client {
         } else {
             // 2. Create account
             let created = self.api.create_account(&owner_hex).await?;
-            created.trade_account_id.ok_or_else(|| {
-                O2Error::Other("Account creation returned no trade_account_id".into())
-            })?
+            created.trade_account_id
         };
 
-        // 3. Mint via faucet (testnet/devnet only, non-fatal)
-        if self.config.faucet_url.is_some() {
-            let _ = self.api.mint_to_contract(trade_account_id.as_str()).await;
-        }
+        // 3. Mint via faucet (non-fatal; retry to reduce flaky setup on cooldown windows)
+        let _ = self.retry_mint_to_contract(trade_account_id.as_str()).await;
 
-        // 4. Whitelist account (idempotent)
-        let _ = self.api.whitelist_account(trade_account_id.as_str()).await;
+        // 4. Whitelist account (testnet-only, non-fatal; retry for transient failures)
+        let _ = self.retry_whitelist_account(trade_account_id.as_str()).await;
 
         // 5. Return current account state
         self.api.get_account_by_id(trade_account_id.as_str()).await
@@ -207,13 +326,13 @@ impl O2Client {
             .clone()
             .ok_or_else(|| O2Error::AccountNotFound("No trade_account_id found".into()))?;
 
-        let nonce: u64 = account
-            .trade_account
-            .as_ref()
-            .and_then(|ta| ta.nonce.as_deref())
-            .unwrap_or("0")
-            .parse()
-            .unwrap_or(0);
+        let nonce = Self::parse_account_nonce(
+            account
+                .trade_account
+                .as_ref()
+                .map(|ta| ta.nonce),
+            "create_session account response",
+        )?;
 
         // Generate session keypair
         let session_wallet = generate_keypair()?;
@@ -240,7 +359,7 @@ impl O2Client {
 
         // Submit session
         let request = SessionRequest {
-            contract_id: trade_account_id.to_string(),
+            contract_id: trade_account_id.clone(),
             session_id: Identity::Address(to_hex_string(&session_wallet.b256_address)),
             signature: Signature::Secp256k1(sig_hex),
             contract_ids: contract_ids_hex.clone(),
@@ -348,17 +467,15 @@ impl O2Client {
             )
             .await?;
 
-        let orders = orders_resp.orders.unwrap_or_default();
+        let orders = orders_resp.orders;
         let mut results = Vec::new();
 
         // Cancel up to 5 orders per batch
         for chunk in orders.chunks(5) {
             let actions: Vec<Action> = chunk
                 .iter()
-                .filter_map(|order| {
-                    order.order_id.as_ref().map(|oid| Action::CancelOrder {
-                        order_id: oid.clone(),
-                    })
+                .map(|order| Action::CancelOrder {
+                    order_id: order.order_id.clone(),
                 })
                 .collect();
 
@@ -401,11 +518,7 @@ impl O2Client {
         // Extract accounts_registry_id in a block so the borrow on self ends
         let accounts_registry_id = {
             let markets_resp = self.ensure_markets().await?;
-            markets_resp
-                .accounts_registry_id
-                .as_deref()
-                .map(parse_hex_32)
-                .transpose()?
+            Some(parse_hex_32(markets_resp.accounts_registry_id.as_str())?)
         };
 
         let mut all_calls: Vec<CallArg> = Vec::new();
@@ -519,7 +632,11 @@ impl O2Client {
         market_name: &MarketSymbol,
     ) -> Result<MarketTicker, O2Error> {
         let market = self.get_market(market_name).await?;
-        self.api.get_market_ticker(market.market_id.as_str()).await
+        let tickers = self.api.get_market_ticker(market.market_id.as_str()).await?;
+        tickers
+            .into_iter()
+            .next()
+            .ok_or_else(|| O2Error::Other("No ticker returned for requested market".into()))
     }
 
     // -----------------------------------------------------------------------
@@ -541,13 +658,20 @@ impl O2Client {
                 (&market.quote.symbol, &market.quote.asset),
             ] {
                 if seen_assets.insert(asset_id.clone()) {
-                    if let Ok(bal) = self
+                    let bal = self
                         .api
                         .get_balance(asset_id.as_str(), Some(trade_account_id.as_str()), None)
                         .await
-                    {
-                        balances.insert(symbol.clone(), bal);
-                    }
+                        .map_err(|e| {
+                            O2Error::Other(format!(
+                                "Failed to fetch balance for asset {} ({}) on account {}: {}",
+                                symbol,
+                                asset_id,
+                                trade_account_id,
+                                e
+                            ))
+                        })?;
+                    balances.insert(symbol.clone(), bal);
                 }
             }
         }
@@ -596,14 +720,13 @@ impl O2Client {
     /// Get the current nonce for a trading account.
     pub async fn get_nonce(&self, trade_account_id: &str) -> Result<u64, O2Error> {
         let account = self.api.get_account_by_id(trade_account_id).await?;
-        let nonce: u64 = account
-            .trade_account
-            .as_ref()
-            .and_then(|ta| ta.nonce.as_deref())
-            .unwrap_or("0")
-            .parse()
-            .unwrap_or(0);
-        Ok(nonce)
+        Self::parse_account_nonce(
+            account
+                .trade_account
+                .as_ref()
+                .map(|ta| ta.nonce),
+            "get_nonce account response",
+        )
     }
 
     /// Refresh the nonce on a session from the API.
@@ -742,5 +865,49 @@ impl O2Client {
             ws.disconnect().await?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::O2Client;
+
+    #[test]
+    fn parse_nonce_decimal() {
+        assert_eq!(
+            O2Client::parse_nonce_value("42", "test").expect("decimal nonce should parse"),
+            42
+        );
+    }
+
+    #[test]
+    fn parse_nonce_hex_lowercase() {
+        assert_eq!(
+            O2Client::parse_nonce_value("0x2a", "test").expect("hex nonce should parse"),
+            42
+        );
+    }
+
+    #[test]
+    fn parse_nonce_hex_uppercase_prefix() {
+        assert_eq!(
+            O2Client::parse_nonce_value("0X2A", "test").expect("hex nonce should parse"),
+            42
+        );
+    }
+
+    #[test]
+    fn parse_nonce_missing_defaults_zero() {
+        assert_eq!(
+            O2Client::parse_account_nonce(None, "test").expect("missing nonce should default"),
+            0
+        );
+    }
+
+    #[test]
+    fn parse_nonce_invalid_is_error() {
+        let err = O2Client::parse_nonce_value("not-a-nonce", "test")
+            .expect_err("invalid nonce should return parse error");
+        assert!(format!("{err}").contains("Parse error"));
     }
 }

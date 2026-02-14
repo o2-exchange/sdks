@@ -6,6 +6,7 @@ use thiserror::Error;
 
 /// The primary error type for the O2 SDK.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum O2Error {
     // General (1xxx)
     #[error("Internal server error (1000): {0}")]

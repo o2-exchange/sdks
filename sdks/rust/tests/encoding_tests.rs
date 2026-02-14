@@ -434,10 +434,12 @@ fn test_market() -> Market {
     Market {
         contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001".into(),
         market_id: "0x0000000000000000000000000000000000000000000000000000000000000002".into(),
-        maker_fee: "0".into(),
-        taker_fee: "0".into(),
-        min_order: "1000000".into(),
-        dust: "0".into(),
+        whitelist_id: None,
+        blacklist_id: None,
+        maker_fee: 0,
+        taker_fee: 0,
+        min_order: 1_000_000,
+        dust: 0,
         price_window: 0,
         base: MarketAsset {
             symbol: "FUEL".into(),
@@ -459,7 +461,7 @@ fn test_adjust_quantity_already_valid() {
     let market = test_market();
     // price=100_000_000, quantity=5_000_000_000
     // product = 500_000_000_000_000_000, % 10^9 = 0 → valid
-    let adjusted = market.adjust_quantity(100_000_000, 5_000_000_000);
+    let adjusted = market.adjust_quantity(100_000_000, 5_000_000_000).unwrap();
     assert_eq!(adjusted, 5_000_000_000);
 }
 
@@ -467,17 +469,17 @@ fn test_adjust_quantity_already_valid() {
 fn test_adjust_quantity_needs_adjustment() {
     let market = test_market();
     // price=100_000_001, quantity=1 → product=100_000_001, % 10^9 != 0
-    let adjusted = market.adjust_quantity(100_000_001, 1);
+    let adjusted = market.adjust_quantity(100_000_001, 1).unwrap();
     // adjusted_product = 100_000_001 - 100_000_001 = 0 → quantity = 0
     assert_eq!(adjusted, 0);
 
     // price=100_000_000, quantity=3 → product=300_000_000, % 10^9 != 0
-    let adjusted = market.adjust_quantity(100_000_000, 3);
+    let adjusted = market.adjust_quantity(100_000_000, 3).unwrap();
     // adjusted_product = 300_000_000 - 300_000_000 = 0 → quantity = 0
     assert_eq!(adjusted, 0);
 
     // price=500_000_000, quantity=3 → product=1_500_000_000, % 10^9 != 0
-    let adjusted = market.adjust_quantity(500_000_000, 3);
+    let adjusted = market.adjust_quantity(500_000_000, 3).unwrap();
     // remainder = 500_000_000, adjusted_product = 1_000_000_000 → quantity = 2
     assert_eq!(adjusted, 2);
 }
@@ -489,7 +491,7 @@ fn test_adjust_quantity_needs_adjustment() {
 #[test]
 fn test_order_type_spot_to_encoding() {
     let market = test_market();
-    let (enc, json) = o2_sdk::OrderType::Spot.to_encoding(&market);
+    let (enc, json) = o2_sdk::OrderType::Spot.to_encoding(&market).unwrap();
     assert!(matches!(enc, OrderTypeEncoding::Spot));
     assert_eq!(json, serde_json::json!("Spot"));
 }
@@ -502,13 +504,14 @@ fn test_order_type_limit_to_encoding() {
         price: price.clone(),
         timestamp: 1700000000,
     }
-    .to_encoding(&market);
+    .to_encoding(&market)
+    .unwrap();
     match enc {
         OrderTypeEncoding::Limit {
             price: scaled,
             timestamp,
         } => {
-            assert_eq!(scaled, market.scale_price(&price));
+            assert_eq!(scaled, market.scale_price(&price).unwrap());
             assert_eq!(timestamp, 1700000000);
         }
         _ => panic!("Expected Limit encoding"),
@@ -526,14 +529,15 @@ fn test_order_type_bounded_market_to_encoding() {
         max_price: max_p.clone(),
         min_price: min_p.clone(),
     }
-    .to_encoding(&market);
+    .to_encoding(&market)
+    .unwrap();
     match enc {
         OrderTypeEncoding::BoundedMarket {
             max_price,
             min_price,
         } => {
-            assert_eq!(max_price, market.scale_price(&max_p));
-            assert_eq!(min_price, market.scale_price(&min_p));
+            assert_eq!(max_price, market.scale_price(&max_p).unwrap());
+            assert_eq!(min_price, market.scale_price(&min_p).unwrap());
         }
         _ => panic!("Expected BoundedMarket encoding"),
     }

@@ -80,22 +80,26 @@ impl O2Api {
     }
 
     /// GET /v1/markets/summary - 24-hour market statistics.
-    pub async fn get_market_summary(&self, market_id: &str) -> Result<MarketSummary, O2Error> {
-        let url = format!(
-            "{}/v1/markets/summary?market_id={}",
-            self.config.api_base, market_id
-        );
-        let resp = self.client.get(&url).send().await?;
+    pub async fn get_market_summary(&self, market_id: &str) -> Result<Vec<MarketSummary>, O2Error> {
+        let url = format!("{}/v1/markets/summary", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("market_id", market_id)])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
     /// GET /v1/markets/ticker - Real-time ticker data.
-    pub async fn get_market_ticker(&self, market_id: &str) -> Result<MarketTicker, O2Error> {
-        let url = format!(
-            "{}/v1/markets/ticker?market_id={}",
-            self.config.api_base, market_id
-        );
-        let resp = self.client.get(&url).send().await?;
+    pub async fn get_market_ticker(&self, market_id: &str) -> Result<Vec<MarketTicker>, O2Error> {
+        let url = format!("{}/v1/markets/ticker", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("market_id", market_id)])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
@@ -109,11 +113,14 @@ impl O2Api {
         market_id: &str,
         precision: u64,
     ) -> Result<DepthSnapshot, O2Error> {
-        let url = format!(
-            "{}/v1/depth?market_id={}&precision={}",
-            self.config.api_base, market_id, precision
-        );
-        let resp = self.client.get(&url).send().await?;
+        let url = format!("{}/v1/depth", self.config.api_base);
+        let precision_str = precision.to_string();
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("market_id", market_id), ("precision", precision_str.as_str())])
+            .send()
+            .await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
         // API wraps depth in "orders" or "view" field; unwrap it
         let depth = val
@@ -137,17 +144,21 @@ impl O2Api {
         start_timestamp: Option<u64>,
         start_trade_id: Option<&str>,
     ) -> Result<TradesResponse, O2Error> {
-        let mut url = format!(
-            "{}/v1/trades?market_id={}&direction={}&count={}",
-            self.config.api_base, market_id, direction, count
-        );
-        if let Some(ts) = start_timestamp {
-            url.push_str(&format!("&start_timestamp={}", ts));
+        let url = format!("{}/v1/trades", self.config.api_base);
+        let count_str = count.to_string();
+        let start_timestamp_str = start_timestamp.map(|ts| ts.to_string());
+        let mut query: Vec<(&str, &str)> = vec![
+            ("market_id", market_id),
+            ("direction", direction),
+            ("count", count_str.as_str()),
+        ];
+        if let Some(ts) = start_timestamp_str.as_deref() {
+            query.push(("start_timestamp", ts));
         }
         if let Some(tid) = start_trade_id {
-            url.push_str(&format!("&start_trade_id={}", tid));
+            query.push(("start_trade_id", tid));
         }
-        let resp = self.client.get(&url).send().await?;
+        let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
 
@@ -159,11 +170,19 @@ impl O2Api {
         direction: &str,
         count: u32,
     ) -> Result<TradesResponse, O2Error> {
-        let url = format!(
-            "{}/v1/trades_by_account?market_id={}&contract={}&direction={}&count={}",
-            self.config.api_base, market_id, contract, direction, count
-        );
-        let resp = self.client.get(&url).send().await?;
+        let url = format!("{}/v1/trades_by_account", self.config.api_base);
+        let count_str = count.to_string();
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[
+                ("market_id", market_id),
+                ("contract", contract),
+                ("direction", direction),
+                ("count", count_str.as_str()),
+            ])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
@@ -175,12 +194,24 @@ impl O2Api {
         to_ts: u64,
         resolution: &str,
     ) -> Result<Vec<Bar>, O2Error> {
-        let url = format!(
-            "{}/v1/bars?market_id={}&from={}&to={}&resolution={}",
-            self.config.api_base, market_id, from_ts, to_ts, resolution
-        );
-        let resp = self.client.get(&url).send().await?;
-        self.parse_response(resp).await
+        let url = format!("{}/v1/bars", self.config.api_base);
+        let from_ts_str = from_ts.to_string();
+        let to_ts_str = to_ts.to_string();
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[
+                ("market_id", market_id),
+                ("from", from_ts_str.as_str()),
+                ("to", to_ts_str.as_str()),
+                ("resolution", resolution),
+            ])
+            .send()
+            .await?;
+        let val: serde_json::Value = self.parse_response(resp).await?;
+        let bars_val = val.get("bars").unwrap_or(&val);
+        serde_json::from_value(bars_val.clone())
+            .map_err(|e| O2Error::JsonError(format!("Failed to parse bars: {e}")))
     }
 
     // -----------------------------------------------------------------------
@@ -210,8 +241,13 @@ impl O2Api {
 
     /// GET /v1/accounts - Get account info by owner address.
     pub async fn get_account_by_owner(&self, owner: &str) -> Result<AccountResponse, O2Error> {
-        let url = format!("{}/v1/accounts?owner={}", self.config.api_base, owner);
-        let resp = self.client.get(&url).send().await?;
+        let url = format!("{}/v1/accounts", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("owner", owner)])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
@@ -220,11 +256,13 @@ impl O2Api {
         &self,
         trade_account_id: &str,
     ) -> Result<AccountResponse, O2Error> {
-        let url = format!(
-            "{}/v1/accounts?trade_account_id={}",
-            self.config.api_base, trade_account_id
-        );
-        let resp = self.client.get(&url).send().await?;
+        let url = format!("{}/v1/accounts", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("trade_account_id", trade_account_id)])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
@@ -235,14 +273,15 @@ impl O2Api {
         contract: Option<&str>,
         address: Option<&str>,
     ) -> Result<BalanceResponse, O2Error> {
-        let mut url = format!("{}/v1/balance?asset_id={}", self.config.api_base, asset_id);
+        let url = format!("{}/v1/balance", self.config.api_base);
+        let mut query: Vec<(&str, &str)> = vec![("asset_id", asset_id)];
         if let Some(c) = contract {
-            url.push_str(&format!("&contract={}", c));
+            query.push(("contract", c));
         }
         if let Some(a) = address {
-            url.push_str(&format!("&address={}", a));
+            query.push(("address", a));
         }
-        let resp = self.client.get(&url).send().await?;
+        let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
 
@@ -262,30 +301,38 @@ impl O2Api {
         start_timestamp: Option<u64>,
         start_order_id: Option<&str>,
     ) -> Result<OrdersResponse, O2Error> {
-        let mut url = format!(
-            "{}/v1/orders?market_id={}&contract={}&direction={}&count={}",
-            self.config.api_base, market_id, contract, direction, count
-        );
-        if let Some(open) = is_open {
-            url.push_str(&format!("&is_open={}", open));
+        let url = format!("{}/v1/orders", self.config.api_base);
+        let count_str = count.to_string();
+        let is_open_str = is_open.map(|open| open.to_string());
+        let start_timestamp_str = start_timestamp.map(|ts| ts.to_string());
+        let mut query: Vec<(&str, &str)> = vec![
+            ("market_id", market_id),
+            ("contract", contract),
+            ("direction", direction),
+            ("count", count_str.as_str()),
+        ];
+        if let Some(open) = is_open_str.as_deref() {
+            query.push(("is_open", open));
         }
-        if let Some(ts) = start_timestamp {
-            url.push_str(&format!("&start_timestamp={}", ts));
+        if let Some(ts) = start_timestamp_str.as_deref() {
+            query.push(("start_timestamp", ts));
         }
         if let Some(oid) = start_order_id {
-            url.push_str(&format!("&start_order_id={}", oid));
+            query.push(("start_order_id", oid));
         }
-        let resp = self.client.get(&url).send().await?;
+        let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
 
     /// GET /v1/order - Get a single order.
     pub async fn get_order(&self, market_id: &str, order_id: &str) -> Result<Order, O2Error> {
-        let url = format!(
-            "{}/v1/order?market_id={}&order_id={}",
-            self.config.api_base, market_id, order_id
-        );
-        let resp = self.client.get(&url).send().await?;
+        let url = format!("{}/v1/order", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("market_id", market_id), ("order_id", order_id)])
+            .send()
+            .await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
         // API wraps order in an "order" key
         let order_val = val.get("order").unwrap_or(&val);
@@ -330,20 +377,14 @@ impl O2Api {
             .json(request)
             .send()
             .await?;
-
-        let text = resp.text().await?;
+        // Reuse standard status/error handling first; this ensures non-2xx
+        // responses are mapped consistently with the rest of the SDK.
+        let val: serde_json::Value = self.parse_response(resp).await?;
 
         // Parse as Value first for robustness, then extract fields.
         // The Order struct can have unexpected field types across API versions,
         // so we parse orders separately with a fallback.
-        let val: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
-            O2Error::JsonError(format!(
-                "Failed to parse actions response JSON: {e}\nBody: {}",
-                &text[..text.len().min(500)]
-            ))
-        })?;
-
-        let tx_id = val.get("tx_id").and_then(|v| v.as_str()).map(String::from);
+        let tx_id = val.get("tx_id").and_then(|v| v.as_str()).map(TxId::from);
         let code = val.get("code").and_then(|v| v.as_u64()).map(|v| v as u32);
         let message = val
             .get("message")
@@ -430,11 +471,13 @@ impl O2Api {
 
     /// GET /analytics/v1/referral/code-info - Look up referral code.
     pub async fn get_referral_info(&self, code: &str) -> Result<ReferralInfo, O2Error> {
-        let url = format!(
-            "{}/analytics/v1/referral/code-info?code={}",
-            self.config.api_base, code
-        );
-        let resp = self.client.get(&url).send().await?;
+        let url = format!("{}/analytics/v1/referral/code-info", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("code", code)])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
@@ -443,7 +486,7 @@ impl O2Api {
     // -----------------------------------------------------------------------
 
     /// GET /v1/aggregated/assets - List all trading assets.
-    pub async fn get_aggregated_assets(&self) -> Result<Vec<AggregatedAsset>, O2Error> {
+    pub async fn get_aggregated_assets(&self) -> Result<AggregatedAssets, O2Error> {
         let url = format!("{}/v1/aggregated/assets", self.config.api_base);
         let resp = self.client.get(&url).send().await?;
         self.parse_response(resp).await
@@ -456,11 +499,39 @@ impl O2Api {
         depth: u32,
         level: u32,
     ) -> Result<AggregatedOrderbook, O2Error> {
+        let url = format!("{}/v1/aggregated/orderbook", self.config.api_base);
+        let depth_str = depth.to_string();
+        let level_str = level.to_string();
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[
+                ("market_pair", market_pair),
+                ("depth", depth_str.as_str()),
+                ("level", level_str.as_str()),
+            ])
+            .send()
+            .await?;
+        self.parse_response(resp).await
+    }
+
+    /// GET /v1/aggregated/coingecko/orderbook - CoinGecko orderbook depth by ticker ID.
+    pub async fn get_aggregated_coingecko_orderbook(
+        &self,
+        ticker_id: &str,
+        depth: u32,
+    ) -> Result<CoingeckoAggregatedOrderbook, O2Error> {
         let url = format!(
-            "{}/v1/aggregated/orderbook?market_pair={}&depth={}&level={}",
-            self.config.api_base, market_pair, depth, level
+            "{}/v1/aggregated/coingecko/orderbook",
+            self.config.api_base
         );
-        let resp = self.client.get(&url).send().await?;
+        let depth_str = depth.to_string();
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("ticker_id", ticker_id), ("depth", depth_str.as_str())])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 
@@ -472,19 +543,31 @@ impl O2Api {
     }
 
     /// GET /v1/aggregated/ticker - Real-time ticker for all pairs.
-    pub async fn get_aggregated_ticker(&self) -> Result<Vec<PairTicker>, O2Error> {
+    pub async fn get_aggregated_ticker(&self) -> Result<AggregatedTicker, O2Error> {
         let url = format!("{}/v1/aggregated/ticker", self.config.api_base);
         let resp = self.client.get(&url).send().await?;
         self.parse_response(resp).await
     }
 
-    /// GET /v1/aggregated/trades - Recent trades for a pair.
-    pub async fn get_aggregated_trades(&self, market_pair: &str) -> Result<Vec<Trade>, O2Error> {
-        let url = format!(
-            "{}/v1/aggregated/trades?market_pair={}",
-            self.config.api_base, market_pair
-        );
+    /// GET /v1/aggregated/coingecko/tickers - CoinGecko ticker format.
+    pub async fn get_aggregated_coingecko_tickers(&self) -> Result<Vec<PairTicker>, O2Error> {
+        let url = format!("{}/v1/aggregated/coingecko/tickers", self.config.api_base);
         let resp = self.client.get(&url).send().await?;
+        self.parse_response(resp).await
+    }
+
+    /// GET /v1/aggregated/trades - Recent trades for a pair.
+    pub async fn get_aggregated_trades(
+        &self,
+        market_pair: &str,
+    ) -> Result<Vec<AggregatedTrade>, O2Error> {
+        let url = format!("{}/v1/aggregated/trades", self.config.api_base);
+        let resp = self
+            .client
+            .get(&url)
+            .query(&[("market_pair", market_pair)])
+            .send()
+            .await?;
         self.parse_response(resp).await
     }
 

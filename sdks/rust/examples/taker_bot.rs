@@ -42,12 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sells = update
             .view
             .as_ref()
-            .and_then(|v| v.sells.as_ref())
-            .or_else(|| update.changes.as_ref().and_then(|c| c.sells.as_ref()));
+            .map(|v| &v.sells)
+            .or_else(|| update.changes.as_ref().map(|c| &c.sells));
 
         if let Some(sell_levels) = sells {
             if let Some(best_ask) = sell_levels.first() {
-                let ask_price: u64 = best_ask.price.parse().unwrap_or(0);
+                let ask_price: u64 = best_ask.price;
                 if ask_price == 0 {
                     continue;
                 }
