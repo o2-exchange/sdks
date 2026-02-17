@@ -549,24 +549,79 @@ fn min_quantity_for_min_order(market: &o2_sdk::Market, price: &UnsignedDecimal) 
     UnsignedDecimal::new(with_margin).unwrap()
 }
 
-fn moderate_fill_price(market: &o2_sdk::Market) -> UnsignedDecimal {
-    let min_order = Decimal::from(market.min_order);
-    let base_precision_factor = Decimal::from(10u64.pow(market.base.max_precision));
-    let quote_factor = Decimal::from(10u64.pow(market.quote.decimals));
-    let price = min_order * base_precision_factor / quote_factor;
-    UnsignedDecimal::new(price).unwrap()
+fn quote_step(market: &o2_sdk::Market) -> UnsignedDecimal {
+    let step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
+    UnsignedDecimal::new(step).unwrap()
 }
 
-fn fill_quantity(market: &o2_sdk::Market, price: &UnsignedDecimal) -> UnsignedDecimal {
-    let min_order = Decimal::from(market.min_order);
-    let quote_factor = Decimal::from(10u64.pow(market.quote.decimals));
-    let base_factor = Decimal::from(10u64.pow(market.base.decimals));
-    let qty = Decimal::from(10u64) * min_order / (*price.inner() * quote_factor);
-    let truncate_factor =
-        Decimal::from(10u64.pow(market.base.decimals - market.base.max_precision));
-    let step = truncate_factor / base_factor;
-    let rounded = (qty / step).ceil() * step;
-    UnsignedDecimal::new(rounded).unwrap()
+fn floor_to_step(value: Decimal, step: Decimal) -> Decimal {
+    if step.is_zero() {
+        return value;
+    }
+    (value / step).floor() * step
+}
+
+fn required_quote_for_order(
+    market: &o2_sdk::Market,
+    price: &UnsignedDecimal,
+    quantity: &UnsignedDecimal,
+) -> u128 {
+    let scaled_price = u128::from(market.scale_price(price).unwrap());
+    let scaled_quantity = u128::from(market.scale_quantity(quantity).unwrap());
+    let base_decimals = 10u128.pow(market.base.decimals);
+    (scaled_quantity.saturating_mul(scaled_price)) / base_decimals
+}
+
+fn required_base_for_order(market: &o2_sdk::Market, quantity: &UnsignedDecimal) -> u128 {
+    u128::from(market.scale_quantity(quantity).unwrap())
+}
+
+async fn conservative_post_only_buy_params(
+    client: &mut O2Client,
+    market_pair: &MarketSymbol,
+    market: &o2_sdk::Market,
+) -> (UnsignedDecimal, UnsignedDecimal, u128, u128) {
+    let step = quote_step(market);
+    let step_dec = *step.inner();
+    let default_dec = *step.inner();
+
+    // Prefer a price one quote tick below best ask to keep the order post-only while
+    // minimizing over-aggressive bids in a live book.
+    let mut chosen = default_dec;
+    if let Ok(depth) = client.get_depth(market_pair, 10).await {
+        if let Some(best_ask) = depth.sells.first() {
+            let best_ask_human = market.format_price(best_ask.price);
+            let best_ask_dec = *best_ask_human.inner();
+            let just_below_ask = floor_to_step(best_ask_dec - step_dec, step_dec);
+            if just_below_ask > Decimal::ZERO {
+                chosen = just_below_ask;
+            }
+        } else if let Some(best_bid) = depth.buys.first() {
+            let best_bid_human = market.format_price(best_bid.price);
+            let best_bid_dec = *best_bid_human.inner();
+            let bid_floor = floor_to_step(best_bid_dec, step_dec);
+            if bid_floor > Decimal::ZERO {
+                chosen = bid_floor;
+            }
+        }
+    }
+
+    if chosen <= Decimal::ZERO {
+        chosen = step_dec;
+    }
+
+    let price = market
+        .price_from_decimal(UnsignedDecimal::new(chosen).unwrap())
+        .unwrap()
+        .value();
+    let quantity = min_quantity_for_min_order(market, &price);
+
+    let required_quote = required_quote_for_order(market, &price, &quantity);
+    let required_base = required_base_for_order(market, &quantity);
+    let maker_quote_min = required_quote.saturating_mul(2).max(50_000_000);
+    let taker_base_min = required_base.saturating_mul(2).max(50_000_000);
+
+    (price, quantity, maker_quote_min, taker_base_min)
 }
 
 async fn cleanup_open_orders(client: &mut O2Client, wallet: &Wallet, market_pair: &MarketSymbol) {
@@ -673,23 +728,22 @@ async fn test_cross_account_fill() {
     cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
     cleanup_open_orders(&mut client, &shared.taker_wallet, &market_pair).await;
 
+    let (fill_price, quantity, maker_quote_min, taker_base_min) =
+        conservative_post_only_buy_params(&mut client, &market_pair, market).await;
     ensure_funded(
         &mut client,
         &shared.maker_trade_account_id,
         &market.quote.symbol,
-        50_000_000,
+        maker_quote_min,
     )
     .await;
     ensure_funded(
         &mut client,
         &shared.taker_trade_account_id,
         &market.base.symbol,
-        50_000_000,
+        taker_base_min,
     )
     .await;
-
-    let fill_price = moderate_fill_price(market);
-    let quantity = fill_quantity(market, &fill_price);
 
     let mut maker_session = client
         .create_session(
@@ -854,23 +908,22 @@ async fn test_websocket_trades() {
     let mut stream = client.stream_trades(&market.market_id).await.unwrap();
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
+    let (fill_price, quantity, maker_quote_min, taker_base_min) =
+        conservative_post_only_buy_params(&mut client, &market_pair, market).await;
     ensure_funded(
         &mut client,
         &shared.maker_trade_account_id,
         &market.quote.symbol,
-        50_000_000,
+        maker_quote_min,
     )
     .await;
     ensure_funded(
         &mut client,
         &shared.taker_trade_account_id,
         &market.base.symbol,
-        50_000_000,
+        taker_base_min,
     )
     .await;
-
-    let fill_price = moderate_fill_price(market);
-    let quantity = fill_quantity(market, &fill_price);
 
     let mut maker_session = client
         .create_session(
@@ -1342,23 +1395,22 @@ async fn test_websocket_mixed_with_fill() {
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
+    let (fill_price, quantity, maker_quote_min, taker_base_min) =
+        conservative_post_only_buy_params(&mut client, &market_pair, market).await;
     ensure_funded(
         &mut client,
         &shared.maker_trade_account_id,
         &market.quote.symbol,
-        50_000_000,
+        maker_quote_min,
     )
     .await;
     ensure_funded(
         &mut client,
         &shared.taker_trade_account_id,
         &market.base.symbol,
-        50_000_000,
+        taker_base_min,
     )
     .await;
-
-    let fill_price = moderate_fill_price(market);
-    let quantity = fill_quantity(market, &fill_price);
 
     let mut maker_session = client
         .create_session(
