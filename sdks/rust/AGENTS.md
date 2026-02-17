@@ -18,15 +18,15 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet()?;
     let _account = client.setup_account(&wallet).await?;
-    let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
-    let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
-    let market = client.get_market(&market_symbol).await?;
+    let market_symbol = "fFUEL/fUSDC";
+    let mut session = client.create_session(&wallet, &[market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
+    let market = client.get_market(market_symbol).await?;
     let price = market.price("0.05")?;
     let quantity = market.quantity("100")?;
     let _order = client
         .create_order(
             &mut session,
-            &market,
+            market_symbol,
             Side::Buy,
             price,
             quantity,
@@ -52,23 +52,22 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `load_wallet(hex)` | `&str` | `Result<Wallet>` | Load from private key |
 | `load_evm_wallet(hex)` | `&str` | `Result<EvmWallet>` | Load EVM from private key |
 | `setup_account(wallet)` | `&Wallet` | `Result<AccountResponse>` | Idempotent account setup |
-| `create_session(owner, markets, ttl)` | `&impl SignableWallet, &[&MarketSymbol], Duration` | `Result<Session>` | Create trading session |
-| `create_session_until(owner, markets, expiry_unix_secs)` | `&impl SignableWallet, &[&MarketSymbol], u64` | `Result<Session>` | Create session with absolute expiry |
+| `create_session(owner, markets, ttl)` | `&impl SignableWallet, &[impl AsRef<str>], Duration` | `Result<Session>` | Create trading session (symbols validated/normalized) |
+| `create_session_until(owner, markets, expiry_unix_secs)` | `&impl SignableWallet, &[impl AsRef<str>], u64` | `Result<Session>` | Create session with absolute expiry |
 | `set_metadata_policy(policy)` | `MetadataPolicy` | `()` | Configure market metadata refresh strategy |
-| `create_order(session, market, side, price, qty, type, settle, collect)` | `&mut Session, &Market, Side, Price, Quantity, ...` | `Result<SessionActionsResponse>` | Place order (first-class typed API) |
-| `create_order_untyped(session, market_name, side, price, qty, type, settle, collect)` | `&mut Session, &MarketSymbol, Side, UnsignedDecimal, UnsignedDecimal, ...` | `Result<SessionActionsResponse>` | Lower-level decimal escape hatch |
-| `cancel_order(session, order_id, market)` | `&mut Session, &OrderId, &MarketSymbol` | `Result<SessionActionsResponse>` | Cancel order |
-| `cancel_all_orders(session, market)` | `&mut Session, &MarketSymbol` | `Result<Vec<...>>` | Cancel all open orders |
-| `settle_balance(session, market)` | `&mut Session, &MarketSymbol` | `Result<SessionActionsResponse>` | Settle balance |
+| `create_order(session, market, side, price, qty, type, settle, collect)` | `&mut Session, impl IntoMarketSymbol, Side, impl TryInto<OrderPriceInput>, impl TryInto<OrderQuantityInput>, ...` | `Result<SessionActionsResponse>` | Place order (accepts `&str`/`String`/`MarketSymbol`) |
+| `cancel_order(session, order_id, market)` | `&mut Session, &OrderId, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Cancel order |
+| `cancel_all_orders(session, market)` | `&mut Session, impl IntoMarketSymbol` | `Result<Vec<...>>` | Cancel all open orders |
+| `settle_balance(session, market)` | `&mut Session, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Settle balance |
 | `batch_actions(session, actions, calls, collect)` | advanced | `Result<SessionActionsResponse>` | Raw batch submit |
 | `get_markets()` | - | `Result<Vec<Market>>` | List markets |
-| `get_market(name)` | `&MarketSymbol` | `Result<Market>` | Get by symbol pair |
-| `get_depth(market, precision)` | `&MarketSymbol, u64` | `Result<DepthSnapshot>` | Order book depth |
-| `get_trades(market, count)` | `&MarketSymbol, u32` | `Result<TradesResponse>` | Recent trades |
-| `get_bars(market, res, from, to)` | `&MarketSymbol, &str, u64, u64` | `Result<Vec<Bar>>` | OHLCV data |
-| `get_ticker(market)` | `&MarketSymbol` | `Result<MarketTicker>` | Ticker data |
+| `get_market(name)` | `impl IntoMarketSymbol` | `Result<Market>` | Get by symbol pair |
+| `get_depth(market, precision)` | `impl IntoMarketSymbol, u64` | `Result<DepthSnapshot>` | Order book depth |
+| `get_trades(market, count)` | `impl IntoMarketSymbol, u32` | `Result<TradesResponse>` | Recent trades |
+| `get_bars(market, res, from, to)` | `impl IntoMarketSymbol, &str, u64, u64` | `Result<Vec<Bar>>` | OHLCV data |
+| `get_ticker(market)` | `impl IntoMarketSymbol` | `Result<MarketTicker>` | Ticker data |
 | `get_balances(trade_account_id)` | `&TradeAccountId` | `Result<HashMap<String, BalanceResponse>>` | All balances |
-| `get_orders(account, market, is_open, count)` | `&TradeAccountId, &MarketSymbol, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
+| `get_orders(account, market, is_open, count)` | `&TradeAccountId, impl IntoMarketSymbol, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
 | `get_nonce(trade_account_id)` | `&str` | `Result<u64>` | Current nonce |
 | `refresh_nonce(session)` | `&mut Session` | `Result<u64>` | Re-sync nonce from API |
 | `stream_depth(market_id, precision)` | `&str, &str` | `Result<TypedStream<DepthUpdate>>` | Stream depth |
@@ -114,12 +113,12 @@ Note: `unsubscribe_orders` is currently connection-global in the backend API (no
 let mut client = O2Client::new(Network::Testnet);
 let wallet = client.generate_wallet()?;
 let account = client.setup_account(&wallet).await?;
-let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
-let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
-let market = client.get_market(&market_symbol).await?;
+let market_symbol = "fFUEL/fUSDC";
+let mut session = client.create_session(&wallet, &[market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
+let market = client.get_market(market_symbol).await?;
 let resp = client.create_order(
     &mut session,
-    &market,
+    market_symbol,
     Side::Buy,
     market.price("0.05")?,
     market.quantity("100")?,
@@ -154,9 +153,11 @@ while let Some(update) = stream.next().await {
 ### 4. Order Management
 
 ```rust
-client.cancel_order(&mut session, "0xorder_id...", "fFUEL/fUSDC").await?;
-client.cancel_all_orders(&mut session, "fFUEL/fUSDC").await?;
-client.settle_balance(&mut session, "fFUEL/fUSDC").await?;
+let market_symbol = "fFUEL/fUSDC";
+let order_id: o2_sdk::OrderId = "0xorder_id...".into();
+client.cancel_order(&mut session, &order_id, market_symbol).await?;
+client.cancel_all_orders(&mut session, market_symbol).await?;
+client.settle_balance(&mut session, market_symbol).await?;
 ```
 
 ### 5. Balance Tracking
@@ -183,7 +184,7 @@ for (symbol, bal) in &balances {
 | OnChainRevert | No code, has `reason` | Check `reason` field, re-fetch nonce |
 
 ```rust
-match client.create_order(&mut session, &market, ...).await {
+match client.create_order(&mut session, market_symbol, ...).await {
     Ok(resp) if resp.is_success() => { /* tx_id present */ }
     Ok(resp) => { /* check resp.message, resp.reason */ }
     Err(O2Error::RateLimitExceeded(_)) => { /* backoff */ }

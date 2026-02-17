@@ -77,7 +77,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let result = client
                         .create_order(
                             &mut session,
-                            market,
+                            &market_pair,
                             Side::Buy,
                             price,
                             max_quantity.clone(),

@@ -45,7 +45,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let price = market.price("0.05")?;
     let quantity = market.quantity("100")?;
     let order = client.create_order(
-        &mut session, &market, Side::Buy, price, quantity, OrderType::Spot, true, true,
+        &mut session, &market_symbol, Side::Buy, price, quantity, OrderType::Spot, true, true,
     ).await?;
     println!("tx: {}", order.tx_id.unwrap_or_default());
     Ok(())
@@ -70,7 +70,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `generate_evm_wallet()` / `load_evm_wallet(hex)` | Create or load an EVM wallet |
 | `setup_account(&wallet)` | Idempotent account setup |
 | `create_session(&wallet, markets, ttl)` | Create a trading session |
-| `create_order(&mut session, market, side, price, qty, ...)` | Place an order |
+| `create_order(&mut session, market_symbol, side, price, qty, ...)` | Place an order |
 | `cancel_order(&mut session, order_id, market)` | Cancel a specific order |
 | `cancel_all_orders(&mut session, market)` | Cancel all open orders |
 | `settle_balance(&mut session, market)` | Settle filled order proceeds |

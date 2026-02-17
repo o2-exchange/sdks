@@ -14,7 +14,6 @@ use crate::crypto::{
     generate_evm_keypair, generate_keypair, load_evm_wallet, load_wallet, parse_hex_32, raw_sign,
     to_hex_string, EvmWallet, Wallet,
 };
-use crate::decimal::UnsignedDecimal;
 use crate::encoding::{
     build_actions_signing_bytes, build_session_signing_bytes, build_withdraw_signing_bytes, CallArg,
 };
@@ -321,11 +320,15 @@ impl O2Client {
     }
 
     /// Get a market by symbol pair (e.g., "FUEL/USDC").
-    pub async fn get_market(&mut self, symbol: &MarketSymbol) -> Result<Market, O2Error> {
+    pub async fn get_market<M>(&mut self, symbol: M) -> Result<Market, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let symbol = symbol.into_market_symbol()?;
         debug!("client.get_market symbol={symbol}");
         let resp = self.ensure_markets().await?;
         for market in &resp.markets {
-            if market.symbol_pair() == *symbol {
+            if market.symbol_pair() == symbol {
                 return Ok(market.clone());
             }
         }
@@ -409,10 +412,10 @@ impl O2Client {
     /// Create a trading session with a relative TTL.
     ///
     /// Works with both [`Wallet`] (Fuel-native) and [`EvmWallet`].
-    pub async fn create_session<W: SignableWallet>(
+    pub async fn create_session<W: SignableWallet, S: AsRef<str>>(
         &mut self,
         owner: &W,
-        market_names: &[&MarketSymbol],
+        market_names: &[S],
         ttl: Duration,
     ) -> Result<Session, O2Error> {
         let ttl_secs = ttl.as_secs();
@@ -436,10 +439,10 @@ impl O2Client {
     /// Create a trading session that expires at an absolute UNIX timestamp.
     ///
     /// Works with both [`Wallet`] (Fuel-native) and [`EvmWallet`].
-    pub async fn create_session_until<W: SignableWallet>(
+    pub async fn create_session_until<W: SignableWallet, S: AsRef<str>>(
         &mut self,
         owner: &W,
-        market_names: &[&MarketSymbol],
+        market_names: &[S],
         expiry_unix_secs: u64,
     ) -> Result<Session, O2Error> {
         debug!(
@@ -453,7 +456,7 @@ impl O2Client {
         let mut contract_ids_hex = Vec::new();
         let mut contract_ids_bytes = Vec::new();
         for name in market_names {
-            let market = self.get_market(name).await?;
+            let market = self.get_market(name.as_ref()).await?;
             contract_ids_hex.push(market.contract_id.clone());
             contract_ids_bytes.push(parse_hex_32(&market.contract_id)?);
         }
@@ -529,29 +532,54 @@ impl O2Client {
         Ok(())
     }
 
-    /// Place a new order using raw decimal values.
+    /// Place a new order.
     ///
-    /// This bypasses market-bound wrapper construction and is intended as
-    /// a lower-level escape hatch.
+    /// `price` and `quantity` accept flexible inputs:
+    /// - typed market-bound wrappers: [`Price`], [`Quantity`]
+    /// - raw decimals: [`crate::UnsignedDecimal`]
+    /// - decimal strings: `&str` / `String`
     ///
     /// If `settle_first` is true, a SettleBalance action is prepended.
-    /// Uses typed `Side` and `OrderType` enums for compile-time safety.
     #[allow(clippy::too_many_arguments)]
-    pub async fn create_order_untyped(
+    pub async fn create_order<M, P, Q>(
         &mut self,
         session: &mut Session,
-        market_name: &MarketSymbol,
+        market_name: M,
         side: Side,
-        price: UnsignedDecimal,
-        quantity: UnsignedDecimal,
+        price: P,
+        quantity: Q,
         order_type: OrderType,
         settle_first: bool,
         collect_orders: bool,
-    ) -> Result<SessionActionsResponse, O2Error> {
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+        P: TryInto<OrderPriceInput, Error = O2Error>,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
-            "client.create_order_untyped market={} settle_first={} collect_orders={}",
+            "client.create_order market={} settle_first={} collect_orders={}",
             market_name, settle_first, collect_orders
         );
+        let market = self.get_market(&market_name).await?;
+
+        let price = match price.try_into()? {
+            OrderPriceInput::Unchecked(v) => v,
+            OrderPriceInput::Checked(v) => {
+                market.validate_price_binding(&v)?;
+                v.value()
+            }
+        };
+
+        let quantity = match quantity.try_into()? {
+            OrderQuantityInput::Unchecked(v) => v,
+            OrderQuantityInput::Checked(v) => {
+                market.validate_quantity_binding(&v)?;
+                v.value()
+            }
+        };
+
         let mut actions = Vec::new();
         if settle_first {
             actions.push(Action::SettleBalance);
@@ -562,49 +590,21 @@ impl O2Client {
             quantity,
             order_type,
         });
-        self.batch_actions(session, market_name, actions, collect_orders)
+        self.batch_actions(session, market.symbol_pair(), actions, collect_orders)
             .await
     }
 
-    /// Place a new order using typed market-bound values.
-    #[allow(clippy::too_many_arguments)]
-    pub async fn create_order(
-        &mut self,
-        session: &mut Session,
-        market: &Market,
-        side: Side,
-        price: Price,
-        quantity: Quantity,
-        order_type: OrderType,
-        settle_first: bool,
-        collect_orders: bool,
-    ) -> Result<SessionActionsResponse, O2Error> {
-        debug!(
-            "client.create_order market_id={} settle_first={} collect_orders={}",
-            market.market_id, settle_first, collect_orders
-        );
-        market.validate_price_binding(&price)?;
-        market.validate_quantity_binding(&quantity)?;
-        self.create_order_untyped(
-            session,
-            &market.symbol_pair(),
-            side,
-            price.value(),
-            quantity.value(),
-            order_type,
-            settle_first,
-            collect_orders,
-        )
-        .await
-    }
-
     /// Cancel an order by order_id.
-    pub async fn cancel_order(
+    pub async fn cancel_order<M>(
         &mut self,
         session: &mut Session,
         order_id: &OrderId,
-        market_name: &MarketSymbol,
-    ) -> Result<SessionActionsResponse, O2Error> {
+        market_name: M,
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.cancel_order market={} order_id={}",
             market_name, order_id
@@ -621,14 +621,18 @@ impl O2Client {
     }
 
     /// Cancel all open orders for a market.
-    pub async fn cancel_all_orders(
+    pub async fn cancel_all_orders<M>(
         &mut self,
         session: &mut Session,
-        market_name: &MarketSymbol,
-    ) -> Result<Vec<SessionActionsResponse>, O2Error> {
+        market_name: M,
+    ) -> Result<Vec<SessionActionsResponse>, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!("client.cancel_all_orders market={}", market_name);
         Self::check_session_expiry(session)?;
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         let orders_resp = self
             .api
             .get_orders(
@@ -659,7 +663,7 @@ impl O2Client {
             }
 
             let resp = self
-                .batch_actions(session, market_name, actions, false)
+                .batch_actions(session, &market_name, actions, false)
                 .await?;
             results.push(resp);
         }
@@ -670,13 +674,17 @@ impl O2Client {
     /// Submit a batch of typed actions for a single market.
     ///
     /// Handles price/quantity scaling, encoding, signing, and nonce management.
-    pub async fn batch_actions(
+    pub async fn batch_actions<M>(
         &mut self,
         session: &mut Session,
-        market_name: &MarketSymbol,
+        market_name: M,
         actions: Vec<Action>,
         collect_orders: bool,
-    ) -> Result<SessionActionsResponse, O2Error> {
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.batch_actions market={} actions={} collect_orders={}",
             market_name,
@@ -688,12 +696,15 @@ impl O2Client {
     }
 
     /// Submit a batch of typed actions across one or more markets.
-    pub async fn batch_actions_multi(
+    pub async fn batch_actions_multi<M>(
         &mut self,
         session: &mut Session,
-        market_actions: &[(&MarketSymbol, Vec<Action>)],
+        market_actions: &[(M, Vec<Action>)],
         collect_orders: bool,
-    ) -> Result<SessionActionsResponse, O2Error> {
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol + Clone,
+    {
         let total_actions: usize = market_actions
             .iter()
             .map(|(_, actions)| actions.len())
@@ -716,7 +727,8 @@ impl O2Client {
         let mut all_market_actions: Vec<MarketActions> = Vec::new();
 
         for (market_name, actions) in market_actions {
-            let market = self.get_market(market_name).await?;
+            let market_name = market_name.clone().into_market_symbol()?;
+            let market = self.get_market(&market_name).await?;
             let mut actions_json: Vec<serde_json::Value> = Vec::new();
 
             for action in actions {
@@ -766,11 +778,15 @@ impl O2Client {
     }
 
     /// Settle balance for a market.
-    pub async fn settle_balance(
+    pub async fn settle_balance<M>(
         &mut self,
         session: &mut Session,
-        market_name: &MarketSymbol,
-    ) -> Result<SessionActionsResponse, O2Error> {
+        market_name: M,
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!("client.settle_balance market={}", market_name);
         self.batch_actions(session, market_name, vec![Action::SettleBalance], false)
             .await
@@ -781,59 +797,72 @@ impl O2Client {
     // -----------------------------------------------------------------------
 
     /// Get order book depth.
-    pub async fn get_depth(
+    pub async fn get_depth<M>(
         &mut self,
-        market_name: &MarketSymbol,
+        market_name: M,
         precision: u64,
-    ) -> Result<DepthSnapshot, O2Error> {
+    ) -> Result<DepthSnapshot, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_depth market={} precision={}",
             market_name, precision
         );
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         self.api
             .get_depth(market.market_id.as_str(), precision)
             .await
     }
 
     /// Get recent trades.
-    pub async fn get_trades(
+    pub async fn get_trades<M>(
         &mut self,
-        market_name: &MarketSymbol,
+        market_name: M,
         count: u32,
-    ) -> Result<TradesResponse, O2Error> {
+    ) -> Result<TradesResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!("client.get_trades market={} count={}", market_name, count);
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         self.api
             .get_trades(market.market_id.as_str(), "desc", count, None, None)
             .await
     }
 
     /// Get OHLCV bars.
-    pub async fn get_bars(
+    pub async fn get_bars<M>(
         &mut self,
-        market_name: &MarketSymbol,
+        market_name: M,
         resolution: &str,
         from_ts: u64,
         to_ts: u64,
-    ) -> Result<Vec<Bar>, O2Error> {
+    ) -> Result<Vec<Bar>, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_bars market={} resolution={} from_ts={} to_ts={}",
             market_name, resolution, from_ts, to_ts
         );
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         self.api
             .get_bars(market.market_id.as_str(), from_ts, to_ts, resolution)
             .await
     }
 
     /// Get market ticker.
-    pub async fn get_ticker(
-        &mut self,
-        market_name: &MarketSymbol,
-    ) -> Result<MarketTicker, O2Error> {
+    pub async fn get_ticker<M>(&mut self, market_name: M) -> Result<MarketTicker, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!("client.get_ticker market={}", market_name);
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         let tickers = self
             .api
             .get_market_ticker(market.market_id.as_str())
@@ -883,18 +912,22 @@ impl O2Client {
     }
 
     /// Get orders for a trading account in a market.
-    pub async fn get_orders(
+    pub async fn get_orders<M>(
         &mut self,
         trade_account_id: &TradeAccountId,
-        market_name: &MarketSymbol,
+        market_name: M,
         is_open: Option<bool>,
         count: u32,
-    ) -> Result<OrdersResponse, O2Error> {
+    ) -> Result<OrdersResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_orders trade_account_id={} market={} is_open={:?} count={}",
             trade_account_id, market_name, is_open, count
         );
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         self.api
             .get_orders(
                 market.market_id.as_str(),
@@ -909,16 +942,16 @@ impl O2Client {
     }
 
     /// Get a single order.
-    pub async fn get_order(
-        &mut self,
-        market_name: &MarketSymbol,
-        order_id: &str,
-    ) -> Result<Order, O2Error> {
+    pub async fn get_order<M>(&mut self, market_name: M, order_id: &str) -> Result<Order, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_order market={} order_id={}",
             market_name, order_id
         );
-        let market = self.get_market(market_name).await?;
+        let market = self.get_market(&market_name).await?;
         self.api
             .get_order(market.market_id.as_str(), order_id)
             .await

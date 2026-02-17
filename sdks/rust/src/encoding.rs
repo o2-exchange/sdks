@@ -118,7 +118,7 @@ pub fn encode_order_args(price: u64, quantity: u64, order_type: &OrderTypeEncodi
 ///
 /// Layout:
 ///   u64(nonce) + u64(chain_id) + u64(len("set_session")) + "set_session"
-///   + u64(1) [Option::Some] + u64(0) [Identity::Address] + session_address(32)
+///   + u64(1) [Option::Some] + u64(0) [Identity Address discriminant] + session_address(32)
 ///   + u64(expiry) + u64(len(contract_ids)) + contract_ids(32 each)
 pub fn build_session_signing_bytes(
     nonce: u64,

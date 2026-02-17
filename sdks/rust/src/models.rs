@@ -50,6 +50,12 @@ macro_rules! newtype_id {
             }
         }
 
+        impl From<&$name> for $name {
+            fn from(v: &$name) -> Self {
+                v.clone()
+            }
+        }
+
         impl std::ops::Deref for $name {
             type Target = str;
             fn deref(&self) -> &str {
@@ -69,6 +75,86 @@ newtype_id!(
     /// A market symbol pair like "FUEL/USDC".
     MarketSymbol
 );
+
+impl MarketSymbol {
+    /// Parse and normalize a market symbol in `BASE/QUOTE` form.
+    ///
+    /// Normalization currently trims surrounding whitespace and preserves symbol casing.
+    pub fn parse(input: impl AsRef<str>) -> Result<Self, O2Error> {
+        Self::from_str(input.as_ref())
+    }
+}
+
+impl FromStr for MarketSymbol {
+    type Err = O2Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Err(O2Error::InvalidRequest(
+                "Market symbol cannot be empty".to_string(),
+            ));
+        }
+
+        let (base_raw, quote_raw) = trimmed.split_once('/').ok_or_else(|| {
+            O2Error::InvalidRequest(format!(
+                "Invalid market symbol '{trimmed}'. Expected format BASE/QUOTE"
+            ))
+        })?;
+
+        if quote_raw.contains('/') {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid market symbol '{trimmed}'. Expected exactly one '/' separator"
+            )));
+        }
+
+        let base = base_raw.trim();
+        let quote = quote_raw.trim();
+        if base.is_empty() || quote.is_empty() {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid market symbol '{trimmed}'. Base and quote must be non-empty"
+            )));
+        }
+
+        Ok(MarketSymbol::new(format!("{base}/{quote}")))
+    }
+}
+
+/// Converts input into a validated, normalized [`MarketSymbol`].
+pub trait IntoMarketSymbol {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error>;
+}
+
+impl IntoMarketSymbol for MarketSymbol {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self.as_str())
+    }
+}
+
+impl IntoMarketSymbol for &MarketSymbol {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self.as_str())
+    }
+}
+
+impl IntoMarketSymbol for &str {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+impl IntoMarketSymbol for String {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+impl IntoMarketSymbol for &String {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
 newtype_id!(
     /// A hex contract ID.
     ContractId
@@ -427,6 +513,80 @@ impl Quantity {
 impl std::fmt::Display for Quantity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.value.fmt(f)
+    }
+}
+
+/// Flexible input accepted by `O2Client::create_order` for price values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderPriceInput {
+    /// A raw decimal that must be validated against the target market.
+    Unchecked(UnsignedDecimal),
+    /// A market-bound typed price.
+    Checked(Price),
+}
+
+impl TryFrom<UnsignedDecimal> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: UnsignedDecimal) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value))
+    }
+}
+
+impl TryFrom<Price> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: Price) -> Result<Self, Self::Error> {
+        Ok(Self::Checked(value))
+    }
+}
+
+impl TryFrom<&str> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
+impl TryFrom<String> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
+/// Flexible input accepted by `O2Client::create_order` for quantity values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderQuantityInput {
+    /// A raw decimal that must be validated against the target market.
+    Unchecked(UnsignedDecimal),
+    /// A market-bound typed quantity.
+    Checked(Quantity),
+}
+
+impl TryFrom<UnsignedDecimal> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: UnsignedDecimal) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value))
+    }
+}
+
+impl TryFrom<Quantity> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: Quantity) -> Result<Self, Self::Error> {
+        Ok(Self::Checked(value))
+    }
+}
+
+impl TryFrom<&str> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
+impl TryFrom<String> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
     }
 }
 

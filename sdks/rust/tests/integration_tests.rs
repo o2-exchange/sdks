@@ -296,7 +296,7 @@ async fn create_order_with_whitelist_retry(
     client: &mut O2Client,
     session: &mut Session,
     trade_account_id: &TradeAccountId,
-    _market_pair: &MarketSymbol,
+    market_pair: &MarketSymbol,
     market: &o2_sdk::Market,
     side: Side,
     price: UnsignedDecimal,
@@ -312,7 +312,7 @@ async fn create_order_with_whitelist_retry(
         match client
             .create_order(
                 session,
-                market,
+                market_pair,
                 side,
                 typed_price.clone(),
                 typed_quantity.clone(),
