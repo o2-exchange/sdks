@@ -1255,6 +1255,15 @@ impl O2Client {
         guard.as_ref().unwrap().stream_nonce(identities).await
     }
 
+    /// Subscribe to shared WebSocket lifecycle events (reconnect/disconnect).
+    pub async fn subscribe_ws_lifecycle(
+        &self,
+    ) -> Result<tokio::sync::broadcast::Receiver<crate::websocket::WsLifecycleEvent>, O2Error> {
+        let mut guard = self.ws.lock().await;
+        Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
+        Ok(guard.as_ref().unwrap().subscribe_lifecycle())
+    }
+
     /// Disconnect the shared WebSocket connection and release resources.
     pub async fn disconnect_ws(&self) -> Result<(), O2Error> {
         debug!("client.disconnect_ws");

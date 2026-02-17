@@ -13,6 +13,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
 use tokio_stream::Stream;
@@ -61,12 +62,10 @@ impl Default for WsConfig {
 ///
 /// Each item is a `Result<T, O2Error>`:
 /// - `Ok(update)` — a normal data message
-/// - `Err(O2Error::WebSocketReconnected)` — the connection was lost and re-established;
-///   consumers of non-snapshot subscriptions should re-fetch current state
 /// - `Err(O2Error::WebSocketDisconnected(_))` — permanent connection loss
 ///
-/// For simple usage, `while let Some(Ok(update)) = stream.next().await` ignores
-/// lifecycle signals and stops on any error.
+/// For lifecycle/reconnect visibility, subscribe via
+/// [`O2WebSocket::subscribe_lifecycle`].
 pub struct TypedStream<T> {
     rx: mpsc::UnboundedReceiver<Result<T, O2Error>>,
 }
@@ -77,6 +76,15 @@ impl<T> Stream for TypedStream<T> {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         self.rx.poll_recv(cx)
     }
+}
+
+/// WebSocket lifecycle events emitted out-of-band from data streams.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsLifecycleEvent {
+    Reconnecting { attempt: usize, delay: Duration },
+    Reconnected { attempts: usize },
+    Disconnected { reason: String, final_: bool },
 }
 
 /// Shared inner state for the WebSocket connection.
@@ -121,25 +129,6 @@ impl WsInner {
         self.nonce_senders.clear();
     }
 
-    /// Signal all subscribers that a reconnect occurred.
-    fn signal_reconnected(&self) {
-        for tx in &self.depth_senders {
-            let _ = tx.send(Err(O2Error::WebSocketReconnected));
-        }
-        for tx in &self.orders_senders {
-            let _ = tx.send(Err(O2Error::WebSocketReconnected));
-        }
-        for tx in &self.trades_senders {
-            let _ = tx.send(Err(O2Error::WebSocketReconnected));
-        }
-        for tx in &self.balances_senders {
-            let _ = tx.send(Err(O2Error::WebSocketReconnected));
-        }
-        for tx in &self.nonce_senders {
-            let _ = tx.send(Err(O2Error::WebSocketReconnected));
-        }
-    }
-
     /// Send disconnect error to all subscribers, then clear.
     fn close_all_senders_with_error(&mut self, msg: &str) {
         for tx in &self.depth_senders {
@@ -172,6 +161,7 @@ pub struct O2WebSocket {
     connected: Arc<AtomicBool>,
     should_run: Arc<AtomicBool>,
     last_pong: Arc<Mutex<Instant>>,
+    lifecycle_tx: Arc<broadcast::Sender<WsLifecycleEvent>>,
     reader_handle: Option<tokio::task::JoinHandle<()>>,
     ping_handle: Option<tokio::task::JoinHandle<()>>,
 }
@@ -188,6 +178,7 @@ impl O2WebSocket {
         let connected = Arc::new(AtomicBool::new(false));
         let should_run = Arc::new(AtomicBool::new(true));
         let last_pong = Arc::new(Mutex::new(Instant::now()));
+        let lifecycle_tx = Arc::new(broadcast::channel(64).0);
 
         let mut ws = Self {
             url: url.to_string(),
@@ -196,6 +187,7 @@ impl O2WebSocket {
             connected,
             should_run,
             last_pong,
+            lifecycle_tx,
             reader_handle: None,
             ping_handle: None,
         };
@@ -236,6 +228,7 @@ impl O2WebSocket {
         let last_pong_clone = self.last_pong.clone();
         let url_clone = self.url.clone();
         let config_clone = self.config.clone();
+        let lifecycle_tx_clone = self.lifecycle_tx.clone();
 
         let reader_handle = tokio::spawn(async move {
             Self::read_loop(
@@ -257,6 +250,7 @@ impl O2WebSocket {
                     connected_clone,
                     should_run_clone,
                     last_pong_clone,
+                    lifecycle_tx_clone,
                 )
                 .await;
             }
@@ -417,6 +411,7 @@ impl O2WebSocket {
         connected: Arc<AtomicBool>,
         should_run: Arc<AtomicBool>,
         last_pong: Arc<Mutex<Instant>>,
+        lifecycle_tx: Arc<broadcast::Sender<WsLifecycleEvent>>,
     ) {
         let mut delay = config.base_delay;
         let mut attempts = 0;
@@ -426,10 +421,19 @@ impl O2WebSocket {
                 // Max attempts reached — signal all subscribers and stop
                 should_run.store(false, Ordering::SeqCst);
                 let mut guard = inner.lock().await;
-                guard.close_all_senders_with_error("Connection lost after max retries");
+                let reason = "Connection lost after max retries".to_string();
+                guard.close_all_senders_with_error(&reason);
+                let _ = lifecycle_tx.send(WsLifecycleEvent::Disconnected {
+                    reason,
+                    final_: true,
+                });
                 return;
             }
 
+            let _ = lifecycle_tx.send(WsLifecycleEvent::Reconnecting {
+                attempt: attempts + 1,
+                delay,
+            });
             tokio::time::sleep(delay).await;
             attempts += 1;
 
@@ -455,8 +459,8 @@ impl O2WebSocket {
                                 let _ = sink.send(WsMsg::Text(text)).await;
                             }
                         }
-                        guard.signal_reconnected();
                     }
+                    let _ = lifecycle_tx.send(WsLifecycleEvent::Reconnected { attempts });
 
                     // Spawn new read loop (recursive via reconnect)
                     Self::read_loop(
@@ -482,6 +486,11 @@ impl O2WebSocket {
                 }
             }
         }
+    }
+
+    /// Subscribe to lifecycle/reconnect events.
+    pub fn subscribe_lifecycle(&self) -> broadcast::Receiver<WsLifecycleEvent> {
+        self.lifecycle_tx.subscribe()
     }
 
     async fn send_json(&self, value: serde_json::Value) -> Result<(), O2Error> {
@@ -710,6 +719,10 @@ impl O2WebSocket {
 
         // Close all sender channels
         guard.close_all_senders();
+        let _ = self.lifecycle_tx.send(WsLifecycleEvent::Disconnected {
+            reason: "Explicit disconnect".to_string(),
+            final_: true,
+        });
 
         Ok(())
     }

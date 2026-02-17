@@ -193,4 +193,4 @@ pub use models::*;
 pub use models::{
     Action, AssetId, MarketId, MarketSymbol, OrderId, OrderType, Side, TradeAccountId,
 };
-pub use websocket::{O2WebSocket, TypedStream, WsConfig};
+pub use websocket::{O2WebSocket, TypedStream, WsConfig, WsLifecycleEvent};
