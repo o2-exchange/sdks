@@ -1400,9 +1400,9 @@ mod tests {
             .expect("builder should produce actions");
 
         assert_eq!(actions.len(), 3);
-        matches!(actions[0], Action::SettleBalance);
-        matches!(actions[1], Action::CreateOrder { .. });
-        matches!(actions[2], Action::CancelOrder { .. });
+        assert!(matches!(actions[0], Action::SettleBalance));
+        assert!(matches!(actions[1], Action::CreateOrder { .. }));
+        assert!(matches!(actions[2], Action::CancelOrder { .. }));
     }
 
     #[test]
