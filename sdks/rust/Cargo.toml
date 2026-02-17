@@ -22,6 +22,7 @@ rust_decimal = { version = "1", features = ["serde-str"] }
 futures-util = "0.3"
 tokio-stream = "0.1"
 url = "2"
+log = "0.4"
 
 [features]
 integration = []

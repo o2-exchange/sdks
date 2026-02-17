@@ -8,6 +8,10 @@ implements `tokio_stream::Stream` and can be consumed with
 
 > See also: [`O2Client`](crate::client::O2Client) streaming methods,
 > [`O2WebSocket`](crate::O2WebSocket) for standalone usage.
+>
+> Current backend behavior: `unsubscribe_orders` is connection-global (not
+> identity-filtered), so unsubscribing order updates removes all order
+> subscriptions on that socket.
 
 ## Overview
 
@@ -18,14 +22,14 @@ All streaming methods:
 - Support automatic reconnection with exponential backoff.
 - Re-subscribe to channels on reconnect.
 
-Stream items carry lifecycle signals:
+Stream items carry data and terminal errors:
 
 - `Ok(update)` — a normal data message
-- `Err(O2Error::WebSocketReconnected)` — the connection was lost and re-established; re-fetch state if needed
 - `Err(O2Error::WebSocketDisconnected(_))` — permanent connection loss
 
-For simple usage, `while let Some(Ok(update)) = stream.next().await`
-ignores lifecycle signals and stops on any error.
+Lifecycle/reconnect events are delivered separately via
+[`O2Client::subscribe_ws_lifecycle`](crate::client::O2Client::subscribe_ws_lifecycle)
+or [`O2WebSocket::subscribe_lifecycle`](crate::O2WebSocket::subscribe_lifecycle).
 
 ## Order Book Depth
 
@@ -228,31 +232,38 @@ tokio::join!(depth_task, order_task, trade_task);
 
 ## Handling Reconnections
 
-For non-snapshot streams, handle reconnection signals to re-fetch
-current state:
+For non-snapshot streams, monitor lifecycle events and refresh state on reconnect:
 
 ```rust,ignore
+use o2_sdk::WsLifecycleEvent;
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
 let mut stream = client.stream_depth(&market.market_id, "10").await?;
+let mut lifecycle = client.subscribe_ws_lifecycle().await?;
 
-while let Some(result) = stream.next().await {
-    match result {
-        Ok(update) => {
-            // Process the depth update
+loop {
+    tokio::select! {
+        Some(result) = stream.next() => {
+            match result {
+                Ok(update) => {
+                    // Process the depth update
+                }
+                Err(o2_sdk::O2Error::WebSocketDisconnected(msg)) => {
+                    println!("Permanently disconnected: {}", msg);
+                    break;
+                }
+                Err(e) => {
+                    println!("Stream error: {}", e);
+                }
+            }
         }
-        Err(o2_sdk::O2Error::WebSocketReconnected) => {
-            // Connection was re-established and subscriptions restored.
-            // A new snapshot will arrive shortly.
-            println!("Reconnected — waiting for new snapshot");
-        }
-        Err(o2_sdk::O2Error::WebSocketDisconnected(msg)) => {
-            println!("Permanently disconnected: {}", msg);
-            break;
-        }
-        Err(e) => {
-            println!("Stream error: {}", e);
+        Ok(evt) = lifecycle.recv() => {
+            if let WsLifecycleEvent::Reconnected { .. } = evt {
+                // Connection was re-established and subscriptions restored.
+                // Re-fetch state if your strategy requires a fresh snapshot.
+                println!("Reconnected — refreshing local state");
+            }
         }
     }
 }

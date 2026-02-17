@@ -7,7 +7,7 @@ use o2_sdk::*;
 use std::time::Duration;
 
 struct MakerConfig {
-    market_pair: MarketSymbol,
+    market_pair: &'static str,
     spread_pct: UnsignedDecimal,
     order_size: UnsignedDecimal,
     cycle_interval: Duration,
@@ -17,7 +17,7 @@ struct MakerConfig {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MakerConfig {
-        market_pair: MarketSymbol::from("fFUEL/fUSDC"),
+        market_pair: "fFUEL/fUSDC",
         spread_pct: "0.02".parse()?, // 2% spread
         order_size: "100".parse()?,  // base quantity
         cycle_interval: Duration::from_secs(30),
@@ -41,11 +41,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create session
     let mut session = client
-        .create_session(&wallet, &[&config.market_pair], 30)
+        .create_session(
+            &wallet,
+            &[config.market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await?;
     println!("Session created");
 
-    let market = client.get_market(&config.market_pair).await?;
+    let market = client.get_market(config.market_pair).await?;
 
     let mut active_buy_id: Option<OrderId> = None;
     let mut active_sell_id: Option<OrderId> = None;
@@ -56,9 +60,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let buy_price = config.reference_price * UnsignedDecimal::ONE.try_sub(config.spread_pct)?;
         let sell_price = config.reference_price * (UnsignedDecimal::ONE + config.spread_pct);
 
-        let scaled_buy_price = market.scale_price(&buy_price);
-        let scaled_sell_price = market.scale_price(&sell_price);
-        let scaled_quantity = market.scale_quantity(&config.order_size);
+        let scaled_buy_price = market.scale_price(&buy_price)?;
+        let scaled_sell_price = market.scale_price(&sell_price)?;
+        let scaled_quantity = market.scale_quantity(&config.order_size)?;
 
         println!(
             "Cycle: buy@{} sell@{} qty={}",
@@ -67,44 +71,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             market.format_quantity(scaled_quantity),
         );
 
-        // Build actions: cancel stale + settle + create new
-        let mut actions: Vec<Action> = Vec::new();
-
-        if let Some(ref oid) = active_buy_id {
-            actions.push(Action::CancelOrder {
-                order_id: oid.clone(),
-            });
-        }
-        if let Some(ref oid) = active_sell_id {
-            actions.push(Action::CancelOrder {
-                order_id: oid.clone(),
-            });
-        }
-
-        actions.push(Action::SettleBalance);
-
-        actions.push(Action::CreateOrder {
-            side: Side::Buy,
-            price: buy_price,
-            quantity: config.order_size,
-            order_type: OrderType::Spot,
-        });
-
-        actions.push(Action::CreateOrder {
-            side: Side::Sell,
-            price: sell_price,
-            quantity: config.order_size,
-            order_type: OrderType::Spot,
-        });
-
-        // Max 5 actions per batch — trim oldest (cancels) if needed
-        while actions.len() > 5 {
-            actions.remove(0);
+        let mut builder = client.actions_for(config.market_pair).await?;
+        // Max 5 actions per batch: settle + two creates leaves room for up to two cancels.
+        match (&active_buy_id, &active_sell_id) {
+            (Some(buy), Some(sell)) => {
+                builder = builder.cancel_order(buy.clone());
+                builder = builder.cancel_order(sell.clone());
+            }
+            (Some(buy), None) => {
+                builder = builder.cancel_order(buy.clone());
+            }
+            (None, Some(sell)) => {
+                builder = builder.cancel_order(sell.clone());
+            }
+            (None, None) => {}
         }
 
-        let market_pair = market.symbol_pair();
+        let actions = builder
+            .settle_balance()
+            .create_order(Side::Buy, buy_price, config.order_size, OrderType::Spot)
+            .create_order(Side::Sell, sell_price, config.order_size, OrderType::Spot)
+            .build()?;
+
         let result = client
-            .batch_actions(&mut session, &market_pair, actions, true)
+            .batch_actions(&mut session, config.market_pair, actions, true)
             .await;
 
         match result {
@@ -117,10 +107,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     active_sell_id = None;
                     if let Some(orders) = &resp.orders {
                         for order in orders {
-                            match order.side.as_deref() {
-                                Some("Buy") => active_buy_id = order.order_id.clone(),
-                                Some("Sell") => active_sell_id = order.order_id.clone(),
-                                _ => {}
+                            match order.side {
+                                Side::Buy => active_buy_id = Some(order.order_id.clone()),
+                                Side::Sell => active_sell_id = Some(order.order_id.clone()),
                             }
                         }
                     }

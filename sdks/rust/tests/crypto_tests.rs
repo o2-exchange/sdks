@@ -56,7 +56,7 @@ fn test_recovery_id_in_msb() {
     let wallet = generate_keypair().unwrap();
 
     for i in 0u8..20 {
-        let digest: [u8; 32] = Sha256::digest(&[i]).into();
+        let digest: [u8; 32] = Sha256::digest([i]).into();
         let sig = fuel_compact_sign(&wallet.private_key, &digest).unwrap();
 
         // MSB of byte 32 should be 0 or 1 (recovery ID)
@@ -180,7 +180,7 @@ fn test_low_s_normalization() {
     ];
 
     for i in 0u8..50 {
-        let digest: [u8; 32] = Sha256::digest(&[i]).into();
+        let digest: [u8; 32] = Sha256::digest([i]).into();
         let sig = fuel_compact_sign(&wallet.private_key, &digest).unwrap();
 
         // Extract s (bytes 32..64) with recovery ID cleared

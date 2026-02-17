@@ -40,3 +40,4 @@ TODO.md
 
 .claude
 sdks/typescript/.integration-wallets.json
+sdks/rust/.integration-wallets.json

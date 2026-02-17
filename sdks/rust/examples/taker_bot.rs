@@ -7,7 +7,7 @@ use tokio_stream::StreamExt;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let buy_below_price: UnsignedDecimal = "0.04".parse()?;
-    let max_quantity: UnsignedDecimal = "50".parse()?;
+    let max_quantity = "50";
 
     let mut client = O2Client::new(Network::Testnet);
 
@@ -29,7 +29,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let market = &markets[0];
     println!("Monitoring: {market_pair}");
 
-    let mut session = client.create_session(&wallet, &[&market_pair], 30).await?;
+    let mut session = client
+        .create_session(
+            &wallet,
+            &[market_pair.as_str()],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
     println!("Session created");
 
     // Connect to WebSocket for real-time depth
@@ -42,12 +48,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sells = update
             .view
             .as_ref()
-            .and_then(|v| v.sells.as_ref())
-            .or_else(|| update.changes.as_ref().and_then(|c| c.sells.as_ref()));
+            .map(|v| &v.sells)
+            .or_else(|| update.changes.as_ref().map(|c| &c.sells));
 
         if let Some(sell_levels) = sells {
             if let Some(best_ask) = sell_levels.first() {
-                let ask_price: u64 = best_ask.price.parse().unwrap_or(0);
+                let ask_price: u64 = best_ask.price;
                 if ask_price == 0 {
                     continue;
                 }
@@ -59,13 +65,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Use a price slightly above the ask (0.5% slippage)
                     let slippage_factor: UnsignedDecimal = "1.005".parse()?;
                     let taker_price = ask_human * slippage_factor;
+                    let price = match market.price_from_decimal(taker_price) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Skipping order due to invalid taker price: {e}");
+                            continue;
+                        }
+                    };
 
                     let result = client
                         .create_order(
                             &mut session,
-                            &market_pair,
+                            market_pair.as_str(),
                             Side::Buy,
-                            taker_price,
+                            price,
                             max_quantity,
                             OrderType::Spot,
                             true,

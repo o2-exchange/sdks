@@ -15,7 +15,7 @@ use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message as WsMsg;
 
 use o2_sdk::models::*;
-use o2_sdk::websocket::{O2WebSocket, WsConfig};
+use o2_sdk::websocket::{O2WebSocket, WsConfig, WsLifecycleEvent};
 
 /// Create a mock server that sends specific messages on connection.
 async fn create_messaging_mock_server(messages: Vec<serde_json::Value>) -> String {
@@ -205,8 +205,8 @@ async fn test_ws_orders_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive order update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_orders".to_string()));
-    assert!(update.orders.is_some(), "Should have orders field");
+    assert_eq!(update.action, "subscribe_orders");
+    assert!(!update.orders.is_empty(), "Should have orders");
 
     let _ = ws.disconnect().await;
 }
@@ -237,8 +237,8 @@ async fn test_ws_trades_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive trade update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_trades".to_string()));
-    assert_eq!(update.market_id, Some("market1".to_string()));
+    assert_eq!(update.action, "subscribe_trades");
+    assert_eq!(update.market_id, MarketId::from("market1"));
 
     let _ = ws.disconnect().await;
 }
@@ -270,8 +270,8 @@ async fn test_ws_balances_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive balance update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_balances".to_string()));
-    assert!(update.balance.is_some(), "Should have balance field");
+    assert_eq!(update.action, "subscribe_balances");
+    assert!(!update.balance.is_empty(), "Should have balance entries");
 
     let _ = ws.disconnect().await;
 }
@@ -298,8 +298,8 @@ async fn test_ws_nonce_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive nonce update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_nonce".to_string()));
-    assert_eq!(update.nonce, Some("42".to_string()));
+    assert_eq!(update.action, "subscribe_nonce");
+    assert_eq!(update.nonce, 42);
 
     let _ = ws.disconnect().await;
 }
@@ -332,6 +332,7 @@ async fn test_ws_reconnect_on_server_disconnect() {
         .await
         .unwrap();
     let mut stream = ws.stream_depth("market1", "10").await.unwrap();
+    let mut lifecycle = ws.subscribe_lifecycle();
 
     // Receive first message
     let first = tokio::time::timeout(Duration::from_secs(2), stream.next())
@@ -340,24 +341,34 @@ async fn test_ws_reconnect_on_server_disconnect() {
         .flatten();
     assert!(first.is_some(), "Should receive first message");
 
-    // Wait for reconnection and second message (skip reconnect signal)
+    // Wait for reconnection and second message.
     tokio::time::sleep(Duration::from_millis(500)).await;
-    let mut second = None;
+    let second = tokio::time::timeout(Duration::from_secs(3), stream.next())
+        .await
+        .ok()
+        .flatten()
+        .and_then(Result::ok);
+    assert!(second.is_some(), "Should receive message after reconnect");
+    let mut reconnect_evt = None;
     for _ in 0..5 {
-        match tokio::time::timeout(Duration::from_secs(3), stream.next())
+        let evt = tokio::time::timeout(Duration::from_secs(2), lifecycle.recv())
             .await
             .ok()
-            .flatten()
+            .and_then(Result::ok);
+        if evt
+            .as_ref()
+            .is_some_and(|e| matches!(e, WsLifecycleEvent::Reconnected { .. }))
         {
-            Some(Ok(update)) => {
-                second = Some(update);
-                break;
-            }
-            Some(Err(_)) => continue, // skip reconnect signals
-            None => break,
+            reconnect_evt = evt;
+            break;
         }
     }
-    assert!(second.is_some(), "Should receive message after reconnect");
+    assert!(
+        reconnect_evt
+            .as_ref()
+            .is_some_and(|evt| matches!(evt, WsLifecycleEvent::Reconnected { .. })),
+        "Should emit reconnected lifecycle event"
+    );
 
     let _ = ws.disconnect().await;
 }

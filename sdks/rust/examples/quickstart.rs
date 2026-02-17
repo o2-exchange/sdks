@@ -33,7 +33,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. Create a trading session
     println!("Creating session...");
-    let mut session = client.create_session(&wallet, &[&market_pair], 30).await?;
+    let mut session = client
+        .create_session(
+            &wallet,
+            &[market_pair.as_str()],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
     println!("Session created, expiry: {}", session.expiry);
 
     // 5. Place a spot buy order (low price, unlikely to fill)
@@ -41,10 +47,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = client
         .create_order(
             &mut session,
-            &market_pair,
+            market_pair.as_str(),
             Side::Buy,
-            "0.001".parse()?, // price (human-readable)
-            "100".parse()?,   // quantity (human-readable)
+            "0.001",
+            "100",
             OrderType::Spot,
             true, // settle first
             true, // collect orders
@@ -60,19 +66,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 );
                 if let Some(orders) = &resp.orders {
                     for order in orders {
-                        println!("  Order ID: {}", order.order_id.as_deref().unwrap_or("?"));
-                        println!("  Side: {}", order.side.as_deref().unwrap_or("?"));
-                        println!("  Price: {}", order.price.as_deref().unwrap_or("?"));
-                        println!("  Quantity: {}", order.quantity.as_deref().unwrap_or("?"));
+                        println!("  Order ID: {}", order.order_id);
+                        println!("  Side: {}", order.side);
+                        println!("  Price: {}", order.price);
+                        println!("  Quantity: {}", order.quantity);
 
                         // 6. Cancel the order
-                        if let Some(ref oid) = order.order_id {
-                            println!("\nCancelling order {oid}...");
-                            let cancel = client.cancel_order(&mut session, oid, &market_pair).await;
-                            match cancel {
-                                Ok(_) => println!("Order cancelled successfully."),
-                                Err(e) => println!("Cancel failed: {e}"),
-                            }
+                        let oid = &order.order_id;
+                        println!("\nCancelling order {oid}...");
+                        let cancel = client
+                            .cancel_order(&mut session, oid, market_pair.as_str())
+                            .await;
+                        match cancel {
+                            Ok(_) => println!("Order cancelled successfully."),
+                            Err(e) => println!("Cancel failed: {e}"),
                         }
                     }
                 }
@@ -92,10 +99,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for (symbol, bal) in &balances {
         println!(
             "  {}: available={}, locked={}, unlocked={}",
-            symbol,
-            bal.trading_account_balance.as_deref().unwrap_or("0"),
-            bal.total_locked.as_deref().unwrap_or("0"),
-            bal.total_unlocked.as_deref().unwrap_or("0"),
+            symbol, bal.trading_account_balance, bal.total_locked, bal.total_unlocked,
         );
     }
 

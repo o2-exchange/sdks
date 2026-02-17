@@ -10,7 +10,8 @@ The O2 Exchange supports six order types, specified via the [`OrderType`](crate:
 passed to [`O2Client::create_order`](crate::client::O2Client::create_order).
 
 ```rust,ignore
-use o2_sdk::{O2Client, Network, Side, OrderType};
+use o2_sdk::{O2Client, Network, OrderType, Side};
+let market = "fFUEL/fUSDC";
 ```
 
 ### Spot (default)
@@ -19,7 +20,7 @@ A standard limit order that rests on the book if not immediately filled.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
+    &mut session, market, Side::Buy, "0.02", "100",
     OrderType::Spot, true, true,
 ).await?;
 ```
@@ -31,7 +32,7 @@ the spread and match an existing order.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
+    &mut session, market, Side::Buy, "0.02", "100",
     OrderType::PostOnly, true, true,
 ).await?;
 ```
@@ -43,7 +44,7 @@ book is empty.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, "0.03".parse()?, "100".parse()?,
+    &mut session, market, Side::Buy, "0.03", "100",
     OrderType::Market, true, true,
 ).await?;
 ```
@@ -55,7 +56,7 @@ rejected.
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, "0.03".parse()?, "100".parse()?,
+    &mut session, market, Side::Buy, "0.03", "100",
     OrderType::FillOrKill, true, true,
 ).await?;
 ```
@@ -71,7 +72,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, "0.02".parse()?, "100".parse()?,
+    &mut session, market, Side::Buy, "0.02", "100",
     OrderType::Limit { price: "0.025".parse()?, timestamp: now },
     true, true,
 ).await?;
@@ -84,10 +85,31 @@ within the specified range:
 
 ```rust,ignore
 client.create_order(
-    &mut session, "fFUEL/fUSDC", Side::Buy, "0.025".parse()?, "100".parse()?,
+    &mut session, market, Side::Buy, "0.025", "100",
     OrderType::BoundedMarket { max_price: "0.03".parse()?, min_price: "0.01".parse()? },
     true, true,
 ).await?;
+```
+
+## Streamlined Batch Builder
+
+For multi-action submissions in a single market, use
+[`O2Client::actions_for`](crate::client::O2Client::actions_for) to
+build validated actions with the same flexible price/quantity input
+types as `create_order`.
+
+```rust,ignore
+let actions = client
+    .actions_for("fFUEL/fUSDC")
+    .await?
+    .settle_balance()
+    .create_order(Side::Buy, "0.02", "100", OrderType::PostOnly)
+    .create_order(Side::Sell, "0.03", "100", OrderType::PostOnly)
+    .build()?;
+
+let result = client
+    .batch_actions(&mut session, "fFUEL/fUSDC", actions, true)
+    .await?;
 ```
 
 ## Cancel and Replace
@@ -96,10 +118,10 @@ Cancel an existing order:
 
 ```rust,ignore
 // Cancel by order ID
-client.cancel_order(&mut session, "0xabc...", "fFUEL/fUSDC").await?;
+client.cancel_order(&mut session, &"0xabc...".into(), market).await?;
 
 // Cancel all open orders
-client.cancel_all_orders(&mut session, "fFUEL/fUSDC").await?;
+client.cancel_all_orders(&mut session, market).await?;
 ```
 
 To atomically cancel-and-replace in a single transaction, use
@@ -119,7 +141,7 @@ let actions = vec![
     },
 ];
 
-let result = client.batch_actions(&mut session, "fFUEL/fUSDC", actions, true).await?;
+let result = client.batch_actions(&mut session, market, actions, true).await?;
 ```
 
 > **Important:** Prices and quantities in [`Action::CreateOrder`](crate::Action::CreateOrder) are
@@ -137,7 +159,7 @@ contract until they are settled back to your trading account.
 is `true` (the default). You can also settle manually:
 
 ```rust,ignore
-client.settle_balance(&mut session, "fFUEL/fUSDC").await?;
+client.settle_balance(&mut session, market).await?;
 ```
 
 ## Market Maker Pattern
@@ -158,7 +180,7 @@ let mut active_sell: Option<String> = None;
 
 loop {
     // Get current mid price
-    let depth = client.get_depth("fFUEL/fUSDC", 10).await?;
+    let depth = client.get_depth(market, 10).await?;
     let buys = depth.buys.as_deref().unwrap_or_default();
     let sells = depth.sells.as_deref().unwrap_or_default();
 
@@ -196,7 +218,7 @@ loop {
         order_type: OrderType::PostOnly,
     });
 
-    let result = client.batch_actions(&mut session, "fFUEL/fUSDC", actions, true).await?;
+    let result = client.batch_actions(&mut session, market, actions, true).await?;
 
     if let Some(ref orders) = result.orders {
         active_buy = orders.iter()
@@ -218,16 +240,16 @@ Query order status:
 ```rust,ignore
 // All orders for an account
 let orders = client.get_orders(
-    &session.trade_account_id, "fFUEL/fUSDC", None, 20,
+    &session.trade_account_id, market, None, 20,
 ).await?;
 
 // Open orders only
 let open_orders = client.get_orders(
-    &session.trade_account_id, "fFUEL/fUSDC", Some(true), 20,
+    &session.trade_account_id, market, Some(true), 20,
 ).await?;
 
 // Single order by ID
-let order = client.get_order("fFUEL/fUSDC", "0xabc...").await?;
+let order = client.get_order(market, "0xabc...").await?;
 let is_open = order.close != Some(true);
 println!("Status: {}", if is_open { "open" } else { "closed" });
 println!(

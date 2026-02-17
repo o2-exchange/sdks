@@ -118,7 +118,7 @@ pub fn encode_order_args(price: u64, quantity: u64, order_type: &OrderTypeEncodi
 ///
 /// Layout:
 ///   u64(nonce) + u64(chain_id) + u64(len("set_session")) + "set_session"
-///   + u64(1) [Option::Some] + u64(0) [Identity::Address] + session_address(32)
+///   + u64(1) [Option::Some] + u64(0) [Identity Address discriminant] + session_address(32)
 ///   + u64(expiry) + u64(len(contract_ids)) + contract_ids(32 each)
 pub fn build_session_signing_bytes(
     nonce: u64,
@@ -310,15 +310,13 @@ pub fn action_to_call(
         } => {
             let base_asset = parse_hex_32(market.base.asset.as_str())?;
             let quote_asset = parse_hex_32(market.quote.asset.as_str())?;
-            let scaled_price = market.scale_price(price);
-            let scaled_quantity = market.scale_quantity(quantity);
-            let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity);
+            let scaled_price = market.scale_price(price)?;
+            let scaled_quantity = market.scale_quantity(quantity)?;
+            let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity)?;
 
-            market
-                .validate_order(scaled_price, scaled_quantity)
-                .map_err(crate::errors::O2Error::InvalidOrderParams)?;
+            market.validate_order(scaled_price, scaled_quantity)?;
 
-            let (ot_encoding, ot_json) = order_type.to_encoding(market);
+            let (ot_encoding, ot_json) = order_type.to_encoding(market)?;
             let side_str = side.as_str();
 
             let call = create_order_to_call(

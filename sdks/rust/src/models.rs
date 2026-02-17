@@ -4,9 +4,11 @@
 /// String fields are used for large numeric values to avoid precision loss.
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 
 use crate::decimal::UnsignedDecimal;
+use crate::errors::O2Error;
 
 macro_rules! newtype_id {
     ($(#[$meta:meta])* $name:ident) => {
@@ -48,10 +50,22 @@ macro_rules! newtype_id {
             }
         }
 
+        impl From<&$name> for $name {
+            fn from(v: &$name) -> Self {
+                v.clone()
+            }
+        }
+
         impl std::ops::Deref for $name {
             type Target = str;
             fn deref(&self) -> &str {
                 &self.0
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self(String::new())
             }
         }
     };
@@ -60,6 +74,90 @@ macro_rules! newtype_id {
 newtype_id!(
     /// A market symbol pair like "FUEL/USDC".
     MarketSymbol
+);
+
+impl MarketSymbol {
+    /// Parse and normalize a market symbol in `BASE/QUOTE` form.
+    ///
+    /// Normalization currently trims surrounding whitespace and preserves symbol casing.
+    pub fn parse(input: impl AsRef<str>) -> Result<Self, O2Error> {
+        Self::from_str(input.as_ref())
+    }
+}
+
+impl FromStr for MarketSymbol {
+    type Err = O2Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let trimmed = s.trim();
+        if trimmed.is_empty() {
+            return Err(O2Error::InvalidRequest(
+                "Market symbol cannot be empty".to_string(),
+            ));
+        }
+
+        let (base_raw, quote_raw) = trimmed.split_once('/').ok_or_else(|| {
+            O2Error::InvalidRequest(format!(
+                "Invalid market symbol '{trimmed}'. Expected format BASE/QUOTE"
+            ))
+        })?;
+
+        if quote_raw.contains('/') {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid market symbol '{trimmed}'. Expected exactly one '/' separator"
+            )));
+        }
+
+        let base = base_raw.trim();
+        let quote = quote_raw.trim();
+        if base.is_empty() || quote.is_empty() {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid market symbol '{trimmed}'. Base and quote must be non-empty"
+            )));
+        }
+
+        Ok(MarketSymbol::new(format!("{base}/{quote}")))
+    }
+}
+
+/// Converts input into a validated, normalized [`MarketSymbol`].
+pub trait IntoMarketSymbol {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error>;
+}
+
+impl IntoMarketSymbol for MarketSymbol {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self.as_str())
+    }
+}
+
+impl IntoMarketSymbol for &MarketSymbol {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self.as_str())
+    }
+}
+
+impl IntoMarketSymbol for &str {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+impl IntoMarketSymbol for String {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+impl IntoMarketSymbol for &String {
+    fn into_market_symbol(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+newtype_id!(
+    /// A hex contract ID.
+    ContractId
 );
 newtype_id!(
     /// A hex market ID.
@@ -70,6 +168,10 @@ newtype_id!(
     OrderId
 );
 newtype_id!(
+    /// A trade identifier.
+    TradeId
+);
+newtype_id!(
     /// A hex trade account ID.
     TradeAccountId
 );
@@ -77,6 +179,69 @@ newtype_id!(
     /// A hex asset ID.
     AssetId
 );
+
+fn normalize_hex_prefixed(s: String) -> String {
+    if s.starts_with("0x") || s.starts_with("0X") || s.is_empty() {
+        s
+    } else {
+        format!("0x{s}")
+    }
+}
+
+/// A hex transaction ID.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Default)]
+#[serde(transparent)]
+pub struct TxId(String);
+
+impl TxId {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(normalize_hex_prefixed(s.into()))
+    }
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for TxId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TxId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl From<String> for TxId {
+    fn from(s: String) -> Self {
+        Self::new(s)
+    }
+}
+
+impl From<&str> for TxId {
+    fn from(s: &str) -> Self {
+        Self::new(s)
+    }
+}
+
+impl std::ops::Deref for TxId {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for TxId {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(TxId::new(raw))
+    }
+}
 
 /// Deserialize a value that may be a JSON number or a string containing a number.
 fn deserialize_string_or_u64<'de, D>(deserializer: D) -> Result<u64, D::Error>
@@ -89,31 +254,126 @@ where
     impl<'de> de::Visitor<'de> for StringOrU64 {
         type Value = u64;
         fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a u64 or a string containing a u64")
+            f.write_str("a u64 or a string containing a decimal/0x-hex u64")
         }
         fn visit_u64<E: de::Error>(self, v: u64) -> Result<u64, E> {
             Ok(v)
         }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u64, E> {
+            u64::try_from(v).map_err(de::Error::custom)
+        }
         fn visit_str<E: de::Error>(self, v: &str) -> Result<u64, E> {
-            v.parse().map_err(de::Error::custom)
+            if let Some(hex) = v.strip_prefix("0x").or_else(|| v.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).map_err(de::Error::custom)
+            } else {
+                v.parse().map_err(de::Error::custom)
+            }
         }
     }
     deserializer.deserialize_any(StringOrU64)
 }
 
-/// Deserialize an optional value that may be a JSON number or a string, storing as String.
-fn deserialize_optional_string_or_number<'de, D>(
-    deserializer: D,
-) -> Result<Option<String>, D::Error>
+/// Deserialize an optional value that may be a JSON number or a string, storing as u64.
+fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
     match value {
-        Some(serde_json::Value::String(s)) => Ok(Some(s)),
-        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(serde_json::Value::String(s)) => {
+            if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16)
+                    .map(Some)
+                    .map_err(serde::de::Error::custom)
+            } else {
+                s.parse().map(Some).map_err(serde::de::Error::custom)
+            }
+        }
+        Some(serde_json::Value::Number(n)) => n
+            .as_u64()
+            .ok_or_else(|| serde::de::Error::custom("number is not u64"))
+            .map(Some),
         Some(serde_json::Value::Null) | None => Ok(None),
-        Some(v) => Ok(Some(v.to_string())),
+        Some(v) => Err(serde::de::Error::custom(format!(
+            "expected string/number/null for u64 field, got {v}"
+        ))),
+    }
+}
+
+/// Deserialize a value that may be a JSON number or a string containing a u128.
+fn deserialize_string_or_u128<'de, D>(deserializer: D) -> Result<u128, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrU128;
+    impl<'de> de::Visitor<'de> for StringOrU128 {
+        type Value = u128;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a u128 or a string containing a decimal u128")
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<u128, E> {
+            Ok(v as u128)
+        }
+        fn visit_u128<E: de::Error>(self, v: u128) -> Result<u128, E> {
+            Ok(v)
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<u128, E> {
+            u128::try_from(v).map_err(de::Error::custom)
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<u128, E> {
+            v.parse().map_err(de::Error::custom)
+        }
+    }
+    deserializer.deserialize_any(StringOrU128)
+}
+
+/// Deserialize a value that may be a JSON number or a string containing an f64.
+fn deserialize_string_or_f64<'de, D>(deserializer: D) -> Result<f64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrF64;
+    impl<'de> de::Visitor<'de> for StringOrF64 {
+        type Value = f64;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an f64 or a string containing an f64")
+        }
+        fn visit_f64<E: de::Error>(self, v: f64) -> Result<f64, E> {
+            Ok(v)
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<f64, E> {
+            Ok(v as f64)
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<f64, E> {
+            Ok(v as f64)
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<f64, E> {
+            v.parse().map_err(de::Error::custom)
+        }
+    }
+    deserializer.deserialize_any(StringOrF64)
+}
+
+/// Deserialize an optional value that may be a JSON number or a string, storing as f64.
+fn deserialize_optional_f64<'de, D>(deserializer: D) -> Result<Option<f64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        Some(serde_json::Value::String(s)) => s.parse().map(Some).map_err(serde::de::Error::custom),
+        Some(serde_json::Value::Number(n)) => n
+            .as_f64()
+            .ok_or_else(|| serde::de::Error::custom("number is not f64"))
+            .map(Some),
+        Some(serde_json::Value::Null) | None => Ok(None),
+        Some(v) => Err(serde::de::Error::custom(format!(
+            "expected string/number/null for f64 field, got {v}"
+        ))),
     }
 }
 
@@ -122,7 +382,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Order side: Buy or Sell.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Side {
     Buy,
     Sell,
@@ -134,6 +394,29 @@ impl Side {
         match self {
             Side::Buy => "Buy",
             Side::Sell => "Sell",
+        }
+    }
+}
+
+impl std::fmt::Display for Side {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl Serialize for Side {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> Deserialize<'de> for Side {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        match raw.to_ascii_lowercase().as_str() {
+            "buy" => Ok(Side::Buy),
+            "sell" => Ok(Side::Sell),
+            _ => Err(serde::de::Error::custom(format!("invalid side '{raw}'"))),
         }
     }
 }
@@ -179,45 +462,173 @@ pub enum Action {
     },
 }
 
+/// A market-bound human-readable order price.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Price {
+    value: UnsignedDecimal,
+    market_id: MarketId,
+    quote_decimals: u32,
+    quote_max_precision: u32,
+}
+
+impl Price {
+    /// Human-readable decimal value.
+    pub fn value(&self) -> UnsignedDecimal {
+        self.value
+    }
+
+    /// Market this price was validated against.
+    pub fn market_id(&self) -> &MarketId {
+        &self.market_id
+    }
+}
+
+impl std::fmt::Display for Price {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// A market-bound human-readable order quantity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quantity {
+    value: UnsignedDecimal,
+    market_id: MarketId,
+    base_decimals: u32,
+    base_max_precision: u32,
+}
+
+impl Quantity {
+    /// Human-readable decimal value.
+    pub fn value(&self) -> UnsignedDecimal {
+        self.value
+    }
+
+    /// Market this quantity was validated against.
+    pub fn market_id(&self) -> &MarketId {
+        &self.market_id
+    }
+}
+
+impl std::fmt::Display for Quantity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// Flexible input accepted by `O2Client::create_order` for price values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderPriceInput {
+    /// A raw decimal that must be validated against the target market.
+    Unchecked(UnsignedDecimal),
+    /// A market-bound typed price.
+    Checked(Price),
+}
+
+impl TryFrom<UnsignedDecimal> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: UnsignedDecimal) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value))
+    }
+}
+
+impl TryFrom<Price> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: Price) -> Result<Self, Self::Error> {
+        Ok(Self::Checked(value))
+    }
+}
+
+impl TryFrom<&str> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
+impl TryFrom<String> for OrderPriceInput {
+    type Error = O2Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
+/// Flexible input accepted by `O2Client::create_order` for quantity values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrderQuantityInput {
+    /// A raw decimal that must be validated against the target market.
+    Unchecked(UnsignedDecimal),
+    /// A market-bound typed quantity.
+    Checked(Quantity),
+}
+
+impl TryFrom<UnsignedDecimal> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: UnsignedDecimal) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value))
+    }
+}
+
+impl TryFrom<Quantity> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: Quantity) -> Result<Self, Self::Error> {
+        Ok(Self::Checked(value))
+    }
+}
+
+impl TryFrom<&str> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
+impl TryFrom<String> for OrderQuantityInput {
+    type Error = O2Error;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Ok(Self::Unchecked(value.parse()?))
+    }
+}
+
 impl OrderType {
     /// Convert to the low-level `OrderTypeEncoding` and JSON representation
     /// used by the encoding and API layers.
     pub fn to_encoding(
         &self,
         market: &Market,
-    ) -> (crate::encoding::OrderTypeEncoding, serde_json::Value) {
+    ) -> Result<(crate::encoding::OrderTypeEncoding, serde_json::Value), O2Error> {
         use crate::encoding::OrderTypeEncoding;
         match self {
-            OrderType::Spot => (OrderTypeEncoding::Spot, serde_json::json!("Spot")),
-            OrderType::Market => (OrderTypeEncoding::Market, serde_json::json!("Market")),
-            OrderType::FillOrKill => (
+            OrderType::Spot => Ok((OrderTypeEncoding::Spot, serde_json::json!("Spot"))),
+            OrderType::Market => Ok((OrderTypeEncoding::Market, serde_json::json!("Market"))),
+            OrderType::FillOrKill => Ok((
                 OrderTypeEncoding::FillOrKill,
                 serde_json::json!("FillOrKill"),
-            ),
-            OrderType::PostOnly => (OrderTypeEncoding::PostOnly, serde_json::json!("PostOnly")),
+            )),
+            OrderType::PostOnly => Ok((OrderTypeEncoding::PostOnly, serde_json::json!("PostOnly"))),
             OrderType::Limit { price, timestamp } => {
-                let scaled_price = market.scale_price(price);
-                (
+                let scaled_price = market.scale_price(price)?;
+                Ok((
                     OrderTypeEncoding::Limit {
                         price: scaled_price,
                         timestamp: *timestamp,
                     },
                     serde_json::json!({ "Limit": [scaled_price.to_string(), timestamp.to_string()] }),
-                )
+                ))
             }
             OrderType::BoundedMarket {
                 max_price,
                 min_price,
             } => {
-                let scaled_max = market.scale_price(max_price);
-                let scaled_min = market.scale_price(min_price);
-                (
+                let scaled_max = market.scale_price(max_price)?;
+                let scaled_min = market.scale_price(min_price)?;
+                Ok((
                     OrderTypeEncoding::BoundedMarket {
                         max_price: scaled_max,
                         min_price: scaled_min,
                     },
                     serde_json::json!({ "BoundedMarket": { "max_price": scaled_max.to_string(), "min_price": scaled_min.to_string() } }),
-                )
+                ))
             }
         }
     }
@@ -265,12 +676,18 @@ pub struct MarketAsset {
 /// A trading market.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Market {
-    pub contract_id: String,
+    pub contract_id: ContractId,
     pub market_id: MarketId,
-    pub maker_fee: String,
-    pub taker_fee: String,
-    pub min_order: String,
-    pub dust: String,
+    pub whitelist_id: Option<ContractId>,
+    pub blacklist_id: Option<ContractId>,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub maker_fee: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub taker_fee: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub min_order: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub dust: u64,
     #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub price_window: u64,
     pub base: MarketAsset,
@@ -278,40 +695,168 @@ pub struct Market {
 }
 
 impl Market {
+    fn parsed_unsigned(value: &str, field: &str) -> Result<UnsignedDecimal, O2Error> {
+        UnsignedDecimal::from_str(value)
+            .map_err(|e| O2Error::InvalidOrderParams(format!("Invalid {field}: {e}")))
+    }
+
+    fn decimal_scale(value: &UnsignedDecimal) -> u32 {
+        value.inner().normalize().scale()
+    }
+
+    /// Build a typed, market-bound price from a string.
+    pub fn price(&self, value: &str) -> Result<Price, O2Error> {
+        let parsed = Self::parsed_unsigned(value, "price")?;
+        self.price_from_decimal(parsed)
+    }
+
+    /// Build a typed, market-bound price from an `UnsignedDecimal`.
+    pub fn price_from_decimal(&self, value: UnsignedDecimal) -> Result<Price, O2Error> {
+        let scale = Self::decimal_scale(&value);
+        if scale > self.quote.max_precision {
+            return Err(O2Error::InvalidOrderParams(format!(
+                "Price precision {} exceeds max {} for market {}",
+                scale, self.quote.max_precision, self.market_id
+            )));
+        }
+        // Ensure value is representable in chain units for this market.
+        let _ = self.scale_price(&value)?;
+        Ok(Price {
+            value,
+            market_id: self.market_id.clone(),
+            quote_decimals: self.quote.decimals,
+            quote_max_precision: self.quote.max_precision,
+        })
+    }
+
+    /// Build a typed, market-bound quantity from a string.
+    pub fn quantity(&self, value: &str) -> Result<Quantity, O2Error> {
+        let parsed = Self::parsed_unsigned(value, "quantity")?;
+        self.quantity_from_decimal(parsed)
+    }
+
+    /// Build a typed, market-bound quantity from an `UnsignedDecimal`.
+    pub fn quantity_from_decimal(&self, value: UnsignedDecimal) -> Result<Quantity, O2Error> {
+        let scale = Self::decimal_scale(&value);
+        if scale > self.base.max_precision {
+            return Err(O2Error::InvalidOrderParams(format!(
+                "Quantity precision {} exceeds max {} for market {}",
+                scale, self.base.max_precision, self.market_id
+            )));
+        }
+        // Ensure value is representable in chain units for this market.
+        let _ = self.scale_quantity(&value)?;
+        Ok(Quantity {
+            value,
+            market_id: self.market_id.clone(),
+            base_decimals: self.base.decimals,
+            base_max_precision: self.base.max_precision,
+        })
+    }
+
+    /// Validate that a `Price` wrapper is compatible with this market.
+    pub fn validate_price_binding(&self, price: &Price) -> Result<(), O2Error> {
+        if price.market_id != self.market_id
+            || price.quote_decimals != self.quote.decimals
+            || price.quote_max_precision != self.quote.max_precision
+        {
+            return Err(O2Error::Other(format!(
+                "Price wrapper is stale or bound to a different market (expected {}, got {})",
+                self.market_id, price.market_id
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate that a `Quantity` wrapper is compatible with this market.
+    pub fn validate_quantity_binding(&self, quantity: &Quantity) -> Result<(), O2Error> {
+        if quantity.market_id != self.market_id
+            || quantity.base_decimals != self.base.decimals
+            || quantity.base_max_precision != self.base.max_precision
+        {
+            return Err(O2Error::Other(format!(
+                "Quantity wrapper is stale or bound to a different market (expected {}, got {})",
+                self.market_id, quantity.market_id
+            )));
+        }
+        Ok(())
+    }
+
+    fn checked_pow_u64(exp: u32, field: &str) -> Result<u64, O2Error> {
+        10u64
+            .checked_pow(exp)
+            .ok_or_else(|| O2Error::Other(format!("Invalid {field}: 10^{exp} overflows u64")))
+    }
+
+    fn checked_pow_u128(exp: u32, field: &str) -> Result<u128, O2Error> {
+        10u128
+            .checked_pow(exp)
+            .ok_or_else(|| O2Error::Other(format!("Invalid {field}: 10^{exp} overflows u128")))
+    }
+
+    fn checked_truncate_factor(
+        decimals: u32,
+        max_precision: u32,
+        field: &str,
+    ) -> Result<u64, O2Error> {
+        if max_precision > decimals {
+            return Err(O2Error::Other(format!(
+                "Invalid {field}: max_precision ({max_precision}) exceeds decimals ({decimals})"
+            )));
+        }
+        Self::checked_pow_u64(decimals - max_precision, field)
+    }
+
     /// Convert a chain-scaled price to human-readable.
     pub fn format_price(&self, chain_value: u64) -> UnsignedDecimal {
-        let d = Decimal::from(chain_value) / Decimal::from(10u64.pow(self.quote.decimals));
+        let factor = 10u64.pow(self.quote.decimals);
+        let d = Decimal::from(chain_value) / Decimal::from(factor);
         UnsignedDecimal::new(d).unwrap()
     }
 
     /// Convert a human-readable price to chain-scaled integer, truncated to max_precision.
-    pub fn scale_price(&self, human_value: &UnsignedDecimal) -> u64 {
-        let factor = Decimal::from(10u64.pow(self.quote.decimals));
-        let scaled = (*human_value.inner() * factor)
-            .floor()
-            .to_string()
-            .parse::<u64>()
-            .unwrap_or(0);
-        let truncate_factor = 10u64.pow(self.quote.decimals - self.quote.max_precision);
-        (scaled / truncate_factor) * truncate_factor
+    pub fn scale_price(&self, human_value: &UnsignedDecimal) -> Result<u64, O2Error> {
+        let factor_u64 = Self::checked_pow_u64(self.quote.decimals, "quote.decimals")?;
+        let factor = Decimal::from(factor_u64);
+        let scaled_str = (*human_value.inner() * factor).floor().to_string();
+        let scaled = scaled_str.parse::<u64>().map_err(|e| {
+            O2Error::Other(format!(
+                "Failed to scale price '{}' into u64: {e}",
+                human_value
+            ))
+        })?;
+        let truncate_factor = Self::checked_truncate_factor(
+            self.quote.decimals,
+            self.quote.max_precision,
+            "quote precision",
+        )?;
+        Ok((scaled / truncate_factor) * truncate_factor)
     }
 
     /// Convert a chain-scaled quantity to human-readable.
     pub fn format_quantity(&self, chain_value: u64) -> UnsignedDecimal {
-        let d = Decimal::from(chain_value) / Decimal::from(10u64.pow(self.base.decimals));
+        let factor = 10u64.pow(self.base.decimals);
+        let d = Decimal::from(chain_value) / Decimal::from(factor);
         UnsignedDecimal::new(d).unwrap()
     }
 
     /// Convert a human-readable quantity to chain-scaled integer, truncated to max_precision.
-    pub fn scale_quantity(&self, human_value: &UnsignedDecimal) -> u64 {
-        let factor = Decimal::from(10u64.pow(self.base.decimals));
-        let scaled = (*human_value.inner() * factor)
-            .floor()
-            .to_string()
-            .parse::<u64>()
-            .unwrap_or(0);
-        let truncate_factor = 10u64.pow(self.base.decimals - self.base.max_precision);
-        (scaled / truncate_factor) * truncate_factor
+    pub fn scale_quantity(&self, human_value: &UnsignedDecimal) -> Result<u64, O2Error> {
+        let factor_u64 = Self::checked_pow_u64(self.base.decimals, "base.decimals")?;
+        let factor = Decimal::from(factor_u64);
+        let scaled_str = (*human_value.inner() * factor).floor().to_string();
+        let scaled = scaled_str.parse::<u64>().map_err(|e| {
+            O2Error::Other(format!(
+                "Failed to scale quantity '{}' into u64: {e}",
+                human_value
+            ))
+        })?;
+        let truncate_factor = Self::checked_truncate_factor(
+            self.base.decimals,
+            self.base.max_precision,
+            "base precision",
+        )?;
+        Ok((scaled / truncate_factor) * truncate_factor)
     }
 
     /// The symbol pair, e.g. "FUEL/USDC".
@@ -321,31 +866,44 @@ impl Market {
 
     /// Adjust quantity downward so that `(price * quantity) % 10^base_decimals == 0`.
     /// Returns the original quantity if already valid.
-    pub fn adjust_quantity(&self, price: u64, quantity: u64) -> u64 {
-        let base_factor = 10u128.pow(self.base.decimals);
+    pub fn adjust_quantity(&self, price: u64, quantity: u64) -> Result<u64, O2Error> {
+        if price == 0 {
+            return Err(O2Error::InvalidOrderParams(
+                "Price cannot be zero when adjusting quantity".into(),
+            ));
+        }
+        let base_factor = Self::checked_pow_u128(self.base.decimals, "base.decimals")?;
         let product = price as u128 * quantity as u128;
         let remainder = product % base_factor;
         if remainder == 0 {
-            return quantity;
+            return Ok(quantity);
         }
         let adjusted_product = product - remainder;
-        (adjusted_product / price as u128) as u64
+        let adjusted = adjusted_product / price as u128;
+        if adjusted > u64::MAX as u128 {
+            return Err(O2Error::InvalidOrderParams(
+                "Adjusted quantity exceeds u64 range".into(),
+            ));
+        }
+        Ok(adjusted as u64)
     }
 
     /// Validate that a price*quantity satisfies min_order and FractionalPrice constraints.
-    pub fn validate_order(&self, price: u64, quantity: u64) -> Result<(), String> {
-        let base_factor = 10u128.pow(self.base.decimals);
+    pub fn validate_order(&self, price: u64, quantity: u64) -> Result<(), O2Error> {
+        let base_factor = Self::checked_pow_u128(self.base.decimals, "base.decimals")?;
         let quote_value = (price as u128 * quantity as u128) / base_factor;
-        let min_order: u128 = self.min_order.parse().unwrap_or(0);
+        let min_order: u128 = self.min_order as u128;
         if quote_value < min_order {
-            return Err(format!(
+            return Err(O2Error::InvalidOrderParams(format!(
                 "Quote value {} below min_order {}",
                 quote_value, min_order
-            ));
+            )));
         }
         // FractionalPrice check
         if (price as u128 * quantity as u128) % base_factor != 0 {
-            return Err("FractionalPrice: (price * quantity) % 10^base_decimals != 0".into());
+            return Err(O2Error::InvalidOrderParams(
+                "FractionalPrice: (price * quantity) % 10^base_decimals != 0".into(),
+            ));
         }
         Ok(())
     }
@@ -354,32 +912,69 @@ impl Market {
 /// Top-level response from GET /v1/markets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketsResponse {
-    pub books_registry_id: Option<String>,
-    pub accounts_registry_id: Option<String>,
-    pub trade_account_oracle_id: Option<String>,
-    pub chain_id: Option<String>,
-    pub base_asset_id: Option<String>,
+    pub books_registry_id: ContractId,
+    pub books_whitelist_id: Option<ContractId>,
+    pub books_blacklist_id: Option<ContractId>,
+    pub accounts_registry_id: ContractId,
+    pub trade_account_oracle_id: ContractId,
+    pub fast_bridge_asset_registry_contract_id: Option<ContractId>,
+    pub chain_id: String,
+    pub base_asset_id: AssetId,
     pub markets: Vec<Market>,
 }
 
 /// Market summary from GET /v1/markets/summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketSummary {
-    pub market_id: Option<String>,
-    pub high: Option<String>,
-    pub low: Option<String>,
-    pub volume: Option<String>,
-    pub price_change: Option<String>,
-    pub last_price: Option<String>,
+    pub market_id: MarketId,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub high_price: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub low_price: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub last_price: Option<u64>,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub volume_24h: u128,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub change_24h: f64,
 }
 
 /// Market ticker from GET /v1/markets/ticker.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketTicker {
-    pub market_id: Option<String>,
-    pub best_bid: Option<String>,
-    pub best_ask: Option<String>,
-    pub last_price: Option<String>,
+    pub market_id: MarketId,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub high: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub low: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub bid: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub bid_volume: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub ask: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub ask_volume: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub open: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub close: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub last: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub previous_close: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    pub change: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    pub percentage: Option<f64>,
+    #[serde(default, deserialize_with = "deserialize_optional_f64")]
+    pub average: Option<f64>,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub base_volume: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub quote_volume: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub timestamp: u128,
 }
 
 // ---------------------------------------------------------------------------
@@ -389,9 +984,11 @@ pub struct MarketTicker {
 /// Trading account info from GET /v1/accounts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeAccount {
-    pub last_modification: Option<u64>,
-    pub nonce: Option<String>,
-    pub owner: Option<Identity>,
+    #[serde(default)]
+    pub last_modification: u64,
+    #[serde(default, deserialize_with = "deserialize_string_or_u64")]
+    pub nonce: u64,
+    pub owner: Identity,
     #[serde(default)]
     pub synced_with_network: Option<bool>,
     #[serde(default)]
@@ -409,16 +1006,18 @@ pub struct AccountResponse {
 /// Session info within an account response.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
-    pub session_id: Option<Identity>,
-    pub expiry: Option<String>,
-    pub contract_ids: Option<Vec<String>>,
+    pub session_id: Identity,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub expiry: u64,
+    pub contract_ids: Vec<ContractId>,
 }
 
 /// Response from POST /v1/accounts (create account).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateAccountResponse {
-    pub trade_account_id: Option<TradeAccountId>,
-    pub nonce: Option<String>,
+    pub trade_account_id: TradeAccountId,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub nonce: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -428,10 +1027,10 @@ pub struct CreateAccountResponse {
 /// Request body for PUT /v1/session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRequest {
-    pub contract_id: String,
+    pub contract_id: TradeAccountId,
     pub session_id: Identity,
     pub signature: Signature,
-    pub contract_ids: Vec<String>,
+    pub contract_ids: Vec<ContractId>,
     pub nonce: String,
     pub expiry: String,
 }
@@ -439,11 +1038,12 @@ pub struct SessionRequest {
 /// Response from PUT /v1/session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionResponse {
-    pub tx_id: Option<String>,
-    pub trade_account_id: Option<String>,
-    pub contract_ids: Option<Vec<String>>,
-    pub session_id: Option<Identity>,
-    pub session_expiry: Option<String>,
+    pub tx_id: TxId,
+    pub trade_account_id: TradeAccountId,
+    pub contract_ids: Vec<ContractId>,
+    pub session_id: Identity,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub session_expiry: u64,
 }
 
 /// Local session state tracked by the client.
@@ -453,7 +1053,7 @@ pub struct Session {
     pub session_private_key: [u8; 32],
     pub session_address: [u8; 32],
     pub trade_account_id: TradeAccountId,
-    pub contract_ids: Vec<String>,
+    pub contract_ids: Vec<ContractId>,
     pub expiry: u64,
     pub nonce: u64,
 }
@@ -465,21 +1065,25 @@ pub struct Session {
 /// An order from the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Order {
-    pub order_id: Option<OrderId>,
-    pub side: Option<String>,
-    pub order_type: Option<serde_json::Value>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
-    pub quantity: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
-    pub quantity_fill: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
-    pub price: Option<String>,
-    #[serde(default, deserialize_with = "deserialize_optional_string_or_number")]
-    pub price_fill: Option<String>,
+    #[serde(default)]
+    pub order_id: OrderId,
+    pub side: Side,
+    pub order_type: serde_json::Value,
+    #[serde(default, deserialize_with = "deserialize_string_or_u64")]
+    pub quantity: u64,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub quantity_fill: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_string_or_u64")]
+    pub price: u64,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
+    pub price_fill: Option<u64>,
     pub timestamp: Option<serde_json::Value>,
-    pub close: Option<bool>,
-    pub partially_filled: Option<bool>,
-    pub cancel: Option<bool>,
+    #[serde(default)]
+    pub close: bool,
+    #[serde(default)]
+    pub partially_filled: bool,
+    #[serde(default)]
+    pub cancel: bool,
     #[serde(default)]
     pub desired_quantity: Option<serde_json::Value>,
     #[serde(default)]
@@ -503,9 +1107,10 @@ pub struct Order {
 /// Response from GET /v1/orders.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrdersResponse {
-    pub identity: Option<Identity>,
-    pub market_id: Option<String>,
-    pub orders: Option<Vec<Order>>,
+    pub identity: Identity,
+    pub market_id: MarketId,
+    #[serde(default)]
+    pub orders: Vec<Order>,
 }
 
 // ---------------------------------------------------------------------------
@@ -515,12 +1120,16 @@ pub struct OrdersResponse {
 /// A trade from the API.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
-    pub trade_id: Option<String>,
-    pub side: Option<String>,
-    pub total: Option<String>,
-    pub quantity: Option<String>,
-    pub price: Option<String>,
-    pub timestamp: Option<String>,
+    pub trade_id: TradeId,
+    pub side: Side,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub total: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub quantity: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub price: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub timestamp: u128,
     #[serde(default)]
     pub maker: Option<Identity>,
     #[serde(default)]
@@ -530,8 +1139,9 @@ pub struct Trade {
 /// Response from GET /v1/trades.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradesResponse {
-    pub trades: Option<Vec<Trade>>,
-    pub market_id: Option<String>,
+    #[serde(default)]
+    pub trades: Vec<Trade>,
+    pub market_id: MarketId,
 }
 
 // ---------------------------------------------------------------------------
@@ -541,17 +1151,24 @@ pub struct TradesResponse {
 /// Order book balance entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderBookBalance {
-    pub locked: Option<String>,
-    pub unlocked: Option<String>,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub locked: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub unlocked: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub fee: u128,
 }
 
 /// Balance response from GET /v1/balance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceResponse {
-    pub order_books: Option<HashMap<String, OrderBookBalance>>,
-    pub total_locked: Option<String>,
-    pub total_unlocked: Option<String>,
-    pub trading_account_balance: Option<String>,
+    pub order_books: HashMap<String, OrderBookBalance>,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub total_locked: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub total_unlocked: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub trading_account_balance: u128,
 }
 
 // ---------------------------------------------------------------------------
@@ -561,25 +1178,29 @@ pub struct BalanceResponse {
 /// A single depth level (price + quantity).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthLevel {
-    pub price: String,
-    pub quantity: String,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub price: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub quantity: u64,
 }
 
 /// Depth snapshot from GET /v1/depth or WebSocket subscribe_depth.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthSnapshot {
-    pub buys: Option<Vec<DepthLevel>>,
-    pub sells: Option<Vec<DepthLevel>>,
+    #[serde(default)]
+    pub buys: Vec<DepthLevel>,
+    #[serde(default)]
+    pub sells: Vec<DepthLevel>,
 }
 
 /// Depth update from WebSocket subscribe_depth_update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthUpdate {
-    pub action: Option<String>,
+    pub action: String,
     pub changes: Option<DepthSnapshot>,
     #[serde(alias = "view")]
     pub view: Option<DepthSnapshot>,
-    pub market_id: Option<String>,
+    pub market_id: MarketId,
     pub onchain_timestamp: Option<String>,
     pub seen_timestamp: Option<String>,
 }
@@ -591,12 +1212,20 @@ pub struct DepthUpdate {
 /// OHLCV bar/candle data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bar {
-    pub open: Option<String>,
-    pub high: Option<String>,
-    pub low: Option<String>,
-    pub close: Option<String>,
-    pub volume: Option<String>,
-    pub timestamp: Option<serde_json::Value>,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub open: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub high: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub low: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub close: u64,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub buy_volume: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub sell_volume: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub timestamp: u128,
 }
 
 // ---------------------------------------------------------------------------
@@ -670,7 +1299,7 @@ pub(crate) struct SessionActionsRequest {
 /// Response from POST /v1/session/actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionActionsResponse {
-    pub tx_id: Option<String>,
+    pub tx_id: Option<TxId>,
     pub orders: Option<Vec<Order>>,
     // Error fields
     pub code: Option<u32>,
@@ -769,49 +1398,121 @@ pub struct ReferralInfo {
 // Aggregated
 // ---------------------------------------------------------------------------
 
-/// Asset from GET /v1/aggregated/assets.
+/// Asset metadata from GET /v1/aggregated/assets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AggregatedAsset {
-    pub id: Option<String>,
-    pub symbol: Option<String>,
-    pub name: Option<String>,
+pub struct AggregatedAssetInfo {
+    pub name: String,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub unified_cryptoasset_id: u64,
+    pub can_withdraw: bool,
+    pub can_deposit: bool,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub min_withdraw: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub min_deposit: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub maker_fee: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub taker_fee: f64,
 }
+
+/// Symbol-keyed assets map from GET /v1/aggregated/assets.
+pub type AggregatedAssets = BTreeMap<String, AggregatedAssetInfo>;
 
 /// Aggregated orderbook from GET /v1/aggregated/orderbook.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregatedOrderbook {
-    pub asks: Option<Vec<Vec<String>>>,
-    pub bids: Option<Vec<Vec<String>>>,
-    pub timestamp: Option<serde_json::Value>,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub timestamp: u64,
+    pub bids: Vec<[f64; 2]>,
+    pub asks: Vec<[f64; 2]>,
+}
+
+/// CoinGecko aggregated orderbook from GET /v1/aggregated/coingecko/orderbook.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoingeckoAggregatedOrderbook {
+    pub ticker_id: String,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub timestamp: u64,
+    pub bids: Vec<[f64; 2]>,
+    pub asks: Vec<[f64; 2]>,
 }
 
 /// Pair summary from GET /v1/aggregated/summary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairSummary {
-    pub trading_pairs: Option<String>,
-    pub last_price: Option<String>,
-    pub lowest_ask: Option<String>,
-    pub highest_bid: Option<String>,
-    pub base_volume: Option<String>,
-    pub quote_volume: Option<String>,
-    pub price_change_percent_24h: Option<String>,
-    pub highest_price_24h: Option<String>,
-    pub lowest_price_24h: Option<String>,
+    pub trading_pairs: String,
+    pub base_currency: String,
+    pub quote_currency: String,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub last_price: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub lowest_ask: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub highest_bid: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub base_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub quote_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub price_change_percent_24h: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub highest_price_24h: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub lowest_price_24h: f64,
 }
 
-/// Pair ticker from GET /v1/aggregated/ticker.
+/// Aggregated ticker value from GET /v1/aggregated/ticker.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatedTickerData {
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub last_price: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub base_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub quote_volume: f64,
+}
+
+/// Pair-keyed map from GET /v1/aggregated/ticker.
+pub type AggregatedTicker = BTreeMap<String, AggregatedTickerData>;
+
+/// Pair ticker from GET /v1/aggregated/coingecko/tickers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairTicker {
-    pub ticker_id: Option<String>,
-    pub base_currency: Option<String>,
-    pub target_currency: Option<String>,
-    pub last_price: Option<String>,
-    pub base_volume: Option<String>,
-    pub target_volume: Option<String>,
-    pub bid: Option<String>,
-    pub ask: Option<String>,
-    pub high: Option<String>,
-    pub low: Option<String>,
+    pub ticker_id: String,
+    pub base_currency: String,
+    pub target_currency: String,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub last_price: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub base_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub target_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub bid: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub ask: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub high: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub low: f64,
+}
+
+/// Trade from GET /v1/aggregated/trades.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatedTrade {
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub trade_id: u64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub price: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub base_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_f64")]
+    pub quote_volume: f64,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub timestamp: u64,
+    #[serde(rename = "type")]
+    pub trade_type: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -821,50 +1522,57 @@ pub struct PairTicker {
 /// WebSocket order update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrderUpdate {
-    pub action: Option<String>,
-    pub orders: Option<Vec<Order>>,
+    pub action: String,
+    #[serde(default)]
+    pub orders: Vec<Order>,
     pub onchain_timestamp: Option<String>,
-    pub seen_timestamp: Option<String>,
+    pub seen_timestamp: String,
 }
 
 /// WebSocket trade update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeUpdate {
-    pub action: Option<String>,
-    pub trades: Option<Vec<Trade>>,
-    pub market_id: Option<String>,
+    pub action: String,
+    #[serde(default)]
+    pub trades: Vec<Trade>,
+    pub market_id: MarketId,
     pub onchain_timestamp: Option<String>,
-    pub seen_timestamp: Option<String>,
+    pub seen_timestamp: String,
 }
 
 /// WebSocket balance entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceEntry {
-    pub identity: Option<Identity>,
-    pub asset_id: Option<String>,
-    pub total_locked: Option<String>,
-    pub total_unlocked: Option<String>,
-    pub trading_account_balance: Option<String>,
-    pub order_books: Option<HashMap<String, OrderBookBalance>>,
+    pub identity: Identity,
+    pub asset_id: AssetId,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub total_locked: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub total_unlocked: u128,
+    #[serde(deserialize_with = "deserialize_string_or_u128")]
+    pub trading_account_balance: u128,
+    pub order_books: HashMap<String, OrderBookBalance>,
 }
 
 /// WebSocket balance update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceUpdate {
-    pub action: Option<String>,
-    pub balance: Option<Vec<BalanceEntry>>,
+    pub action: String,
+    #[serde(default)]
+    pub balance: Vec<BalanceEntry>,
     pub onchain_timestamp: Option<String>,
-    pub seen_timestamp: Option<String>,
+    pub seen_timestamp: String,
 }
 
 /// WebSocket nonce update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NonceUpdate {
-    pub action: Option<String>,
-    pub contract_id: Option<String>,
-    pub nonce: Option<String>,
+    pub action: String,
+    pub contract_id: TradeAccountId,
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub nonce: u64,
     pub onchain_timestamp: Option<String>,
-    pub seen_timestamp: Option<String>,
+    pub seen_timestamp: String,
 }
 
 /// Generic WebSocket message for initial parsing.
@@ -880,4 +1588,100 @@ pub struct WsMessage {
 pub struct TxResult {
     pub tx_id: String,
     pub orders: Vec<Order>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_market() -> Market {
+        Market {
+            contract_id: ContractId::from(
+                "0x1111111111111111111111111111111111111111111111111111111111111111",
+            ),
+            market_id: MarketId::from(
+                "0x2222222222222222222222222222222222222222222222222222222222222222",
+            ),
+            whitelist_id: None,
+            blacklist_id: None,
+            maker_fee: 0,
+            taker_fee: 0,
+            min_order: 1,
+            dust: 0,
+            price_window: 0,
+            base: MarketAsset {
+                symbol: "BASE".to_string(),
+                asset: AssetId::from(
+                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ),
+                decimals: 9,
+                max_precision: 3,
+            },
+            quote: MarketAsset {
+                symbol: "QUOTE".to_string(),
+                asset: AssetId::from(
+                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ),
+                decimals: 9,
+                max_precision: 4,
+            },
+        }
+    }
+
+    #[test]
+    fn market_price_accepts_valid_precision() {
+        let market = sample_market();
+        let price = market.price("12.3456").expect("price should be valid");
+        assert_eq!(price.value(), "12.3456".parse().unwrap());
+        market
+            .validate_price_binding(&price)
+            .expect("binding should match");
+    }
+
+    #[test]
+    fn market_price_rejects_excess_precision() {
+        let market = sample_market();
+        let err = market
+            .price("12.34567")
+            .expect_err("price precision should be rejected");
+        assert!(matches!(err, O2Error::InvalidOrderParams(_)));
+    }
+
+    #[test]
+    fn market_quantity_rejects_excess_precision() {
+        let market = sample_market();
+        let err = market
+            .quantity("1.2345")
+            .expect_err("quantity precision should be rejected");
+        assert!(matches!(err, O2Error::InvalidOrderParams(_)));
+    }
+
+    #[test]
+    fn market_quantity_binding_rejects_cross_market() {
+        let market_a = sample_market();
+        let mut market_b = sample_market();
+        market_b.market_id =
+            MarketId::from("0x3333333333333333333333333333333333333333333333333333333333333333");
+
+        let quantity = market_a
+            .quantity("1.234")
+            .expect("quantity should be valid");
+        let err = market_b
+            .validate_quantity_binding(&quantity)
+            .expect_err("cross-market quantity must be rejected");
+        assert!(format!("{err}").contains("stale or bound to a different market"));
+    }
+
+    #[test]
+    fn market_price_binding_rejects_precision_drift() {
+        let market_a = sample_market();
+        let mut market_b = sample_market();
+        market_b.quote.max_precision = market_a.quote.max_precision + 1;
+
+        let price = market_a.price("1.2345").expect("price should be valid");
+        let err = market_b
+            .validate_price_binding(&price)
+            .expect_err("precision drift should be rejected");
+        assert!(format!("{err}").contains("stale or bound to a different market"));
+    }
 }
