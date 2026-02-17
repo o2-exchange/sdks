@@ -636,10 +636,11 @@ impl O2WebSocket {
         });
         self.send_json(unsub).await?;
         let mut guard = self.inner.lock().await;
-        let exact_sub = json!({
-            "action": "subscribe_orders"
-        });
-        guard.subscriptions.retain(|s| s != &exact_sub);
+        // unsubscribe_orders is global (no identities payload), so remove all
+        // stored subscribe_orders entries regardless of identities list.
+        guard
+            .subscriptions
+            .retain(|s| s.get("action").and_then(|a| a.as_str()) != Some("subscribe_orders"));
         Ok(())
     }
 

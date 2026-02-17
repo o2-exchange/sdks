@@ -8,6 +8,10 @@ implements `tokio_stream::Stream` and can be consumed with
 
 > See also: [`O2Client`](crate::client::O2Client) streaming methods,
 > [`O2WebSocket`](crate::O2WebSocket) for standalone usage.
+>
+> Current backend behavior: `unsubscribe_orders` is connection-global (not
+> identity-filtered), so unsubscribing order updates removes all order
+> subscriptions on that socket.
 
 ## Overview
 

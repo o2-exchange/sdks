@@ -77,6 +77,8 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `stream_balances(identities)` | `&[Identity]` | `Result<TypedStream<BalanceUpdate>>` | Stream balances |
 | `stream_nonce(identities)` | `&[Identity]` | `Result<TypedStream<NonceUpdate>>` | Stream nonce |
 
+Note: `unsubscribe_orders` is currently connection-global in the backend API (not identity-scoped), so it removes all order subscriptions for that socket.
+
 ### Low-Level: crypto
 
 | Function | Params | Returns | Description |
