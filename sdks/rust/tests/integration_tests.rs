@@ -243,7 +243,8 @@ async fn create_order_with_whitelist_retry(
     client: &mut O2Client,
     session: &mut Session,
     trade_account_id: &TradeAccountId,
-    market_pair: &MarketSymbol,
+    _market_pair: &MarketSymbol,
+    market: &o2_sdk::Market,
     side: Side,
     price: UnsignedDecimal,
     quantity: UnsignedDecimal,
@@ -252,14 +253,16 @@ async fn create_order_with_whitelist_retry(
     collect_orders: bool,
     max_retries: usize,
 ) -> Result<o2_sdk::models::SessionActionsResponse, o2_sdk::O2Error> {
+    let typed_price = market.price_from_decimal(price)?;
+    let typed_quantity = market.quantity_from_decimal(quantity)?;
     for attempt in 0..max_retries {
         match client
             .create_order(
                 session,
-                market_pair,
+                market,
                 side,
-                price,
-                quantity,
+                typed_price.clone(),
+                typed_quantity.clone(),
                 order_type.clone(),
                 settle_first,
                 collect_orders,
@@ -467,7 +470,11 @@ async fn test_full_session_creation() {
     let market_pair = markets[0].symbol_pair();
 
     let session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -510,7 +517,14 @@ fn fill_quantity(market: &o2_sdk::Market, price: &UnsignedDecimal) -> UnsignedDe
 }
 
 async fn cleanup_open_orders(client: &mut O2Client, wallet: &Wallet, market_pair: &MarketSymbol) {
-    if let Ok(mut session) = client.create_session(wallet, &[market_pair], 30).await {
+    if let Ok(mut session) = client
+        .create_session(
+            wallet,
+            &[market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await
+    {
         let _ = client.cancel_all_orders(&mut session, market_pair).await;
         let _ = client.settle_balance(&mut session, market_pair).await;
     }
@@ -542,7 +556,11 @@ async fn test_order_placement_and_cancellation() {
     .await;
 
     let mut session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -551,6 +569,7 @@ async fn test_order_placement_and_cancellation() {
         &mut session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         buy_price,
         quantity,
@@ -620,7 +639,11 @@ async fn test_cross_account_fill() {
     let quantity = fill_quantity(market, &fill_price);
 
     let mut maker_session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -629,6 +652,7 @@ async fn test_cross_account_fill() {
         &mut maker_session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         fill_price,
         quantity,
@@ -658,7 +682,11 @@ async fn test_cross_account_fill() {
     );
 
     let mut taker_session = client
-        .create_session(&shared.taker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.taker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -667,6 +695,7 @@ async fn test_cross_account_fill() {
         &mut taker_session,
         &shared.taker_trade_account_id,
         &market_pair,
+        market,
         Side::Sell,
         fill_price,
         quantity,
@@ -791,7 +820,11 @@ async fn test_websocket_trades() {
     let quantity = fill_quantity(market, &fill_price);
 
     let mut maker_session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -800,6 +833,7 @@ async fn test_websocket_trades() {
         &mut maker_session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         fill_price,
         quantity,
@@ -824,7 +858,11 @@ async fn test_websocket_trades() {
         .expect("maker order id");
 
     let mut taker_session = client
-        .create_session(&shared.taker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.taker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -833,6 +871,7 @@ async fn test_websocket_trades() {
         &mut taker_session,
         &shared.taker_trade_account_id,
         &market_pair,
+        market,
         Side::Sell,
         fill_price,
         quantity,
@@ -907,7 +946,11 @@ async fn test_websocket_orders() {
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let mut session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -920,6 +963,7 @@ async fn test_websocket_orders() {
         &mut session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         buy_price,
         quantity,
@@ -978,7 +1022,11 @@ async fn test_websocket_balances() {
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let mut session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -991,6 +1039,7 @@ async fn test_websocket_balances() {
         &mut session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         buy_price,
         quantity,
@@ -1049,7 +1098,11 @@ async fn test_websocket_nonce() {
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let mut session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -1062,6 +1115,7 @@ async fn test_websocket_nonce() {
         &mut session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         buy_price,
         quantity,
@@ -1115,14 +1169,24 @@ async fn test_websocket_concurrent_subscriptions() {
     cleanup_open_orders(&mut client, &shared.maker_wallet, &market_pair).await;
 
     let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
-    let mut orders_stream = client.stream_orders(&[identity.clone()]).await.unwrap();
-    let mut balances_stream = client.stream_balances(&[identity.clone()]).await.unwrap();
+    let mut orders_stream = client
+        .stream_orders(std::slice::from_ref(&identity))
+        .await
+        .unwrap();
+    let mut balances_stream = client
+        .stream_balances(std::slice::from_ref(&identity))
+        .await
+        .unwrap();
     let mut nonce_stream = client.stream_nonce(&[identity]).await.unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let mut session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -1135,6 +1199,7 @@ async fn test_websocket_concurrent_subscriptions() {
         &mut session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         buy_price,
         quantity,
@@ -1216,7 +1281,10 @@ async fn test_websocket_mixed_with_fill() {
 
     let mut trades_stream = client.stream_trades(&market.market_id).await.unwrap();
     let identity = Identity::ContractId(shared.maker_trade_account_id.as_str().to_string());
-    let mut orders_stream = client.stream_orders(&[identity.clone()]).await.unwrap();
+    let mut orders_stream = client
+        .stream_orders(std::slice::from_ref(&identity))
+        .await
+        .unwrap();
     let mut balances_stream = client.stream_balances(&[identity]).await.unwrap();
 
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1240,7 +1308,11 @@ async fn test_websocket_mixed_with_fill() {
     let quantity = fill_quantity(market, &fill_price);
 
     let mut maker_session = client
-        .create_session(&shared.maker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.maker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -1249,6 +1321,7 @@ async fn test_websocket_mixed_with_fill() {
         &mut maker_session,
         &shared.maker_trade_account_id,
         &market_pair,
+        market,
         Side::Buy,
         fill_price,
         quantity,
@@ -1272,7 +1345,11 @@ async fn test_websocket_mixed_with_fill() {
         .map(|o| o.order_id.clone());
 
     let mut taker_session = client
-        .create_session(&shared.taker_wallet, &[&market_pair], 30)
+        .create_session(
+            &shared.taker_wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await
         .unwrap();
 
@@ -1281,6 +1358,7 @@ async fn test_websocket_mixed_with_fill() {
         &mut taker_session,
         &shared.taker_trade_account_id,
         &market_pair,
+        market,
         Side::Sell,
         fill_price,
         quantity,

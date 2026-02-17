@@ -83,7 +83,7 @@ let signer = KmsSigner {
 };
 
 let account = client.setup_account(&signer).await?;
-let session = client.create_session(&signer, &["FUEL/USDC"], 30).await?;
+let session = client.create_session(&signer, &["FUEL/USDC"], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
 ```
 
 > **Important:** Session **actions** (orders, cancels, settlements) are

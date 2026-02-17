@@ -17,9 +17,24 @@ use o2_sdk::{O2Client, Network, Side, OrderType};
 async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet()?;
-    let account = client.setup_account(&wallet).await?;
-    let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
-    let order = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?, OrderType::Spot, true, true).await?;
+    let _account = client.setup_account(&wallet).await?;
+    let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
+    let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
+    let market = client.get_market(&market_symbol).await?;
+    let price = market.price("0.05")?;
+    let quantity = market.quantity("100")?;
+    let _order = client
+        .create_order(
+            &mut session,
+            &market,
+            Side::Buy,
+            price,
+            quantity,
+            OrderType::Spot,
+            true,
+            true,
+        )
+        .await?;
     Ok(())
 }
 ```
@@ -37,28 +52,30 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `load_wallet(hex)` | `&str` | `Result<Wallet>` | Load from private key |
 | `load_evm_wallet(hex)` | `&str` | `Result<EvmWallet>` | Load EVM from private key |
 | `setup_account(wallet)` | `&Wallet` | `Result<AccountResponse>` | Idempotent account setup |
-| `create_session(owner, markets, days)` | `&Wallet, &[&str], u64` | `Result<Session>` | Create trading session |
-| `create_evm_session(owner, markets, days)` | `&EvmWallet, &[&str], u64` | `Result<Session>` | EVM owner session |
-| `create_order(session, market, side, price, qty, type, settle, collect)` | `&mut Session, ...` | `Result<SessionActionsResponse>` | Place order (auto-scales) |
-| `cancel_order(session, order_id, market)` | `&mut Session, &str, &str` | `Result<SessionActionsResponse>` | Cancel order |
-| `cancel_all_orders(session, market)` | `&mut Session, &str` | `Result<Vec<...>>` | Cancel all open orders |
-| `settle_balance(session, market)` | `&mut Session, &str` | `Result<SessionActionsResponse>` | Settle balance |
+| `create_session(owner, markets, ttl)` | `&impl SignableWallet, &[&MarketSymbol], Duration` | `Result<Session>` | Create trading session |
+| `create_session_until(owner, markets, expiry_unix_secs)` | `&impl SignableWallet, &[&MarketSymbol], u64` | `Result<Session>` | Create session with absolute expiry |
+| `set_metadata_policy(policy)` | `MetadataPolicy` | `()` | Configure market metadata refresh strategy |
+| `create_order(session, market, side, price, qty, type, settle, collect)` | `&mut Session, &Market, Side, Price, Quantity, ...` | `Result<SessionActionsResponse>` | Place order (first-class typed API) |
+| `create_order_untyped(session, market_name, side, price, qty, type, settle, collect)` | `&mut Session, &MarketSymbol, Side, UnsignedDecimal, UnsignedDecimal, ...` | `Result<SessionActionsResponse>` | Lower-level decimal escape hatch |
+| `cancel_order(session, order_id, market)` | `&mut Session, &OrderId, &MarketSymbol` | `Result<SessionActionsResponse>` | Cancel order |
+| `cancel_all_orders(session, market)` | `&mut Session, &MarketSymbol` | `Result<Vec<...>>` | Cancel all open orders |
+| `settle_balance(session, market)` | `&mut Session, &MarketSymbol` | `Result<SessionActionsResponse>` | Settle balance |
 | `batch_actions(session, actions, calls, collect)` | advanced | `Result<SessionActionsResponse>` | Raw batch submit |
 | `get_markets()` | - | `Result<Vec<Market>>` | List markets |
-| `get_market(name)` | `&str` | `Result<Market>` | Get by pair or ID |
-| `get_depth(market, precision)` | `&str, u64` | `Result<DepthSnapshot>` | Order book depth |
-| `get_trades(market, count)` | `&str, u32` | `Result<TradesResponse>` | Recent trades |
-| `get_bars(market, res, from, to)` | `&str, &str, u64, u64` | `Result<Vec<Bar>>` | OHLCV data |
-| `get_ticker(market)` | `&str` | `Result<MarketTicker>` | Ticker data |
-| `get_balances(trade_account_id)` | `&str` | `Result<HashMap<String, BalanceResponse>>` | All balances |
-| `get_orders(account, market, is_open, count)` | `&str, &str, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
+| `get_market(name)` | `&MarketSymbol` | `Result<Market>` | Get by symbol pair |
+| `get_depth(market, precision)` | `&MarketSymbol, u64` | `Result<DepthSnapshot>` | Order book depth |
+| `get_trades(market, count)` | `&MarketSymbol, u32` | `Result<TradesResponse>` | Recent trades |
+| `get_bars(market, res, from, to)` | `&MarketSymbol, &str, u64, u64` | `Result<Vec<Bar>>` | OHLCV data |
+| `get_ticker(market)` | `&MarketSymbol` | `Result<MarketTicker>` | Ticker data |
+| `get_balances(trade_account_id)` | `&TradeAccountId` | `Result<HashMap<String, BalanceResponse>>` | All balances |
+| `get_orders(account, market, is_open, count)` | `&TradeAccountId, &MarketSymbol, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
 | `get_nonce(trade_account_id)` | `&str` | `Result<u64>` | Current nonce |
 | `refresh_nonce(session)` | `&mut Session` | `Result<u64>` | Re-sync nonce from API |
-| `stream_depth(market_id, precision)` | `&str, &str` | `Result<(O2WebSocket, TypedStream<DepthUpdate>)>` | Stream depth |
-| `stream_orders(identities)` | `&[Identity]` | `Result<(O2WebSocket, TypedStream<OrderUpdate>)>` | Stream orders |
-| `stream_trades(market_id)` | `&str` | `Result<(O2WebSocket, TypedStream<TradeUpdate>)>` | Stream trades |
-| `stream_balances(identities)` | `&[Identity]` | `Result<(O2WebSocket, TypedStream<BalanceUpdate>)>` | Stream balances |
-| `stream_nonce(identities)` | `&[Identity]` | `Result<(O2WebSocket, TypedStream<NonceUpdate>)>` | Stream nonce |
+| `stream_depth(market_id, precision)` | `&str, &str` | `Result<TypedStream<DepthUpdate>>` | Stream depth |
+| `stream_orders(identities)` | `&[Identity]` | `Result<TypedStream<OrderUpdate>>` | Stream orders |
+| `stream_trades(market_id)` | `&str` | `Result<TypedStream<TradeUpdate>>` | Stream trades |
+| `stream_balances(identities)` | `&[Identity]` | `Result<TypedStream<BalanceUpdate>>` | Stream balances |
+| `stream_nonce(identities)` | `&[Identity]` | `Result<TypedStream<NonceUpdate>>` | Stream nonce |
 
 ### Low-Level: crypto
 
@@ -95,8 +112,19 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 let mut client = O2Client::new(Network::Testnet);
 let wallet = client.generate_wallet()?;
 let account = client.setup_account(&wallet).await?;
-let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
-let resp = client.create_order(&mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?, OrderType::Spot, true, true).await?;
+let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
+let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
+let market = client.get_market(&market_symbol).await?;
+let resp = client.create_order(
+    &mut session,
+    &market,
+    Side::Buy,
+    market.price("0.05")?,
+    market.quantity("100")?,
+    OrderType::Spot,
+    true,
+    true,
+).await?;
 ```
 
 ### 2. Market Maker Loop
@@ -115,7 +143,7 @@ loop {
 ### 3. Real-Time Depth Monitoring
 
 ```rust
-let (ws, mut stream) = client.stream_depth(&market.market_id, "10").await?;
+let mut stream = client.stream_depth(&market.market_id, "10").await?;
 while let Some(update) = stream.next().await {
     // update.view = initial snapshot, update.changes = incremental
 }
@@ -134,7 +162,7 @@ client.settle_balance(&mut session, "fFUEL/fUSDC").await?;
 ```rust
 let balances = client.get_balances(&trade_account_id).await?;
 for (symbol, bal) in &balances {
-    println!("{}: available={}", symbol, bal.trading_account_balance.as_deref().unwrap_or("0"));
+    println!("{}: available={}", symbol, bal.trading_account_balance);
 }
 ```
 
@@ -153,7 +181,7 @@ for (symbol, bal) in &balances {
 | OnChainRevert | No code, has `reason` | Check `reason` field, re-fetch nonce |
 
 ```rust
-match client.create_order(&mut session, ...).await {
+match client.create_order(&mut session, &market, ...).await {
     Ok(resp) if resp.is_success() => { /* tx_id present */ }
     Ok(resp) => { /* check resp.message, resp.reason */ }
     Err(O2Error::RateLimitExceeded(_)) => { /* backoff */ }

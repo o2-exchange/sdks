@@ -205,8 +205,8 @@ async fn test_ws_orders_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive order update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_orders".to_string()));
-    assert!(update.orders.is_some(), "Should have orders field");
+    assert_eq!(update.action, "subscribe_orders");
+    assert!(!update.orders.is_empty(), "Should have orders");
 
     let _ = ws.disconnect().await;
 }
@@ -237,8 +237,8 @@ async fn test_ws_trades_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive trade update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_trades".to_string()));
-    assert_eq!(update.market_id, Some("market1".to_string()));
+    assert_eq!(update.action, "subscribe_trades");
+    assert_eq!(update.market_id, MarketId::from("market1"));
 
     let _ = ws.disconnect().await;
 }
@@ -270,8 +270,8 @@ async fn test_ws_balances_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive balance update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_balances".to_string()));
-    assert!(update.balance.is_some(), "Should have balance field");
+    assert_eq!(update.action, "subscribe_balances");
+    assert!(!update.balance.is_empty(), "Should have balance entries");
 
     let _ = ws.disconnect().await;
 }
@@ -298,8 +298,8 @@ async fn test_ws_nonce_stream_receives_messages() {
 
     assert!(update.is_some(), "Should receive nonce update");
     let update = update.unwrap().unwrap();
-    assert_eq!(update.action, Some("subscribe_nonce".to_string()));
-    assert_eq!(update.nonce, Some("42".to_string()));
+    assert_eq!(update.action, "subscribe_nonce");
+    assert_eq!(update.nonce, 42);
 
     let _ = ws.disconnect().await;
 }

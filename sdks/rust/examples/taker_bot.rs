@@ -27,9 +27,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let markets = client.get_markets().await?;
     let market_pair = markets[0].symbol_pair();
     let market = &markets[0];
+    let max_quantity = market.quantity_from_decimal(max_quantity)?;
     println!("Monitoring: {market_pair}");
 
-    let mut session = client.create_session(&wallet, &[&market_pair], 30).await?;
+    let mut session = client
+        .create_session(
+            &wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
     println!("Session created");
 
     // Connect to WebSocket for real-time depth
@@ -59,14 +66,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // Use a price slightly above the ask (0.5% slippage)
                     let slippage_factor: UnsignedDecimal = "1.005".parse()?;
                     let taker_price = ask_human * slippage_factor;
+                    let price = match market.price_from_decimal(taker_price) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!("Skipping order due to invalid taker price: {e}");
+                            continue;
+                        }
+                    };
 
                     let result = client
                         .create_order(
                             &mut session,
-                            &market_pair,
+                            market,
                             Side::Buy,
-                            taker_price,
-                            max_quantity,
+                            price,
+                            max_quantity.clone(),
                             OrderType::Spot,
                             true,
                             true,

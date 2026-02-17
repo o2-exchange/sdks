@@ -28,23 +28,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  {} ({})", m.symbol_pair(), m.market_id);
     }
 
-    let market_pair = markets[0].symbol_pair();
+    let market = markets[0].clone();
+    let market_pair = market.symbol_pair();
     println!("\nTrading on: {market_pair}");
 
     // 4. Create a trading session
     println!("Creating session...");
-    let mut session = client.create_session(&wallet, &[&market_pair], 30).await?;
+    let mut session = client
+        .create_session(
+            &wallet,
+            &[&market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
     println!("Session created, expiry: {}", session.expiry);
 
     // 5. Place a spot buy order (low price, unlikely to fill)
     println!("Placing buy order...");
+    let price = market.price("0.001")?;
+    let quantity = market.quantity("100")?;
     let result = client
         .create_order(
             &mut session,
-            &market_pair,
+            &market,
             Side::Buy,
-            "0.001".parse()?, // price (human-readable)
-            "100".parse()?,   // quantity (human-readable)
+            price,
+            quantity,
             OrderType::Spot,
             true, // settle first
             true, // collect orders

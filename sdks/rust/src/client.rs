@@ -3,7 +3,7 @@
 /// This is the primary entry point for SDK users. It handles wallet management,
 /// account lifecycle, session management, order placement, and WebSocket streaming.
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::debug;
 
@@ -22,11 +22,28 @@ use crate::errors::O2Error;
 use crate::models::*;
 use crate::websocket::TypedStream;
 
+/// Strategy for refreshing market metadata.
+#[derive(Debug, Clone, Copy)]
+pub enum MetadataPolicy {
+    /// Reuse cached metadata and refresh only when cache age exceeds `ttl`.
+    OptimisticTtl(Duration),
+    /// Always refresh metadata before reads that depend on market config.
+    StrictFresh,
+}
+
+impl Default for MetadataPolicy {
+    fn default() -> Self {
+        Self::OptimisticTtl(Duration::from_secs(45))
+    }
+}
+
 /// The high-level O2 Exchange client.
 pub struct O2Client {
     pub api: O2Api,
     pub config: NetworkConfig,
     markets_cache: Option<MarketsResponse>,
+    markets_cache_at: Option<Instant>,
+    metadata_policy: MetadataPolicy,
     ws: tokio::sync::Mutex<Option<crate::websocket::O2WebSocket>>,
 }
 
@@ -207,6 +224,8 @@ impl O2Client {
             api: O2Api::new(config.clone()),
             config,
             markets_cache: None,
+            markets_cache_at: None,
+            metadata_policy: MetadataPolicy::default(),
             ws: tokio::sync::Mutex::new(None),
         }
     }
@@ -217,8 +236,15 @@ impl O2Client {
             api: O2Api::new(config.clone()),
             config,
             markets_cache: None,
+            markets_cache_at: None,
+            metadata_policy: MetadataPolicy::default(),
             ws: tokio::sync::Mutex::new(None),
         }
+    }
+
+    /// Configure how market metadata should be refreshed.
+    pub fn set_metadata_policy(&mut self, policy: MetadataPolicy) {
+        self.metadata_policy = policy;
     }
 
     // -----------------------------------------------------------------------
@@ -260,15 +286,31 @@ impl O2Client {
         debug!("client.fetch_markets");
         let resp = self.api.get_markets().await?;
         self.markets_cache = Some(resp);
+        self.markets_cache_at = Some(Instant::now());
         Ok(self.markets_cache.as_ref().unwrap())
     }
 
     /// Get cached markets, fetching if needed.
     async fn ensure_markets(&mut self) -> Result<&MarketsResponse, O2Error> {
-        if self.markets_cache.is_none() {
+        if self.should_refresh_markets() {
+            debug!("client.ensure_markets refreshing cache");
             self.fetch_markets().await?;
         }
         Ok(self.markets_cache.as_ref().unwrap())
+    }
+
+    fn should_refresh_markets(&self) -> bool {
+        if self.markets_cache.is_none() {
+            return true;
+        }
+
+        match self.metadata_policy {
+            MetadataPolicy::StrictFresh => true,
+            MetadataPolicy::OptimisticTtl(ttl) => match self.markets_cache_at {
+                None => true,
+                Some(fetched_at) => fetched_at.elapsed() >= ttl,
+            },
+        }
     }
 
     /// Get all markets.
@@ -364,18 +406,46 @@ impl O2Client {
     // Session Management
     // -----------------------------------------------------------------------
 
-    /// Create a trading session for an owner wallet.
+    /// Create a trading session with a relative TTL.
+    ///
     /// Works with both [`Wallet`] (Fuel-native) and [`EvmWallet`].
     pub async fn create_session<W: SignableWallet>(
         &mut self,
         owner: &W,
         market_names: &[&MarketSymbol],
-        expiry_days: u64,
+        ttl: Duration,
+    ) -> Result<Session, O2Error> {
+        let ttl_secs = ttl.as_secs();
+        if ttl_secs == 0 {
+            return Err(O2Error::InvalidSession(
+                "Session TTL must be greater than zero seconds".into(),
+            ));
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let expiry = now
+            .checked_add(ttl_secs)
+            .ok_or_else(|| O2Error::InvalidSession("Session TTL overflow".into()))?;
+
+        self.create_session_until(owner, market_names, expiry).await
+    }
+
+    /// Create a trading session that expires at an absolute UNIX timestamp.
+    ///
+    /// Works with both [`Wallet`] (Fuel-native) and [`EvmWallet`].
+    pub async fn create_session_until<W: SignableWallet>(
+        &mut self,
+        owner: &W,
+        market_names: &[&MarketSymbol],
+        expiry_unix_secs: u64,
     ) -> Result<Session, O2Error> {
         debug!(
-            "client.create_session markets={} expiry_days={}",
+            "client.create_session_until markets={} expiry_unix_secs={}",
             market_names.len(),
-            expiry_days
+            expiry_unix_secs
         );
         let owner_hex = to_hex_string(owner.b256_address());
 
@@ -405,20 +475,13 @@ impl O2Client {
         // Generate session keypair
         let session_wallet = generate_keypair()?;
 
-        // Calculate expiry
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let expiry = now + (expiry_days * 24 * 3600);
-
         // Build signing bytes
         let signing_bytes = build_session_signing_bytes(
             nonce,
             chain_id,
             &session_wallet.b256_address,
             &contract_ids_bytes,
-            expiry,
+            expiry_unix_secs,
         );
 
         // Sign with owner wallet (dispatches to Fuel or EVM personal_sign)
@@ -432,7 +495,7 @@ impl O2Client {
             signature: Signature::Secp256k1(sig_hex),
             contract_ids: contract_ids_hex.clone(),
             nonce: nonce.to_string(),
-            expiry: expiry.to_string(),
+            expiry: expiry_unix_secs.to_string(),
         };
 
         let _resp = self.api.create_session(&owner_hex, &request).await?;
@@ -443,7 +506,7 @@ impl O2Client {
             session_address: session_wallet.b256_address,
             trade_account_id,
             contract_ids: contract_ids_hex,
-            expiry,
+            expiry: expiry_unix_secs,
             nonce: nonce + 1,
         })
     }
@@ -466,12 +529,15 @@ impl O2Client {
         Ok(())
     }
 
-    /// Place a new order. Handles encoding, signing, and nonce management.
+    /// Place a new order using raw decimal values.
+    ///
+    /// This bypasses market-bound wrapper construction and is intended as
+    /// a lower-level escape hatch.
     ///
     /// If `settle_first` is true, a SettleBalance action is prepended.
     /// Uses typed `Side` and `OrderType` enums for compile-time safety.
     #[allow(clippy::too_many_arguments)]
-    pub async fn create_order(
+    pub async fn create_order_untyped(
         &mut self,
         session: &mut Session,
         market_name: &MarketSymbol,
@@ -483,7 +549,7 @@ impl O2Client {
         collect_orders: bool,
     ) -> Result<SessionActionsResponse, O2Error> {
         debug!(
-            "client.create_order market={} settle_first={} collect_orders={}",
+            "client.create_order_untyped market={} settle_first={} collect_orders={}",
             market_name, settle_first, collect_orders
         );
         let mut actions = Vec::new();
@@ -498,6 +564,38 @@ impl O2Client {
         });
         self.batch_actions(session, market_name, actions, collect_orders)
             .await
+    }
+
+    /// Place a new order using typed market-bound values.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_order(
+        &mut self,
+        session: &mut Session,
+        market: &Market,
+        side: Side,
+        price: Price,
+        quantity: Quantity,
+        order_type: OrderType,
+        settle_first: bool,
+        collect_orders: bool,
+    ) -> Result<SessionActionsResponse, O2Error> {
+        debug!(
+            "client.create_order market_id={} settle_first={} collect_orders={}",
+            market.market_id, settle_first, collect_orders
+        );
+        market.validate_price_binding(&price)?;
+        market.validate_quantity_binding(&quantity)?;
+        self.create_order_untyped(
+            session,
+            &market.symbol_pair(),
+            side,
+            price.value(),
+            quantity.value(),
+            order_type,
+            settle_first,
+            collect_orders,
+        )
+        .await
     }
 
     /// Cancel an order by order_id.
@@ -999,7 +1097,25 @@ impl O2Client {
 
 #[cfg(test)]
 mod tests {
-    use super::O2Client;
+    use std::time::{Duration, Instant};
+
+    use crate::{config::Network, models::MarketsResponse};
+
+    use super::{MetadataPolicy, O2Client};
+
+    fn dummy_markets_response() -> MarketsResponse {
+        MarketsResponse {
+            books_registry_id: "0x1".into(),
+            books_whitelist_id: None,
+            books_blacklist_id: None,
+            accounts_registry_id: "0x2".into(),
+            trade_account_oracle_id: "0x3".into(),
+            fast_bridge_asset_registry_contract_id: None,
+            chain_id: "0x0".to_string(),
+            base_asset_id: "0x4".into(),
+            markets: Vec::new(),
+        }
+    }
 
     #[test]
     fn parse_nonce_decimal() {
@@ -1038,5 +1154,38 @@ mod tests {
         let err = O2Client::parse_nonce_value("not-a-nonce", "test")
             .expect_err("invalid nonce should return parse error");
         assert!(format!("{err}").contains("Parse error"));
+    }
+
+    #[test]
+    fn metadata_policy_refreshes_when_cache_empty() {
+        let client = O2Client::new(Network::Testnet);
+        assert!(client.should_refresh_markets());
+    }
+
+    #[test]
+    fn metadata_policy_optimistic_ttl_respects_recent_cache() {
+        let mut client = O2Client::new(Network::Testnet);
+        client.metadata_policy = MetadataPolicy::OptimisticTtl(Duration::from_secs(60));
+        client.markets_cache = Some(dummy_markets_response());
+        client.markets_cache_at = Some(Instant::now());
+        assert!(!client.should_refresh_markets());
+    }
+
+    #[test]
+    fn metadata_policy_optimistic_ttl_refreshes_expired_cache() {
+        let mut client = O2Client::new(Network::Testnet);
+        client.metadata_policy = MetadataPolicy::OptimisticTtl(Duration::from_millis(10));
+        client.markets_cache = Some(dummy_markets_response());
+        client.markets_cache_at = Some(Instant::now() - Duration::from_secs(1));
+        assert!(client.should_refresh_markets());
+    }
+
+    #[test]
+    fn metadata_policy_strict_fresh_always_refreshes() {
+        let mut client = O2Client::new(Network::Testnet);
+        client.metadata_policy = MetadataPolicy::StrictFresh;
+        client.markets_cache = Some(dummy_markets_response());
+        client.markets_cache_at = Some(Instant::now());
+        assert!(client.should_refresh_markets());
     }
 }

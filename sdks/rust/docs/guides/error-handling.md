@@ -111,7 +111,7 @@ match client.create_order(
     }
     Err(O2Error::SessionExpired(_)) => {
         // Create a new session
-        session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
+        session = client.create_session(&wallet, &["fFUEL/fUSDC"], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
     }
     Err(O2Error::RateLimitExceeded(_)) => {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -234,7 +234,7 @@ async fn trading_loop() -> Result<(), O2Error> {
     let mut client = O2Client::new(Network::Mainnet);
     let wallet = client.load_wallet(&std::env::var("O2_PRIVATE_KEY").unwrap())?;
     let _account = client.setup_account(&wallet).await?;
-    let mut session = client.create_session(&wallet, &["FUEL/USDC"], 30).await?;
+    let mut session = client.create_session(&wallet, &["FUEL/USDC"], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
 
     loop {
         match client.create_order(
@@ -255,7 +255,7 @@ async fn trading_loop() -> Result<(), O2Error> {
                 continue;
             }
             Err(O2Error::SessionExpired(_)) => {
-                session = client.create_session(&wallet, &["FUEL/USDC"], 30).await?;
+                session = client.create_session(&wallet, &["FUEL/USDC"], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
                 continue;
             }
             Err(O2Error::RateLimitExceeded(_)) => {

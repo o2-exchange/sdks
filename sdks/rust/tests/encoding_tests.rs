@@ -501,7 +501,7 @@ fn test_order_type_limit_to_encoding() {
     let market = test_market();
     let price: UnsignedDecimal = "0.05".parse().unwrap();
     let (enc, json) = o2_sdk::OrderType::Limit {
-        price: price.clone(),
+        price,
         timestamp: 1700000000,
     }
     .to_encoding(&market)
@@ -526,8 +526,8 @@ fn test_order_type_bounded_market_to_encoding() {
     let max_p: UnsignedDecimal = "1.0".parse().unwrap();
     let min_p: UnsignedDecimal = "0.5".parse().unwrap();
     let (enc, json) = o2_sdk::OrderType::BoundedMarket {
-        max_price: max_p.clone(),
-        min_price: min_p.clone(),
+        max_price: max_p,
+        min_price: min_p,
     }
     .to_encoding(&market)
     .unwrap();

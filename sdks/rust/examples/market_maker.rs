@@ -41,7 +41,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create session
     let mut session = client
-        .create_session(&wallet, &[&config.market_pair], 30)
+        .create_session(
+            &wallet,
+            &[&config.market_pair],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
         .await?;
     println!("Session created");
 

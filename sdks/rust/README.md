@@ -31,17 +31,21 @@ tokio = { version = "1", features = ["full"] }
 ## Quick Start
 
 ```rust
-use o2_sdk::{O2Client, Network, Side, OrderType};
+use o2_sdk::{MetadataPolicy, O2Client, Network, OrderType, Side};
 
 #[tokio::main]
 async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
+    client.set_metadata_policy(MetadataPolicy::OptimisticTtl(std::time::Duration::from_secs(45)));
     let wallet = client.generate_wallet()?;
-    let account = client.setup_account(&wallet).await?;
-    let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
+    let _account = client.setup_account(&wallet).await?;
+    let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
+    let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
+    let market = client.get_market(&market_symbol).await?;
+    let price = market.price("0.05")?;
+    let quantity = market.quantity("100")?;
     let order = client.create_order(
-        &mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?,
-        OrderType::Spot, true, true,
+        &mut session, &market, Side::Buy, price, quantity, OrderType::Spot, true, true,
     ).await?;
     println!("tx: {}", order.tx_id.unwrap_or_default());
     Ok(())
@@ -65,7 +69,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `generate_wallet()` / `load_wallet(hex)` | Create or load a Fuel wallet |
 | `generate_evm_wallet()` / `load_evm_wallet(hex)` | Create or load an EVM wallet |
 | `setup_account(&wallet)` | Idempotent account setup |
-| `create_session(&wallet, markets, days)` | Create a trading session |
+| `create_session(&wallet, markets, ttl)` | Create a trading session |
 | `create_order(&mut session, market, side, price, qty, ...)` | Place an order |
 | `cancel_order(&mut session, order_id, market)` | Cancel a specific order |
 | `cancel_all_orders(&mut session, market)` | Cancel all open orders |

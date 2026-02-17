@@ -41,6 +41,8 @@
 /// 5. Submit typed actions with [`O2Client::create_order`] / [`O2Client::batch_actions`].
 /// 6. Stream updates with [`O2Client::stream_depth`] / [`O2Client::stream_orders`] / [`O2Client::stream_nonce`].
 ///
+/// For advanced/legacy flows, [`O2Client::create_order_untyped`] is available as a lower-level escape hatch.
+///
 /// # Common Tasks
 ///
 /// ## Wallet + Account Setup
@@ -71,7 +73,7 @@
 ///     client.setup_account(&owner).await?;
 ///
 ///     let market = MarketSymbol::from("FUEL/USDC".to_string());
-///     let mut session = client.create_session(&owner, &[&market], 7).await?;
+///     let mut session = client.create_session(&owner, &[&market], std::time::Duration::from_secs(7 * 24 * 3600)).await?;
 ///     println!("session nonce: {}", session.nonce);
 ///     Ok(())
 /// }
@@ -80,7 +82,7 @@
 /// ## Place and Cancel Orders
 ///
 /// ```rust,no_run
-/// use o2_sdk::{MarketSymbol, Network, O2Client, OrderType, Side, UnsignedDecimal};
+/// use o2_sdk::{MarketSymbol, Network, O2Client, OrderType, Side};
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), o2_sdk::O2Error> {
@@ -89,15 +91,18 @@
 ///     client.setup_account(&owner).await?;
 ///
 ///     let market = MarketSymbol::from("FUEL/USDC".to_string());
-///     let mut session = client.create_session(&owner, &[&market], 7).await?;
+///     let mut session = client.create_session(&owner, &[&market], std::time::Duration::from_secs(7 * 24 * 3600)).await?;
+///     let market_info = client.get_market(&market).await?;
+///     let price = market_info.price("100")?;
+///     let quantity = market_info.quantity("2")?;
 ///
 ///     let response = client
 ///         .create_order(
 ///             &mut session,
-///             &market,
+///             &market_info,
 ///             Side::Buy,
-///             UnsignedDecimal::from(100u64),
-///             UnsignedDecimal::from(2u64),
+///             price,
+///             quantity,
 ///             OrderType::Market,
 ///             false,
 ///             true,
@@ -145,6 +150,9 @@
 /// for API and client calls. Configure any compatible logger in your binary, then set
 /// `RUST_LOG=debug` to inspect request flow and setup behavior.
 ///
+/// Market metadata refresh can be configured via [`MetadataPolicy`] and
+/// [`O2Client::set_metadata_policy`].
+///
 /// # Errors
 ///
 /// All fallible operations return [`O2Error`]. Match specific variants for robust handling:
@@ -177,7 +185,7 @@ pub mod models;
 pub mod websocket;
 
 // Re-export primary types for convenience.
-pub use client::O2Client;
+pub use client::{MetadataPolicy, O2Client};
 pub use config::{Network, NetworkConfig};
 pub use crypto::{EvmWallet, SignableWallet, Wallet};
 pub use decimal::UnsignedDecimal;

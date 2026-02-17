@@ -5,6 +5,7 @@
 use rust_decimal::Decimal;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr;
 
 use crate::decimal::UnsignedDecimal;
 use crate::errors::O2Error;
@@ -102,7 +103,7 @@ fn normalize_hex_prefixed(s: String) -> String {
 }
 
 /// A hex transaction ID.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Default)]
 #[serde(transparent)]
 pub struct TxId(String);
 
@@ -146,14 +147,8 @@ impl std::ops::Deref for TxId {
     }
 }
 
-impl Default for TxId {
-    fn default() -> Self {
-        Self(String::new())
-    }
-}
-
 impl<'de> Deserialize<'de> for TxId {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -381,6 +376,60 @@ pub enum Action {
     },
 }
 
+/// A market-bound human-readable order price.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Price {
+    value: UnsignedDecimal,
+    market_id: MarketId,
+    quote_decimals: u32,
+    quote_max_precision: u32,
+}
+
+impl Price {
+    /// Human-readable decimal value.
+    pub fn value(&self) -> UnsignedDecimal {
+        self.value
+    }
+
+    /// Market this price was validated against.
+    pub fn market_id(&self) -> &MarketId {
+        &self.market_id
+    }
+}
+
+impl std::fmt::Display for Price {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+/// A market-bound human-readable order quantity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quantity {
+    value: UnsignedDecimal,
+    market_id: MarketId,
+    base_decimals: u32,
+    base_max_precision: u32,
+}
+
+impl Quantity {
+    /// Human-readable decimal value.
+    pub fn value(&self) -> UnsignedDecimal {
+        self.value
+    }
+
+    /// Market this quantity was validated against.
+    pub fn market_id(&self) -> &MarketId {
+        &self.market_id
+    }
+}
+
+impl std::fmt::Display for Quantity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
 impl OrderType {
     /// Convert to the low-level `OrderTypeEncoding` and JSON representation
     /// used by the encoding and API layers.
@@ -486,6 +535,93 @@ pub struct Market {
 }
 
 impl Market {
+    fn parsed_unsigned(value: &str, field: &str) -> Result<UnsignedDecimal, O2Error> {
+        UnsignedDecimal::from_str(value)
+            .map_err(|e| O2Error::InvalidOrderParams(format!("Invalid {field}: {e}")))
+    }
+
+    fn decimal_scale(value: &UnsignedDecimal) -> u32 {
+        value.inner().normalize().scale()
+    }
+
+    /// Build a typed, market-bound price from a string.
+    pub fn price(&self, value: &str) -> Result<Price, O2Error> {
+        let parsed = Self::parsed_unsigned(value, "price")?;
+        self.price_from_decimal(parsed)
+    }
+
+    /// Build a typed, market-bound price from an `UnsignedDecimal`.
+    pub fn price_from_decimal(&self, value: UnsignedDecimal) -> Result<Price, O2Error> {
+        let scale = Self::decimal_scale(&value);
+        if scale > self.quote.max_precision {
+            return Err(O2Error::InvalidOrderParams(format!(
+                "Price precision {} exceeds max {} for market {}",
+                scale, self.quote.max_precision, self.market_id
+            )));
+        }
+        // Ensure value is representable in chain units for this market.
+        let _ = self.scale_price(&value)?;
+        Ok(Price {
+            value,
+            market_id: self.market_id.clone(),
+            quote_decimals: self.quote.decimals,
+            quote_max_precision: self.quote.max_precision,
+        })
+    }
+
+    /// Build a typed, market-bound quantity from a string.
+    pub fn quantity(&self, value: &str) -> Result<Quantity, O2Error> {
+        let parsed = Self::parsed_unsigned(value, "quantity")?;
+        self.quantity_from_decimal(parsed)
+    }
+
+    /// Build a typed, market-bound quantity from an `UnsignedDecimal`.
+    pub fn quantity_from_decimal(&self, value: UnsignedDecimal) -> Result<Quantity, O2Error> {
+        let scale = Self::decimal_scale(&value);
+        if scale > self.base.max_precision {
+            return Err(O2Error::InvalidOrderParams(format!(
+                "Quantity precision {} exceeds max {} for market {}",
+                scale, self.base.max_precision, self.market_id
+            )));
+        }
+        // Ensure value is representable in chain units for this market.
+        let _ = self.scale_quantity(&value)?;
+        Ok(Quantity {
+            value,
+            market_id: self.market_id.clone(),
+            base_decimals: self.base.decimals,
+            base_max_precision: self.base.max_precision,
+        })
+    }
+
+    /// Validate that a `Price` wrapper is compatible with this market.
+    pub fn validate_price_binding(&self, price: &Price) -> Result<(), O2Error> {
+        if price.market_id != self.market_id
+            || price.quote_decimals != self.quote.decimals
+            || price.quote_max_precision != self.quote.max_precision
+        {
+            return Err(O2Error::Other(format!(
+                "Price wrapper is stale or bound to a different market (expected {}, got {})",
+                self.market_id, price.market_id
+            )));
+        }
+        Ok(())
+    }
+
+    /// Validate that a `Quantity` wrapper is compatible with this market.
+    pub fn validate_quantity_binding(&self, quantity: &Quantity) -> Result<(), O2Error> {
+        if quantity.market_id != self.market_id
+            || quantity.base_decimals != self.base.decimals
+            || quantity.base_max_precision != self.base.max_precision
+        {
+            return Err(O2Error::Other(format!(
+                "Quantity wrapper is stale or bound to a different market (expected {}, got {})",
+                self.market_id, quantity.market_id
+            )));
+        }
+        Ok(())
+    }
+
     fn checked_pow_u64(exp: u32, field: &str) -> Result<u64, O2Error> {
         10u64
             .checked_pow(exp)
@@ -1292,4 +1428,100 @@ pub struct WsMessage {
 pub struct TxResult {
     pub tx_id: String,
     pub orders: Vec<Order>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_market() -> Market {
+        Market {
+            contract_id: ContractId::from(
+                "0x1111111111111111111111111111111111111111111111111111111111111111",
+            ),
+            market_id: MarketId::from(
+                "0x2222222222222222222222222222222222222222222222222222222222222222",
+            ),
+            whitelist_id: None,
+            blacklist_id: None,
+            maker_fee: 0,
+            taker_fee: 0,
+            min_order: 1,
+            dust: 0,
+            price_window: 0,
+            base: MarketAsset {
+                symbol: "BASE".to_string(),
+                asset: AssetId::from(
+                    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                ),
+                decimals: 9,
+                max_precision: 3,
+            },
+            quote: MarketAsset {
+                symbol: "QUOTE".to_string(),
+                asset: AssetId::from(
+                    "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                ),
+                decimals: 9,
+                max_precision: 4,
+            },
+        }
+    }
+
+    #[test]
+    fn market_price_accepts_valid_precision() {
+        let market = sample_market();
+        let price = market.price("12.3456").expect("price should be valid");
+        assert_eq!(price.value(), "12.3456".parse().unwrap());
+        market
+            .validate_price_binding(&price)
+            .expect("binding should match");
+    }
+
+    #[test]
+    fn market_price_rejects_excess_precision() {
+        let market = sample_market();
+        let err = market
+            .price("12.34567")
+            .expect_err("price precision should be rejected");
+        assert!(matches!(err, O2Error::InvalidOrderParams(_)));
+    }
+
+    #[test]
+    fn market_quantity_rejects_excess_precision() {
+        let market = sample_market();
+        let err = market
+            .quantity("1.2345")
+            .expect_err("quantity precision should be rejected");
+        assert!(matches!(err, O2Error::InvalidOrderParams(_)));
+    }
+
+    #[test]
+    fn market_quantity_binding_rejects_cross_market() {
+        let market_a = sample_market();
+        let mut market_b = sample_market();
+        market_b.market_id =
+            MarketId::from("0x3333333333333333333333333333333333333333333333333333333333333333");
+
+        let quantity = market_a
+            .quantity("1.234")
+            .expect("quantity should be valid");
+        let err = market_b
+            .validate_quantity_binding(&quantity)
+            .expect_err("cross-market quantity must be rejected");
+        assert!(format!("{err}").contains("stale or bound to a different market"));
+    }
+
+    #[test]
+    fn market_price_binding_rejects_precision_drift() {
+        let market_a = sample_market();
+        let mut market_b = sample_market();
+        market_b.quote.max_precision = market_a.quote.max_precision + 1;
+
+        let price = market_a.price("1.2345").expect("price should be valid");
+        let err = market_b
+            .validate_price_binding(&price)
+            .expect_err("precision drift should be rejected");
+        assert!(format!("{err}").contains("stale or bound to a different market"));
+    }
 }
