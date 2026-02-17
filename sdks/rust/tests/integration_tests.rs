@@ -193,6 +193,59 @@ async fn whitelist_with_retry(api: &O2Api, trade_account_id: &str, max_retries: 
     }
 }
 
+fn is_rate_limited_error(err: &O2Error) -> bool {
+    match err {
+        O2Error::RateLimitExceeded(_) => true,
+        O2Error::OnChainRevert {
+            message, reason, ..
+        } => {
+            let combined = format!("{message} {reason}").to_ascii_lowercase();
+            combined.contains("rate limit")
+                || combined.contains("cooldown")
+                || combined.contains("too many")
+        }
+        other => {
+            let msg = other.to_string().to_ascii_lowercase();
+            msg.contains("rate limit") || msg.contains("cooldown") || msg.contains("too many")
+        }
+    }
+}
+
+async fn setup_account_with_retry(
+    client: &mut O2Client,
+    wallet: &Wallet,
+    max_retries: usize,
+) -> AccountResponse {
+    let mut wait_secs = 5u64;
+    for attempt in 0..max_retries {
+        match client.setup_account(wallet).await {
+            Ok(account) => return account,
+            Err(e) => {
+                let retryable = is_rate_limited_error(&e);
+                if retryable && attempt < max_retries - 1 {
+                    eprintln!(
+                        "[integration] setup_account attempt {}/{} rate-limited: {} (retrying in {}s)",
+                        attempt + 1,
+                        max_retries,
+                        e,
+                        wait_secs
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(wait_secs)).await;
+                    wait_secs = (wait_secs * 2).min(65);
+                    continue;
+                }
+                panic!(
+                    "setup_account failed after {}/{} attempts: {}",
+                    attempt + 1,
+                    max_retries,
+                    e
+                );
+            }
+        }
+    }
+    unreachable!()
+}
+
 async fn ensure_account_with_retry(
     client: &mut O2Client,
     wallet: &Wallet,
@@ -413,10 +466,10 @@ async fn test_setup_account_idempotent() {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet().unwrap();
 
-    let account1 = client.setup_account(&wallet).await.unwrap();
+    let account1 = setup_account_with_retry(&mut client, &wallet, 4).await;
     let trade_account_id = account1.trade_account_id;
 
-    let account2 = client.setup_account(&wallet).await.unwrap();
+    let account2 = setup_account_with_retry(&mut client, &wallet, 4).await;
     assert_eq!(account2.trade_account_id, trade_account_id);
 }
 
