@@ -46,6 +46,116 @@ pub struct O2Client {
     ws: tokio::sync::Mutex<Option<crate::websocket::O2WebSocket>>,
 }
 
+/// Builder for composing a batch of actions against a single market.
+///
+/// Construct via [`O2Client::actions_for`]. Builder methods are infallible and
+/// defer validation errors until [`MarketActionsBuilder::build`].
+#[derive(Debug)]
+pub struct MarketActionsBuilder {
+    market: Market,
+    actions: Vec<Action>,
+    first_error: Option<O2Error>,
+}
+
+impl MarketActionsBuilder {
+    fn new(market: Market) -> Self {
+        Self {
+            market,
+            actions: Vec::new(),
+            first_error: None,
+        }
+    }
+
+    fn record_error_once(&mut self, err: O2Error) {
+        if self.first_error.is_none() {
+            self.first_error = Some(err);
+        }
+    }
+
+    /// Add a settle-balance action.
+    pub fn settle_balance(mut self) -> Self {
+        self.actions.push(Action::SettleBalance);
+        self
+    }
+
+    /// Add a cancel-order action.
+    pub fn cancel_order(mut self, order_id: impl Into<OrderId>) -> Self {
+        self.actions.push(Action::CancelOrder {
+            order_id: order_id.into(),
+        });
+        self
+    }
+
+    /// Add a create-order action.
+    ///
+    /// Accepts the same flexible price/quantity inputs as [`O2Client::create_order`]:
+    /// typed wrappers, `UnsignedDecimal`, and decimal strings.
+    pub fn create_order<P, Q>(
+        mut self,
+        side: Side,
+        price: P,
+        quantity: Q,
+        order_type: OrderType,
+    ) -> Self
+    where
+        P: TryInto<OrderPriceInput, Error = O2Error>,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        if self.first_error.is_some() {
+            return self;
+        }
+
+        let price = match price.try_into() {
+            Ok(OrderPriceInput::Unchecked(v)) => v,
+            Ok(OrderPriceInput::Checked(v)) => match self.market.validate_price_binding(&v) {
+                Ok(()) => v.value(),
+                Err(e) => {
+                    self.record_error_once(e);
+                    return self;
+                }
+            },
+            Err(e) => {
+                self.record_error_once(e);
+                return self;
+            }
+        };
+
+        let quantity = match quantity.try_into() {
+            Ok(OrderQuantityInput::Unchecked(v)) => v,
+            Ok(OrderQuantityInput::Checked(v)) => match self.market.validate_quantity_binding(&v) {
+                Ok(()) => v.value(),
+                Err(e) => {
+                    self.record_error_once(e);
+                    return self;
+                }
+            },
+            Err(e) => {
+                self.record_error_once(e);
+                return self;
+            }
+        };
+
+        self.actions.push(Action::CreateOrder {
+            side,
+            price,
+            quantity,
+            order_type,
+        });
+        self
+    }
+
+    /// Finalize and return the action list.
+    ///
+    /// Returns the first validation/conversion error encountered while building.
+    pub fn build(self) -> Result<Vec<Action>, O2Error> {
+        if let Some(err) = self.first_error {
+            Err(err)
+        } else {
+            Ok(self.actions)
+        }
+    }
+}
+
 impl O2Client {
     #[cfg(test)]
     fn parse_nonce_value(value: &str, context: &str) -> Result<u64, O2Error> {
@@ -517,6 +627,17 @@ impl O2Client {
     // -----------------------------------------------------------------------
     // Trading
     // -----------------------------------------------------------------------
+
+    /// Create a single-market action builder with normalized market context.
+    pub async fn actions_for<M>(&mut self, market_name: M) -> Result<MarketActionsBuilder, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let market_name = market_name.into_market_symbol()?;
+        debug!("client.actions_for market={}", market_name);
+        let market = self.get_market(&market_name).await?;
+        Ok(MarketActionsBuilder::new(market))
+    }
 
     /// Check if a session has expired and return an error if so.
     fn check_session_expiry(session: &Session) -> Result<(), O2Error> {
@@ -1132,9 +1253,12 @@ impl O2Client {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use crate::{config::Network, models::MarketsResponse};
+    use crate::{
+        config::Network,
+        models::{Action, Market, MarketAsset, MarketsResponse, OrderType, Side},
+    };
 
-    use super::{MetadataPolicy, O2Client};
+    use super::{MarketActionsBuilder, MetadataPolicy, O2Client};
 
     fn dummy_markets_response() -> MarketsResponse {
         MarketsResponse {
@@ -1147,6 +1271,32 @@ mod tests {
             chain_id: "0x0".to_string(),
             base_asset_id: "0x4".into(),
             markets: Vec::new(),
+        }
+    }
+
+    fn dummy_market(market_id: &str) -> Market {
+        Market {
+            contract_id: "0x01".into(),
+            market_id: market_id.into(),
+            whitelist_id: None,
+            blacklist_id: None,
+            maker_fee: 0,
+            taker_fee: 0,
+            min_order: 0,
+            dust: 0,
+            price_window: 0,
+            base: MarketAsset {
+                symbol: "fETH".to_string(),
+                asset: "0xbase".into(),
+                decimals: 9,
+                max_precision: 6,
+            },
+            quote: MarketAsset {
+                symbol: "fUSDC".to_string(),
+                asset: "0xquote".into(),
+                decimals: 9,
+                max_precision: 6,
+            },
         }
     }
 
@@ -1220,5 +1370,47 @@ mod tests {
         client.markets_cache = Some(dummy_markets_response());
         client.markets_cache_at = Some(Instant::now());
         assert!(client.should_refresh_markets());
+    }
+
+    #[test]
+    fn market_actions_builder_builds_valid_actions() {
+        let market = dummy_market("0xmarket_a");
+        let actions = MarketActionsBuilder::new(market)
+            .settle_balance()
+            .create_order(Side::Buy, "1.25", "10", OrderType::Spot)
+            .cancel_order("0xdeadbeef")
+            .build()
+            .expect("builder should produce actions");
+
+        assert_eq!(actions.len(), 3);
+        matches!(actions[0], Action::SettleBalance);
+        matches!(actions[1], Action::CreateOrder { .. });
+        matches!(actions[2], Action::CancelOrder { .. });
+    }
+
+    #[test]
+    fn market_actions_builder_defers_parse_error_until_build() {
+        let market = dummy_market("0xmarket_a");
+        let result = MarketActionsBuilder::new(market)
+            .create_order(Side::Buy, "bad-price", "10", OrderType::Spot)
+            .cancel_order("0xwill-not-be-added")
+            .build();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn market_actions_builder_rejects_stale_typed_inputs_on_build() {
+        let market_a = dummy_market("0xmarket_a");
+        let market_b = dummy_market("0xmarket_b");
+
+        let typed_price = market_a.price("1.0").expect("price should parse");
+        let typed_quantity = market_a.quantity("2.0").expect("qty should parse");
+
+        let result = MarketActionsBuilder::new(market_b)
+            .create_order(Side::Buy, typed_price, typed_quantity, OrderType::PostOnly)
+            .build();
+
+        assert!(result.is_err());
     }
 }

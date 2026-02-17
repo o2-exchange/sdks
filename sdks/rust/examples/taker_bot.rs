@@ -7,7 +7,7 @@ use tokio_stream::StreamExt;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let buy_below_price: UnsignedDecimal = "0.04".parse()?;
-    let max_quantity: UnsignedDecimal = "50".parse()?;
+    let max_quantity = "50";
 
     let mut client = O2Client::new(Network::Testnet);
 
@@ -27,13 +27,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let markets = client.get_markets().await?;
     let market_pair = markets[0].symbol_pair();
     let market = &markets[0];
-    let max_quantity = market.quantity_from_decimal(max_quantity)?;
     println!("Monitoring: {market_pair}");
 
     let mut session = client
         .create_session(
             &wallet,
-            &[&market_pair],
+            &[market_pair.as_str()],
             std::time::Duration::from_secs(30 * 24 * 3600),
         )
         .await?;
@@ -77,10 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let result = client
                         .create_order(
                             &mut session,
-                            &market_pair,
+                            market_pair.as_str(),
                             Side::Buy,
                             price,
-                            max_quantity.clone(),
+                            max_quantity,
                             OrderType::Spot,
                             true,
                             true,

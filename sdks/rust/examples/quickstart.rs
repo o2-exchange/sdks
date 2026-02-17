@@ -28,8 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  {} ({})", m.symbol_pair(), m.market_id);
     }
 
-    let market = markets[0].clone();
-    let market_pair = market.symbol_pair();
+    let market_pair = markets[0].symbol_pair();
     println!("\nTrading on: {market_pair}");
 
     // 4. Create a trading session
@@ -37,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut session = client
         .create_session(
             &wallet,
-            &[&market_pair],
+            &[market_pair.as_str()],
             std::time::Duration::from_secs(30 * 24 * 3600),
         )
         .await?;
@@ -45,15 +44,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. Place a spot buy order (low price, unlikely to fill)
     println!("Placing buy order...");
-    let price = market.price("0.001")?;
-    let quantity = market.quantity("100")?;
     let result = client
         .create_order(
             &mut session,
-            &market_pair,
+            market_pair.as_str(),
             Side::Buy,
-            price,
-            quantity,
+            "0.001",
+            "100",
             OrderType::Spot,
             true, // settle first
             true, // collect orders
@@ -77,7 +74,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // 6. Cancel the order
                         let oid = &order.order_id;
                         println!("\nCancelling order {oid}...");
-                        let cancel = client.cancel_order(&mut session, oid, &market_pair).await;
+                        let cancel = client
+                            .cancel_order(&mut session, oid, market_pair.as_str())
+                            .await;
                         match cancel {
                             Ok(_) => println!("Order cancelled successfully."),
                             Err(e) => println!("Cancel failed: {e}"),

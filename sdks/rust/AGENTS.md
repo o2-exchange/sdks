@@ -56,6 +56,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `create_session_until(owner, markets, expiry_unix_secs)` | `&impl SignableWallet, &[impl AsRef<str>], u64` | `Result<Session>` | Create session with absolute expiry |
 | `set_metadata_policy(policy)` | `MetadataPolicy` | `()` | Configure market metadata refresh strategy |
 | `create_order(session, market, side, price, qty, type, settle, collect)` | `&mut Session, impl IntoMarketSymbol, Side, impl TryInto<OrderPriceInput>, impl TryInto<OrderQuantityInput>, ...` | `Result<SessionActionsResponse>` | Place order (accepts `&str`/`String`/`MarketSymbol`) |
+| `actions_for(market)` | `impl IntoMarketSymbol` | `Result<MarketActionsBuilder>` | Build validated single-market action batches |
 | `cancel_order(session, order_id, market)` | `&mut Session, &OrderId, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Cancel order |
 | `cancel_all_orders(session, market)` | `&mut Session, impl IntoMarketSymbol` | `Result<Vec<...>>` | Cancel all open orders |
 | `settle_balance(session, market)` | `&mut Session, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Settle balance |

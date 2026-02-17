@@ -38,7 +38,8 @@
 //! 2. Create or load a wallet.
 //! 3. Run [`O2Client::setup_account`] once at startup.
 //! 4. Create a signed trading session with [`O2Client::create_session`].
-//! 5. Submit typed actions with [`O2Client::create_order`] / [`O2Client::batch_actions`].
+//! 5. Submit typed actions with [`O2Client::create_order`], or compose a batch with
+//!    [`O2Client::actions_for`] then send via [`O2Client::batch_actions`].
 //! 6. Stream updates with [`O2Client::stream_depth`] / [`O2Client::stream_orders`] / [`O2Client::stream_nonce`].
 //!
 //! # Common Tasks
@@ -179,10 +180,11 @@ pub mod encoding;
 pub mod errors;
 pub mod guides;
 pub mod models;
+mod onchain_revert;
 pub mod websocket;
 
 // Re-export primary types for convenience.
-pub use client::{MetadataPolicy, O2Client};
+pub use client::{MarketActionsBuilder, MetadataPolicy, O2Client};
 pub use config::{Network, NetworkConfig};
 pub use crypto::{EvmWallet, SignableWallet, Wallet};
 pub use decimal::UnsignedDecimal;

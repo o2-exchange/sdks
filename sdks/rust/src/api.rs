@@ -59,15 +59,21 @@ impl O2Api {
                     return Err(O2Error::from_code(code as u32, message));
                 }
                 if let Some(message) = err.get("message").and_then(|m| m.as_str()) {
-                    let reason = err
+                    let raw_reason = err
                         .get("reason")
                         .and_then(|r| r.as_str())
                         .unwrap_or("")
                         .to_string();
+                    let receipts = err.get("receipts").cloned();
+                    let reason = crate::onchain_revert::augment_revert_reason(
+                        message,
+                        &raw_reason,
+                        receipts.as_ref(),
+                    );
                     return Err(O2Error::OnChainRevert {
                         message: message.to_string(),
                         reason,
-                        receipts: err.get("receipts").cloned(),
+                        receipts,
                     });
                 }
             }
@@ -497,9 +503,16 @@ impl O2Api {
                 "api.submit_actions parsed=onchain_error message={:?} reason={:?}",
                 parsed.message, parsed.reason
             );
+            let message = parsed.message.unwrap_or_default();
+            let raw_reason = parsed.reason.unwrap_or_default();
+            let reason = crate::onchain_revert::augment_revert_reason(
+                &message,
+                &raw_reason,
+                parsed.receipts.as_ref(),
+            );
             Err(O2Error::OnChainRevert {
-                message: parsed.message.unwrap_or_default(),
-                reason: parsed.reason.unwrap_or_default(),
+                message,
+                reason,
                 receipts: parsed.receipts,
             })
         } else {
