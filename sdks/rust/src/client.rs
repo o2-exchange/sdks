@@ -157,6 +157,10 @@ impl MarketActionsBuilder {
 }
 
 impl O2Client {
+    fn should_whitelist_account(&self) -> bool {
+        self.config.whitelist_required
+    }
+
     #[cfg(test)]
     fn parse_nonce_value(value: &str, context: &str) -> Result<u64, O2Error> {
         if let Some(hex) = value
@@ -184,8 +188,8 @@ impl O2Client {
 
     async fn retry_whitelist_account(&self, trade_account_id: &str) -> bool {
         debug!("client.retry_whitelist_account trade_account_id={trade_account_id}");
-        // Whitelist is testnet-only for current environments.
-        if !self.config.api_base.contains("api.testnet.o2.app") {
+        // Whitelist is network-gated, not hostname-gated.
+        if !self.should_whitelist_account() {
             debug!("client.retry_whitelist_account skipped (non-testnet)");
             return true;
         }
@@ -772,12 +776,7 @@ impl O2Client {
 
         // Cancel up to 5 orders per batch
         for chunk in orders.chunks(5) {
-            let actions: Vec<Action> = chunk
-                .iter()
-                .map(|order| Action::CancelOrder {
-                    order_id: order.order_id.clone(),
-                })
-                .collect();
+            let actions = Self::build_cancel_actions(chunk.iter().map(|order| &order.order_id));
 
             if actions.is_empty() {
                 continue;
@@ -790,6 +789,24 @@ impl O2Client {
         }
 
         Ok(results)
+    }
+
+    fn build_cancel_actions<'a, I>(order_ids: I) -> Vec<Action>
+    where
+        I: IntoIterator<Item = &'a OrderId>,
+    {
+        order_ids
+            .into_iter()
+            .filter_map(|order_id| {
+                if order_id.as_str().trim().is_empty() {
+                    None
+                } else {
+                    Some(Action::CancelOrder {
+                        order_id: order_id.clone(),
+                    })
+                }
+            })
+            .collect()
     }
 
     /// Submit a batch of typed actions for a single market.
@@ -1254,8 +1271,8 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use crate::{
-        config::Network,
-        models::{Action, Market, MarketAsset, MarketsResponse, OrderType, Side},
+        config::{Network, NetworkConfig},
+        models::{Action, Market, MarketAsset, MarketsResponse, OrderId, OrderType, Side},
     };
 
     use super::{MarketActionsBuilder, MetadataPolicy, O2Client};
@@ -1412,5 +1429,37 @@ mod tests {
             .build();
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn whitelist_is_enabled_only_for_testnet() {
+        let testnet = O2Client::new(Network::Testnet);
+        let devnet = O2Client::new(Network::Devnet);
+        let mainnet = O2Client::new(Network::Mainnet);
+
+        assert!(testnet.should_whitelist_account());
+        assert!(!devnet.should_whitelist_account());
+        assert!(!mainnet.should_whitelist_account());
+    }
+
+    #[test]
+    fn whitelist_behavior_can_be_overridden_in_custom_config() {
+        let mut config = NetworkConfig::from_network(Network::Mainnet);
+        config.whitelist_required = true;
+        let custom = O2Client::with_config(config);
+        assert!(custom.should_whitelist_account());
+    }
+
+    #[test]
+    fn build_cancel_actions_skips_empty_order_ids() {
+        let empty = OrderId::default();
+        let valid = OrderId::from("0xabc123");
+
+        let actions = O2Client::build_cancel_actions([&empty, &valid]);
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            Action::CancelOrder { order_id } => assert_eq!(order_id.as_str(), valid.as_str()),
+            _ => panic!("expected cancel action"),
+        }
     }
 }
