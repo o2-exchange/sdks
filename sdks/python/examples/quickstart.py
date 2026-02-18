@@ -1,4 +1,4 @@
-"""Minimal end-to-end flow: generate wallet, fund, create account, place order, cancel."""
+"""Minimal end-to-end flow: generate wallet, setup account, place/cancel orders."""
 
 import asyncio
 
@@ -41,7 +41,7 @@ async def main():
     )
     print(f"Session created, expires: {session.session_expiry}")
 
-    # 6. Place a spot buy order
+    # 6. Place a spot buy order using high-level create_order
     depth = await client.get_depth(market.pair, precision=10)
     price = market.format_price(int(depth.best_ask.price)) * 0.5 if depth.best_ask else 0.01
 
@@ -72,13 +72,16 @@ async def main():
             orders = await client.get_orders(account.trade_account_id, market.pair, is_open=True)
             print(f"Open orders: {len(orders)}")
 
-            # 8. Cancel the order
-            cancel_result = await client.cancel_order(
-                session=session,
-                order_id=order.order_id,
-                market=market.pair,
+            # 8. Build and submit a typed batch with the fluent builder
+            batch = (
+                client.actions_for(market)
+                .settle_balance()
+                .cancel_order(order.order_id)
+                .create_order(OrderSide.BUY, "0.01", "1", OrderType.POST_ONLY)
+                .build()
             )
-            print(f"Order cancelled: {cancel_result.success}")
+            batch_result = await client.batch_actions(actions=[batch], session=session)
+            print(f"Batch submitted: {batch_result.success}")
     else:
         print(f"Order failed: {result.message}")
 

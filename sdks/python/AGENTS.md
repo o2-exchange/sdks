@@ -19,9 +19,14 @@ async def main():
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order(
-        session, "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0
+    result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+    batch = (
+        client.actions_for("fFUEL/fUSDC")
+        .settle_balance()
+        .create_order(OrderSide.SELL, "0.03", "50", OrderType.POST_ONLY)
+        .build()
     )
+    await client.batch_actions([batch], collect_orders=True)
     print(result.tx_id)
     await client.close()
 
@@ -41,11 +46,12 @@ asyncio.run(main())
 | `load_evm_wallet(pk_hex)` | `private_key_hex: str` | `EvmWallet` | Load EVM wallet |
 | `setup_account(wallet)` | `wallet: Wallet\|EvmWallet` | `AccountInfo` | Idempotent account setup (create+fund+whitelist) |
 | `create_session(owner, markets, expiry_days=30)` | `owner, markets: list[str], expiry_days: int` | `SessionInfo` | Create trading session |
-| `create_order(session, market, side, price, quantity, ...)` | see below | `ActionsResponse` | Place an order |
-| `cancel_order(session, order_id, market=None, market_id=None)` | - | `ActionsResponse` | Cancel an order |
-| `cancel_all_orders(session, market)` | - | `ActionsResponse` | Cancel all open orders |
-| `settle_balance(session, market)` | - | `ActionsResponse` | Settle filled order proceeds |
-| `batch_actions(session, actions, collect_orders=False)` | `list[MarketActions]` | `ActionsResponse` | Submit batch actions |
+| `create_order(market, side, price, quantity, ..., session=None)` | see below | `ActionsResponse` | Place an order |
+| `cancel_order(order_id, market=None, market_id=None, session=None)` | - | `ActionsResponse` | Cancel an order |
+| `cancel_all_orders(market, session=None)` | - | `ActionsResponse` | Cancel all open orders |
+| `settle_balance(market, session=None)` | - | `ActionsResponse` | Settle filled order proceeds |
+| `actions_for(market)` | `market: str \| Market` | `MarketActionsBuilder` | Fluent high-level action builder |
+| `batch_actions(actions, collect_orders=False, session=None)` | `Sequence[MarketActions \| MarketActionGroup]` | `ActionsResponse` | Submit low/high-level batch actions |
 | `get_markets()` | - | `list[Market]` | List all markets |
 | `get_market(symbol_pair)` | `"FUEL/USDC"` | `Market` | Get specific market |
 | `get_depth(market, precision=10)` | - | `DepthSnapshot` | Order book depth |
@@ -69,11 +75,11 @@ asyncio.run(main())
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `session` | `SessionInfo` | required | Active session |
+| `session` | `SessionInfo \| None` | optional | Explicit session override (defaults to active client session) |
 | `market` | `str` | required | Market pair or ID |
 | `side` | `OrderSide` | required | `OrderSide.BUY` or `OrderSide.SELL` |
-| `price` | `float` | required | Human-readable price |
-| `quantity` | `float` | required | Human-readable quantity |
+| `price` | `NumericInput` | required | Human-readable (`str`/`float`) or `ChainInt` raw |
+| `quantity` | `NumericInput` | required | Human-readable (`str`/`float`) or `ChainInt` raw |
 | `order_type` | `OrderType \| LimitOrder \| BoundedMarketOrder` | `OrderType.SPOT` | Simple enum or typed class |
 | `settle_first` | `bool` | `True` | Auto-prepend SettleBalance |
 | `collect_orders` | `bool` | `True` | Return order details |
@@ -84,8 +90,9 @@ asyncio.run(main())
 |------|-----------------|-------------|
 | `OrderSide` | `BUY`, `SELL` | Side of an order |
 | `OrderType` | `SPOT`, `MARKET`, `FILL_OR_KILL`, `POST_ONLY` | Simple order type enum (use `LimitOrder` / `BoundedMarketOrder` for parameterized types) |
-| `LimitOrder` | `price: float, timestamp: int \| None` | Limit order with expiry (prices auto-scaled in `create_order`) |
-| `BoundedMarketOrder` | `max_price: float, min_price: float` | Bounded market order (prices auto-scaled in `create_order`) |
+| `LimitOrder` | `price: NumericInput, timestamp: int \| None` | Limit order with expiry (prices auto-scaled unless `ChainInt`) |
+| `BoundedMarketOrder` | `max_price: NumericInput, min_price: NumericInput` | Bounded market order (auto-scaled unless `ChainInt`) |
+| `ChainInt` | `value: int` | Explicit already-scaled chain integer wrapper |
 
 #### Action Types (for `batch_actions`)
 
@@ -98,6 +105,12 @@ asyncio.run(main())
 | `MarketActions` | `market_id: str, actions: list[Action]` | Group of actions for a market |
 
 `Action = CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction`
+
+High-level batch action models:
+- `MarketActionGroup(market=..., actions=[...])`
+- `CreateOrderRequestAction(side, price, quantity, order_type=...)`
+- `CancelOrderRequestAction(order_id)`
+- `SettleBalanceRequestAction()`
 
 ### Low-Level Modules
 
@@ -133,22 +146,29 @@ client = O2Client(network=Network.TESTNET)
 owner = client.generate_wallet()
 account = await client.setup_account(owner)
 session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-result = await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, "0.02", "100")
 ```
 
 ### 2. Market Maker Loop
 
 ```python
-from o2_sdk import CancelOrderAction, CreateOrderAction, SettleBalanceAction, MarketActions, OrderSide, OrderType
+from o2_sdk import OrderSide, OrderType
 
 while True:
-    actions = []
+    builder = client.actions_for(market)
     if active_buy_id:
-        actions.append(CancelOrderAction(order_id=active_buy_id))
-    actions.append(SettleBalanceAction(to=session.trade_account_id))
-    actions.append(CreateOrderAction(side=OrderSide.BUY, price=str(buy_price), quantity=str(qty), order_type=OrderType.SPOT))
-    actions.append(CreateOrderAction(side=OrderSide.SELL, price=str(sell_price), quantity=str(qty), order_type=OrderType.SPOT))
-    result = await client.batch_actions(session, [MarketActions(market_id=market.market_id, actions=actions)], collect_orders=True)
+        builder = builder.cancel_order(active_buy_id)
+    result = await client.batch_actions(
+        session,
+        [
+            builder
+            .settle_balance()
+            .create_order(OrderSide.BUY, buy_price, qty, OrderType.SPOT)
+            .create_order(OrderSide.SELL, sell_price, qty, OrderType.SPOT)
+            .build()
+        ],
+        collect_orders=True,
+    )
     await asyncio.sleep(15)
 ```
 
@@ -178,13 +198,13 @@ async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
 
 ```python
 # Cancel specific order
-await client.cancel_order(session, order_id="0x...", market="fFUEL/fUSDC")
+await client.cancel_order(order_id="0x...", market="fFUEL/fUSDC", session=session)
 
 # Cancel all open orders
-await client.cancel_all_orders(session, "fFUEL/fUSDC")
+await client.cancel_all_orders("fFUEL/fUSDC", session=session)
 
 # Settle balance
-await client.settle_balance(session, "fFUEL/fUSDC")
+await client.settle_balance("fFUEL/fUSDC", session=session)
 ```
 
 ### 6. Identity Construction
@@ -246,8 +266,9 @@ On-chain reverts (no code field) raise `OnChainRevert` with `.reason` (e.g., `"N
 |------|------------|-------------|
 | `OrderSide` | `BUY`, `SELL` | Enum for order side |
 | `OrderType` | `SPOT`, `MARKET`, `FILL_OR_KILL`, `POST_ONLY` | Enum for simple order types (use `LimitOrder` / `BoundedMarketOrder` for parameterized types) |
-| `LimitOrder` | `price: float, timestamp: int \| None` | Limit order params |
-| `BoundedMarketOrder` | `max_price: float, min_price: float` | Bounded market params |
+| `LimitOrder` | `price: NumericInput, timestamp: int \| None` | Limit order params |
+| `BoundedMarketOrder` | `max_price: NumericInput, min_price: NumericInput` | Bounded market params |
+| `ChainInt` | `value: int` | Explicit raw chain integer (already scaled) |
 | `CreateOrderAction` | `side, price, quantity, order_type` | Typed create order action |
 | `CancelOrderAction` | `order_id: Id` | Typed cancel action |
 | `SettleBalanceAction` | `to: Identity \| Id` | Typed settle action |
@@ -278,4 +299,11 @@ On-chain reverts (no code field) raise `OnChainRevert` with `.reason` (e.g., `"N
 - Always settle before creating orders (`settle_first=True` by default)
 - Max 5 actions per batch, max 5 markets per request
 - `setup_account()` is idempotent -- safe on every bot startup
-- Prices/quantities are auto-scaled from human-readable floats
+- Prices/quantities accept dual-mode `NumericInput` (human values auto-scaled, `ChainInt` pass-through)
+
+## Integration Test Strategy
+
+- Integration tests reuse deterministic maker/taker wallets via `sdks/python/.integration-wallets.json` (gitignored).
+- Account setup avoids unnecessary faucet calls: minting happens only when balance is below a conservative threshold for test workloads.
+- Write-path retries are bounded and cooldown-aware for whitelist/faucet transient failures.
+- Order placement in live-book fill tests uses conservative post-only bid pricing derived from current depth (with deterministic fallback) to reduce flakiness.

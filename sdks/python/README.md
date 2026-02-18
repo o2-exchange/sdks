@@ -33,8 +33,9 @@ Requires **Python 3.10+**.
 ## Quick Start
 
 ```python
-import logging
 import asyncio
+import logging
+
 from o2_sdk import O2Client, Network, OrderSide, OrderType
 
 async def main():
@@ -43,10 +44,15 @@ async def main():
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
     session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order(
-        session, "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0
+    result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0)
+    batch = (
+        client.actions_for("fFUEL/fUSDC")
+        .settle_balance()
+        .create_order(OrderSide.SELL, "0.03", "50", OrderType.POST_ONLY)
+        .build()
     )
-    print(f"Created order with transaction ID {result.tx_id}")
+    batch_result = await client.batch_actions([batch], collect_orders=True)
+    print(f"Created order tx={result.tx_id}, batch tx={batch_result.tx_id}")
     await client.close()
 
 asyncio.run(main())
@@ -55,6 +61,7 @@ asyncio.run(main())
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
+- **Dual-Mode Numeric Inputs** — Pass human values (`"0.02"`, `100.0`) or explicit raw chain integers (`ChainInt(...)`)
 - **Strongly Typed** — Enums for order sides/types, dataclasses for actions and order parameters
 - **Market Data** — Fetch order book depth, recent trades, OHLCV candles, and ticker data
 - **WebSocket Streams** — Real-time depth, order, trade, balance, and nonce updates via `async for`
@@ -70,11 +77,12 @@ asyncio.run(main())
 | `generate_evm_wallet()` / `load_evm_wallet(pk)` | Create or load an EVM wallet |
 | `setup_account(wallet)` | Idempotent account setup (create + fund + whitelist) |
 | `create_session(owner, markets)` | Create a trading session |
-| `create_order(session, market, side, price, qty)` | Place an order |
-| `cancel_order(session, order_id, market)` | Cancel a specific order |
-| `cancel_all_orders(session, market)` | Cancel all open orders |
-| `settle_balance(session, market)` | Settle filled order proceeds |
-| `batch_actions(session, actions)` | Submit typed action batch (`list[MarketActions]`) |
+| `create_order(market, side, price, qty)` | Place an order (`price/qty` accept human or `ChainInt`) |
+| `cancel_order(order_id, market)` | Cancel a specific order |
+| `cancel_all_orders(market)` | Cancel all open orders |
+| `settle_balance(market)` | Settle filled order proceeds |
+| `actions_for(market)` | Build typed market actions with fluent helpers |
+| `batch_actions(actions)` | Submit typed action batch (`MarketActions` or `MarketActionGroup`) |
 | `get_markets()` / `get_market(pair)` | Fetch market info |
 | `get_depth(market)` / `get_trades(market)` | Order book and trade data |
 | `get_balances(account)` / `get_orders(account, market)` | Account data |
@@ -112,6 +120,9 @@ Integration tests (requires `O2_PRIVATE_KEY` env var):
 ```bash
 O2_PRIVATE_KEY=0x... pytest tests/test_integration.py -m integration -v --timeout=120
 ```
+
+Integration tests reuse cached wallets in `sdks/python/.integration-wallets.json` (gitignored)
+and only faucet when balances are below a conservative threshold, which improves repeat-run speed.
 
 ## AI Agent Integration
 
