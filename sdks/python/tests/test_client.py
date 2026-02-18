@@ -162,9 +162,11 @@ async def test_batch_actions_accepts_chain_int(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(client.api, "submit_actions", fake_submit_actions)
 
-    group = client.actions_for(market).create_order(
-        OrderSide.SELL, ChainInt(200000000), ChainInt(6000000000)
-    ).build()
+    group = (
+        client.actions_for(market)
+        .create_order(OrderSide.SELL, ChainInt(200000000), ChainInt(6000000000))
+        .build()
+    )
 
     await client.batch_actions([group], session=session)
     create_order = captured["request"]["actions"][0]["actions"][0]["CreateOrder"]
@@ -180,9 +182,11 @@ async def test_batch_actions_rejects_bad_chain_int_precision():
     client._markets_cache = _test_markets_response(market)
     client._nonce_cache[session.trade_account_id] = 1
 
-    group = client.actions_for(market).create_order(
-        OrderSide.BUY, ChainInt(100000000), ChainInt(5000000001)
-    ).build()
+    group = (
+        client.actions_for(market)
+        .create_order(OrderSide.BUY, ChainInt(100000000), ChainInt(5000000001))
+        .build()
+    )
 
     with pytest.raises(O2Error, match="raw quantity precision"):
         await client._normalize_market_actions(session, [group], client._markets_cache)
@@ -381,6 +385,7 @@ async def test_setup_account_fail_fast_when_whitelist_required(monkeypatch: pyte
         (),
         {"exists": True, "trade_account_id": "0x" + "11" * 32},
     )()
+
     async def fake_get_account(**_kwargs):
         return account
 
@@ -411,6 +416,7 @@ async def test_setup_account_skips_whitelist_when_not_required(monkeypatch: pyte
         (),
         {"exists": True, "trade_account_id": "0x" + "22" * 32},
     )()
+
     async def fake_get_account(**_kwargs):
         return account
 
@@ -445,6 +451,7 @@ async def test_setup_account_skips_faucet_when_balance_present(monkeypatch: pyte
         (),
         {"exists": True, "trade_account_id": "0x" + "33" * 32},
     )()
+
     async def fake_get_account(**_kwargs):
         return account
 

@@ -53,6 +53,7 @@ def _parse_human_numeric(value: NumericInput, field: str) -> Decimal:
         raise ValueError(f"{field} must be non-negative")
     return parsed
 
+
 # ---------------------------------------------------------------------------
 # Enums for order parameters
 # ---------------------------------------------------------------------------
@@ -787,8 +788,12 @@ class CreateOrderAction:
             ot = {"Limit": [str(limit_price), str(ts)]}
         elif isinstance(self.order_type, BoundedMarketOrder):
             bm = self.order_type
-            max_price = bm.max_price.value if isinstance(bm.max_price, ChainInt) else int(bm.max_price)
-            min_price = bm.min_price.value if isinstance(bm.min_price, ChainInt) else int(bm.min_price)
+            max_price = (
+                bm.max_price.value if isinstance(bm.max_price, ChainInt) else int(bm.max_price)
+            )
+            min_price = (
+                bm.min_price.value if isinstance(bm.min_price, ChainInt) else int(bm.min_price)
+            )
             ot = {
                 "BoundedMarket": {
                     "max_price": str(max_price),
