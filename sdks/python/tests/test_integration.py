@@ -6,7 +6,9 @@ These tests require network access and hit the live testnet API.
 
 import asyncio
 import contextlib
+import json
 import math
+from pathlib import Path
 
 import pytest
 
@@ -25,6 +27,8 @@ from o2_sdk.config import get_config
 
 pytestmark = pytest.mark.integration
 
+_WALLET_CACHE_PATH = Path(__file__).resolve().parents[1] / ".integration-wallets.json"
+
 
 async def _mint_with_retry(api, trade_account_id, max_retries=4):
     """Attempt faucet mint with retry on cooldown."""
@@ -35,6 +39,39 @@ async def _mint_with_retry(api, trade_account_id, max_retries=4):
         except Exception:
             if attempt < max_retries - 1:
                 await asyncio.sleep(65)
+
+
+def _load_cached_wallet(client: O2Client, role: str):
+    if not _WALLET_CACHE_PATH.exists():
+        return None
+    try:
+        data = json.loads(_WALLET_CACHE_PATH.read_text())
+        pk = data.get(role)
+        if isinstance(pk, str) and pk:
+            return client.load_wallet(pk)
+    except Exception:
+        return None
+    return None
+
+
+def _save_cached_wallet(role: str, wallet) -> None:
+    data = {}
+    if _WALLET_CACHE_PATH.exists():
+        try:
+            data = json.loads(_WALLET_CACHE_PATH.read_text())
+        except Exception:
+            data = {}
+    data[role] = "0x" + wallet.private_key.hex()
+    _WALLET_CACHE_PATH.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def _load_or_create_wallet(client: O2Client, role: str):
+    wallet = _load_cached_wallet(client, role)
+    if wallet is not None:
+        return wallet
+    wallet = client.generate_wallet()
+    _save_cached_wallet(role, wallet)
+    return wallet
 
 
 async def _whitelist_with_retry(api, trade_account_id, max_retries=4):
@@ -69,9 +106,24 @@ async def _create_order_with_whitelist_retry(client, max_retries=5, **kwargs):
             raise
 
 
-async def _setup_funded_account(client, max_retries=4):
-    """Create, whitelist, and mint to a single account with rate-limit retries."""
-    wallet = client.generate_wallet()
+async def _ensure_sufficient_test_balance(client, trade_account_id):
+    """Mint only when account balance is below a conservative test threshold."""
+    markets_resp = await client.api.get_markets()
+    min_orders = [int(m.min_order or "0") for m in markets_resp.markets]
+    min_required = (max(min_orders) if min_orders else 1_000_000) * 50
+    current = await client.api.get_balance(
+        asset_id=markets_resp.base_asset_id,
+        contract=trade_account_id,
+    )
+    current_balance = int(current.trading_account_balance)
+    if current_balance >= min_required:
+        return
+    await _mint_with_retry(client.api, trade_account_id)
+
+
+async def _setup_funded_account(client, role, max_retries=4):
+    """Create/reuse account, ensure whitelist, and fund only if below threshold."""
+    wallet = _load_or_create_wallet(client, role)
     for attempt in range(max_retries):
         try:
             account = await client.setup_account(wallet)
@@ -81,9 +133,9 @@ async def _setup_funded_account(client, max_retries=4):
                 await asyncio.sleep(65)
             else:
                 raise
-    # Explicitly whitelist with retry (setup_account catches failures silently)
+    # Explicitly whitelist with retry for propagation robustness on testnet.
     await _whitelist_with_retry(client.api, account.trade_account_id)
-    await _mint_with_retry(client.api, account.trade_account_id)
+    await _ensure_sufficient_test_balance(client, account.trade_account_id)
     return wallet, account
 
 
@@ -92,8 +144,8 @@ async def funded_accounts():
     """Two funded accounts (maker + taker) for cross-account tests."""
     client = O2Client(network=Network.TESTNET)
 
-    maker_wallet, maker_account = await _setup_funded_account(client)
-    taker_wallet, taker_account = await _setup_funded_account(client)
+    maker_wallet, maker_account = await _setup_funded_account(client, "maker")
+    taker_wallet, taker_account = await _setup_funded_account(client, "taker")
 
     yield {
         "client": client,
@@ -121,39 +173,54 @@ def api(config):
     return O2Api(config)
 
 
+@pytest.fixture(scope="module")
+async def market_snapshot():
+    """Shared read-only market snapshot with parallel depth/trades fetch."""
+    api = O2Api(get_config(Network.TESTNET))
+    try:
+        markets_resp = await api.get_markets()
+        if not markets_resp.markets:
+            pytest.skip("No markets available")
+        market = markets_resp.markets[0]
+        depth, trades = await asyncio.gather(
+            api.get_depth(market.market_id),
+            api.get_trades(market.market_id, count=10),
+        )
+        yield {
+            "markets_resp": markets_resp,
+            "market": market,
+            "depth": depth,
+            "trades": trades,
+        }
+    finally:
+        await api.close()
+
+
 @pytest.fixture
 def client():
     return O2Client(network=Network.TESTNET)
 
 
 class TestMarketData:
-    async def test_get_markets(self, api):
-        resp = await api.get_markets()
+    async def test_get_markets(self, market_snapshot):
+        resp = market_snapshot["markets_resp"]
+        market = market_snapshot["market"]
         assert len(resp.markets) > 0
         assert resp.chain_id is not None
         assert resp.accounts_registry_id != ""
-
-        market = resp.markets[0]
         assert market.contract_id.startswith("0x")
         assert market.market_id.startswith("0x")
         assert market.base.decimals > 0
         assert market.quote.decimals > 0
-        await api.close()
 
-    async def test_get_depth(self, api):
-        resp = await api.get_markets()
-        market = resp.markets[0]
-        depth = await api.get_depth(market.market_id)
+    async def test_get_depth(self, market_snapshot):
+        depth = market_snapshot["depth"]
         assert isinstance(depth.buys, list)
         assert isinstance(depth.sells, list)
-        await api.close()
 
-    async def test_get_trades(self, api):
-        resp = await api.get_markets()
-        market = resp.markets[0]
-        trades = await api.get_trades(market.market_id, count=10)
+    async def test_get_trades(self, market_snapshot):
+        trades = market_snapshot["trades"]
         assert isinstance(trades, list)
-        await api.close()
 
     async def test_get_market_by_pair(self, client):
         markets = await client.get_markets()
@@ -265,14 +332,28 @@ def _fill_quantity(market, price):
     return math.ceil(qty / step) * step
 
 
+async def _conservative_post_only_buy_price(client, market):
+    """Choose a conservative post-only buy price from live depth when available."""
+    fallback = _moderate_fill_price(market)
+    price_step = 10 ** (-market.quote.max_precision)
+    try:
+        depth = await client.get_depth(market.pair, precision=10)
+        if depth.best_ask:
+            best_ask = market.format_price(int(depth.best_ask.price))
+            return max(price_step, best_ask - price_step)
+    except Exception:
+        pass
+    return max(price_step, fallback)
+
+
 async def _cleanup_open_orders(client, wallet, market_pair):
     """Best-effort cleanup: cancel all open orders and settle balance for an account."""
     with contextlib.suppress(Exception):
         session = await client.create_session(owner=wallet, markets=[market_pair], expiry_days=1)
         with contextlib.suppress(Exception):
-            await client.cancel_all_orders(session, market_pair)
+            await client.cancel_all_orders(market_pair, session=session)
         with contextlib.suppress(Exception):
-            await client.settle_balance(session, market_pair)
+            await client.settle_balance(market_pair, session=session)
 
 
 class TestTradingFlow:
@@ -367,7 +448,7 @@ class TestTradingFlow:
         # Moderate price below stale sells — maker buy rests safely.
         # Taker FillOrKill sell targets the maker directly, avoiding
         # the gas cost of walking through many intermediate orders.
-        fill_price = _moderate_fill_price(market)
+        fill_price = await _conservative_post_only_buy_price(client, market)
         quantity = _fill_quantity(market, fill_price)
 
         # Check maker has enough quote to buy
@@ -479,7 +560,7 @@ class TestWebSocket:
             await asyncio.sleep(2)  # Wait for subscription to propagate
 
             # Deterministic pricing
-            fill_price = _moderate_fill_price(market)
+            fill_price = await _conservative_post_only_buy_price(ws_client, market)
             quantity = _fill_quantity(market, fill_price)
 
             # Maker: PostOnly Buy at moderate price — rests below stale sells
@@ -552,10 +633,10 @@ class TestWebSocket:
                     )
             with contextlib.suppress(Exception):
                 if maker_session:
-                    await ws_client.settle_balance(maker_session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=maker_session)
             with contextlib.suppress(Exception):
                 if taker_session:
-                    await ws_client.settle_balance(taker_session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=taker_session)
             await ws_client.close()
 
     async def test_websocket_orders(self, funded_accounts):
@@ -627,7 +708,7 @@ class TestWebSocket:
                     await ws_client.cancel_order(
                         session=session, order_id=order_id, market=market.pair
                     )
-                    await ws_client.settle_balance(session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=session)
             await ws_client.close()
 
     async def test_websocket_balances(self, funded_accounts):
@@ -699,7 +780,7 @@ class TestWebSocket:
                     await ws_client.cancel_order(
                         session=session, order_id=order_id, market=market.pair
                     )
-                    await ws_client.settle_balance(session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=session)
             await ws_client.close()
 
     async def test_websocket_nonce(self, funded_accounts):
@@ -771,7 +852,7 @@ class TestWebSocket:
                     await ws_client.cancel_order(
                         session=session, order_id=order_id, market=market.pair
                     )
-                    await ws_client.settle_balance(session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=session)
             await ws_client.close()
 
     async def test_websocket_concurrent_subscriptions(self, funded_accounts):
@@ -877,7 +958,7 @@ class TestWebSocket:
                     await ws_client.cancel_order(
                         session=session, order_id=order_id, market=market.pair
                     )
-                    await ws_client.settle_balance(session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=session)
             await ws_client.close()
 
     async def test_websocket_mixed_with_fill(self, funded_accounts):
@@ -923,7 +1004,7 @@ class TestWebSocket:
             await asyncio.sleep(2)
 
             # Cross-account fill
-            fill_price = _moderate_fill_price(market)
+            fill_price = await _conservative_post_only_buy_price(ws_client, market)
             quantity = _fill_quantity(market, fill_price)
 
             maker_session = await ws_client.create_session(
@@ -1008,8 +1089,8 @@ class TestWebSocket:
                     )
             with contextlib.suppress(Exception):
                 if maker_session:
-                    await ws_client.settle_balance(maker_session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=maker_session)
             with contextlib.suppress(Exception):
                 if taker_session:
-                    await ws_client.settle_balance(taker_session, market.pair)
+                    await ws_client.settle_balance(market.pair, session=taker_session)
             await ws_client.close()

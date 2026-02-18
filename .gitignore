@@ -41,3 +41,5 @@ TODO.md
 .claude
 sdks/typescript/.integration-wallets.json
 sdks/rust/.integration-wallets.json
+sdks/python/.integration-wallets.json
+PYTHON_SDK_ERGONOMICS_TRACKER.md
