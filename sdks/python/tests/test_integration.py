@@ -341,8 +341,9 @@ async def _conservative_post_only_buy_price(client, market):
         if depth.best_ask:
             best_ask = market.format_price(int(depth.best_ask.price))
             return max(price_step, best_ask - price_step)
-    except Exception:
-        pass
+    except Exception as ex:
+        # Depth fetch failures are non-fatal; fall back to a conservative price.
+        print(f"Warning: failed to fetch depth for {market.pair}: {exc}")
     return max(price_step, fallback)
 
 

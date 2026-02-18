@@ -614,7 +614,7 @@ class O2Client:
         markets_resp = await self._get_markets_cached()
 
         # Convert typed/high-level actions to wire dicts once
-        actions_dicts = await self._normalize_market_actions(session, actions, markets_resp)
+        actions_dicts = await self._normalize_market_actions(session, actions)
 
         # Get current nonce
         nonce = await self._get_nonce(session.trade_account_id)
@@ -667,7 +667,6 @@ class O2Client:
         self,
         session: SessionInfo,
         actions: Sequence[MarketActions | MarketActionGroup],
-        markets_resp: MarketsResponse,
     ) -> list[dict]:
         normalized: list[dict] = []
         for group in actions:
