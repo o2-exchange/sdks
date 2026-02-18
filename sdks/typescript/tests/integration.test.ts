@@ -18,12 +18,9 @@
  *
  * ## Fill tests: Maker PostOnly Buy + Taker FillOrKill Sell
  *
- * A taker *buy* walks the sell side from lowest ask upward, paying for every
- * intermediate order. If stale sells have accumulated at high prices, this
- * becomes prohibitively expensive. A taker *sell* walks the buy side from
- * highest bid downward — each fill *pays the taker* rather than costing them.
- * Stale buys at high prices are harmless (taker gets a better fill), and stale
- * buys at low prices are never reached.
+ * Maker PostOnly price is selected conservatively from live depth (best_ask -
+ * one tick) to avoid accidental taker matches in a shared live order book. The
+ * taker uses FillOrKill sell, which avoids leaving a resting order.
  *
  * FillOrKill for the taker prevents leaving a resting order on the book, which
  * is the primary vector for adding new pollution.
@@ -113,6 +110,51 @@ function minQuantityStr(market: Market, priceStr: string): string {
   const rounded = Math.ceil(minQty / step) * step;
   const withMargin = rounded * 1.1;
   return withMargin.toFixed(market.base.max_precision);
+}
+
+function minPriceStep(market: Market): number {
+  return 10 ** -market.quote.max_precision;
+}
+
+function quantityStep(market: Market): number {
+  return 10 ** -market.base.max_precision;
+}
+
+function floorToStep(value: number, step: number): number {
+  return Math.floor(value / step) * step;
+}
+
+function ceilToStep(value: number, step: number): number {
+  return Math.ceil(value / step) * step;
+}
+
+function minQuantityForMinOrder(market: Market, price: number): number {
+  const minOrder = Number(market.min_order);
+  const quoteFactor = 10 ** market.quote.decimals;
+  const minQty = minOrder / (price * quoteFactor);
+  return ceilToStep(minQty, quantityStep(market));
+}
+
+async function conservativePostOnlyBuyPriceStr(client: O2Client, market: Market): Promise<string> {
+  const step = minPriceStep(market);
+  let chosen = step;
+
+  try {
+    const depth = await client.getDepth(market, 10);
+    if (depth.sells.length > 0) {
+      const bestAsk = Number(depth.sells[0].price) / 10 ** market.quote.decimals;
+      chosen = Math.max(step, floorToStep(bestAsk - step, step));
+    } else if (depth.buys.length > 0) {
+      const bestBid = Number(depth.buys[0].price) / 10 ** market.quote.decimals;
+      chosen = Math.max(step, floorToStep(bestBid, step));
+    }
+  } catch (error) {
+    console.error(
+      `Warning: failed to fetch depth for ${market.base.symbol}/${market.quote.symbol}: ${String(error)}`,
+    );
+  }
+
+  return chosen.toFixed(market.quote.max_precision);
 }
 
 async function mintWithRetry(
@@ -268,24 +310,74 @@ async function ensureAccountWithRetry(
   );
 }
 
-function moderateFillPriceStr(market: Market): string {
-  const minOrder = Number(market.min_order);
-  const basePrecisionFactor = 10 ** market.base.max_precision;
-  const quoteFactor = 10 ** market.quote.decimals;
-  const price = (minOrder * basePrecisionFactor) / quoteFactor;
-  return price.toFixed(market.quote.max_precision);
+async function crossFillQuantityStr(
+  client: O2Client,
+  market: Market,
+  priceStr: string,
+  makerTradeAccountId: TradeAccountId,
+  takerTradeAccountId: TradeAccountId,
+): Promise<string> {
+  const price = Number.parseFloat(priceStr);
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error(`invalid price for cross-fill quantity: ${priceStr}`);
+  }
+
+  const step = quantityStep(market);
+  const minQty = minQuantityForMinOrder(market, price);
+  const targetQty = minQty * 1.05;
+  let lastDetails = "";
+
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const [makerBalances, takerBalances] = await Promise.all([
+      client.getBalances(makerTradeAccountId),
+      client.getBalances(takerTradeAccountId),
+    ]);
+
+    const makerQuoteBal =
+      Number(makerBalances[market.quote.symbol]?.trading_account_balance ?? 0n) /
+      10 ** market.quote.decimals;
+    const takerBaseBal =
+      Number(takerBalances[market.base.symbol]?.trading_account_balance ?? 0n) /
+      10 ** market.base.decimals;
+
+    const makerCap = makerQuoteBal / price;
+    const cap = Math.min(takerBaseBal, makerCap);
+    const qty = floorToStep(Math.min(targetQty, cap), step);
+
+    lastDetails =
+      `minQty=${minQty}, qty=${qty}, cap=${cap}, makerQuote=${makerQuoteBal}, ` +
+      `takerBase=${takerBaseBal}, price=${priceStr}`;
+    if (qty >= minQty) {
+      return qty.toFixed(market.base.max_precision);
+    }
+
+    if (attempt < 3) {
+      const makerQuoteRequired = BigInt(
+        Math.ceil(minQty * price * 1.2 * 10 ** market.quote.decimals),
+      );
+      const takerBaseRequired = BigInt(Math.ceil(minQty * 1.2 * 10 ** market.base.decimals));
+      await Promise.all([
+        ensureFunded(client, makerTradeAccountId, market.quote.symbol, makerQuoteRequired, 2),
+        ensureFunded(client, takerTradeAccountId, market.base.symbol, takerBaseRequired, 2),
+      ]);
+    }
+  }
+
+  throw new Error(`Unable to compute valid cross-fill quantity: ${lastDetails}`);
 }
 
-function fillQuantityStr(market: Market, priceStr: string): string {
-  const minOrder = Number(market.min_order);
-  const quoteFactor = 10 ** market.quote.decimals;
-  const baseFactor = 10 ** market.base.decimals;
-  const price = Number.parseFloat(priceStr);
-  const qty = (10 * minOrder) / (price * quoteFactor);
-  const truncateFactor = 10 ** (market.base.decimals - market.base.max_precision);
-  const step = truncateFactor / baseFactor;
-  const rounded = Math.ceil(qty / step) * step;
-  return rounded.toFixed(market.base.max_precision);
+function firstStreamMessage<T>(stream: AsyncIterable<T>): Promise<T | null> {
+  return new Promise((resolve) => {
+    (async () => {
+      try {
+        for await (const update of stream) {
+          resolve(update);
+          return;
+        }
+      } catch {}
+      resolve(null);
+    })();
+  });
 }
 
 async function cleanupOpenOrders(cl: O2Client, wallet: WalletState, market: Market): Promise<void> {
@@ -448,10 +540,15 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     await ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 50_000_000n);
     await ensureFunded(takerClient, takerTradeAccountId, market.base.symbol, 50_000_000n);
 
-    // Moderate price below any stale sells — maker buy rests safely.
-    // Taker sell walks buys from highest bid down, which is free (receives funds).
-    const priceStr = moderateFillPriceStr(market);
-    const quantityStr = fillQuantityStr(market, priceStr);
+    // Place maker buy one tick below best ask to stay post-only in live books.
+    const priceStr = await conservativePostOnlyBuyPriceStr(client, market);
+    const quantityStr = await crossFillQuantityStr(
+      makerClient,
+      market,
+      priceStr,
+      makerTradeAccountId,
+      takerTradeAccountId,
+    );
 
     // Maker: PostOnly Buy at moderate price — rests below all stale sells
     await makerClient.createSession(makerWallet, [market], 30);
@@ -543,20 +640,18 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const wsClient = new O2Client({ network: Network.TESTNET });
     try {
       const stream = await wsClient.streamTrades(market);
-      const firstMessage = new Promise<any>((resolve, reject) => {
-        (async () => {
-          for await (const update of stream) {
-            resolve(update);
-            return;
-          }
-          reject(new Error("stream ended without message"));
-        })();
-      });
+      const firstMessage = firstStreamMessage(stream);
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const priceStr = moderateFillPriceStr(market);
-      const quantityStr = fillQuantityStr(market, priceStr);
+      const priceStr = await conservativePostOnlyBuyPriceStr(wsClient, market);
+      const quantityStr = await crossFillQuantityStr(
+        makerClient,
+        market,
+        priceStr,
+        makerTradeAccountId,
+        takerTradeAccountId,
+      );
 
       await makerClient.createSession(makerWallet, [market], 30);
       const makerResponse = await createOrderWithWhitelistRetry(
@@ -880,38 +975,20 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       const ordersStream = await wsClient.streamOrders(makerTradeAccountId);
       const balancesStream = await wsClient.streamBalances(makerTradeAccountId);
 
-      const tradesFirst = new Promise<any>((resolve, reject) => {
-        (async () => {
-          for await (const update of tradesStream) {
-            resolve(update);
-            return;
-          }
-          reject(new Error("trades stream ended"));
-        })();
-      });
-      const ordersFirst = new Promise<any>((resolve, reject) => {
-        (async () => {
-          for await (const update of ordersStream) {
-            resolve(update);
-            return;
-          }
-          reject(new Error("orders stream ended"));
-        })();
-      });
-      const balancesFirst = new Promise<any>((resolve, reject) => {
-        (async () => {
-          for await (const update of balancesStream) {
-            resolve(update);
-            return;
-          }
-          reject(new Error("balances stream ended"));
-        })();
-      });
+      const tradesFirst = firstStreamMessage(tradesStream);
+      const ordersFirst = firstStreamMessage(ordersStream);
+      const balancesFirst = firstStreamMessage(balancesStream);
 
       await new Promise((r) => setTimeout(r, 2000));
 
-      const priceStr = moderateFillPriceStr(market);
-      const quantityStr = fillQuantityStr(market, priceStr);
+      const priceStr = await conservativePostOnlyBuyPriceStr(wsClient, market);
+      const quantityStr = await crossFillQuantityStr(
+        makerClient,
+        market,
+        priceStr,
+        makerTradeAccountId,
+        takerTradeAccountId,
+      );
 
       await makerClient.createSession(makerWallet, [market], 30);
       const makerResponse = await createOrderWithWhitelistRetry(
