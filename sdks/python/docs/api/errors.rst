@@ -210,13 +210,13 @@ Error handling patterns
 
    try:
        result = await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+          "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
    except SessionExpired:
        # Create a new session
-       session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
+       session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
        result = await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+          "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
    except InvalidSignature:
        # Check signing logic

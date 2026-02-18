@@ -39,7 +39,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     client.set_metadata_policy(MetadataPolicy::OptimisticTtl(std::time::Duration::from_secs(45)));
     let wallet = client.generate_wallet()?;
     let _account = client.setup_account(&wallet).await?;
-    let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
+    let market_symbol: o2_sdk::MarketSymbol = "FUEL/USDC".into();
     let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
     let market = client.get_market(&market_symbol).await?;
     let price = market.price("0.05")?;

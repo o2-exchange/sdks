@@ -20,7 +20,7 @@ Listing markets
        print(f"{m.pair}: base={m.base.symbol} ({m.base.decimals} decimals)")
 
    # Get a specific market
-   market = await client.get_market("fFUEL/fUSDC")
+   market = await client.get_market("FUEL/USDC")
    print(f"Min order: {market.min_order}")
    print(f"Maker fee: {market.maker_fee}")
 
@@ -32,7 +32,7 @@ Fetch a snapshot of the order book:
 
 .. code-block:: python
 
-   depth = await client.get_depth("fFUEL/fUSDC", precision=10)
+   depth = await client.get_depth("FUEL/USDC", precision=10)
 
    print(f"Best bid: {depth.best_bid.price if depth.best_bid else 'empty'}")
    print(f"Best ask: {depth.best_ask.price if depth.best_ask else 'empty'}")
@@ -52,7 +52,7 @@ Recent trades
 
 .. code-block:: python
 
-   trades = await client.get_trades("fFUEL/fUSDC", count=20)
+   trades = await client.get_trades("FUEL/USDC", count=20)
    for trade in trades:
        print(f"{trade.side} {trade.quantity} @ {trade.price} (id={trade.trade_id})")
 
@@ -66,7 +66,7 @@ OHLCV candles
 
    now = int(time.time())
    bars = await client.get_bars(
-       "fFUEL/fUSDC",
+       "FUEL/USDC",
        resolution="1h",
        from_ts=now - 86400,  # last 24 hours
        to_ts=now,
@@ -87,7 +87,7 @@ Ticker data
 
 .. code-block:: python
 
-   ticker = await client.get_ticker("fFUEL/fUSDC")
+   ticker = await client.get_ticker("FUEL/USDC")
    print(ticker)  # Raw dict with current market stats
 
 
@@ -100,8 +100,8 @@ human-readable floats:
 
 .. code-block:: python
 
-   market = await client.get_market("fFUEL/fUSDC")
-   depth = await client.get_depth("fFUEL/fUSDC")
+   market = await client.get_market("FUEL/USDC")
+   depth = await client.get_depth("FUEL/USDC")
 
    if depth.best_ask:
        chain_price = int(depth.best_ask.price)

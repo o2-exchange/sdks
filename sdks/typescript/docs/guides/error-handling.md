@@ -10,7 +10,7 @@ All API errors extend the base O2Error class:
 import { O2Error, InvalidSignature, RateLimitExceeded } from "@o2exchange/sdk";
 
 try {
-  await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 } catch (error) {
   if (error instanceof O2Error) {
     console.log(`Code: ${error.code}`);
@@ -25,7 +25,7 @@ try {
 The `SessionActionsResponse` class provides structured success checking:
 
 ```ts
-const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 
 if (response.success) {
   console.log(`TX: ${response.txId}`);
@@ -114,7 +114,7 @@ for the revert name. These are raised as `OnChainRevertError`:
 import { OnChainRevertError } from "@o2exchange/sdk";
 
 try {
-  await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 } catch (error) {
   if (error instanceof OnChainRevertError) {
     console.log(`Revert reason: ${error.reason}`);
@@ -139,10 +139,10 @@ The SDK checks session expiry before submitting actions and raises
 import { SessionExpired } from "@o2exchange/sdk";
 
 try {
-  await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 } catch (error) {
   if (error instanceof SessionExpired) {
-    await client.createSession(wallet, ["fFUEL/fUSDC"]);
+    await client.createSession(wallet, ["FUEL/USDC"]);
   }
 }
 ```
@@ -170,7 +170,7 @@ trading, refresh the nonce to re-sync:
 
 ```ts
 try {
-  await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 } catch (error) {
   await client.refreshNonce();
 }
@@ -187,17 +187,17 @@ import {
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = O2Client.generateWallet();
 await client.setupAccount(wallet);
-await client.createSession(wallet, ["fFUEL/fUSDC"]);
+await client.createSession(wallet, ["FUEL/USDC"]);
 
 async function placeOrder() {
   try {
-    const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+    const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
     if (response.success) {
       console.log(`Success: ${response.txId}`);
     }
   } catch (error) {
     if (error instanceof SessionExpired || error instanceof InvalidSession) {
-      await client.createSession(wallet, ["fFUEL/fUSDC"]);
+      await client.createSession(wallet, ["FUEL/USDC"]);
       return placeOrder();
     }
     if (error instanceof OnChainRevertError) {

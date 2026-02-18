@@ -38,7 +38,7 @@ Stream real-time order book updates:
 ```rust,ignore
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
+let market = client.get_market("FUEL/USDC").await?;
 let mut stream = client.stream_depth(&market.market_id, "10").await?;
 
 while let Some(Ok(update)) = stream.next().await {
@@ -110,7 +110,7 @@ Stream all trades for a market:
 ```rust,ignore
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
+let market = client.get_market("FUEL/USDC").await?;
 let mut stream = client.stream_trades(&market.market_id).await?;
 
 while let Some(Ok(update)) = stream.next().await {
@@ -181,7 +181,7 @@ Use `tokio::join!` or `tokio::spawn` to run multiple streams concurrently:
 use o2_sdk::Identity;
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
+let market = client.get_market("FUEL/USDC").await?;
 let identity = Identity::ContractId(session.trade_account_id.to_string());
 
 let mut depth_stream = client.stream_depth(&market.market_id, "10").await?;
@@ -238,7 +238,7 @@ For non-snapshot streams, monitor lifecycle events and refresh state on reconnec
 use o2_sdk::WsLifecycleEvent;
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
+let market = client.get_market("FUEL/USDC").await?;
 let mut stream = client.stream_depth(&market.market_id, "10").await?;
 let mut lifecycle = client.subscribe_ws_lifecycle().await?;
 

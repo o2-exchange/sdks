@@ -185,7 +185,7 @@ export type Signature = Secp256k1Signature;
  * Describes an asset within a {@link Market} (base or quote).
  */
 export interface MarketAsset {
-  /** The token symbol (e.g., `"fFUEL"`, `"fUSDC"`). */
+  /** The token symbol (e.g., `"FUEL"`, `"USDC"`). */
   symbol: string;
   /** The asset ID on the Fuel blockchain. */
   asset: AssetId;
@@ -203,10 +203,10 @@ export interface MarketAsset {
  *
  * @example
  * ```ts
- * const market = await client.getMarket("fFUEL/fUSDC");
+ * const market = await client.getMarket("FUEL/USDC");
  * console.log(market.market_id);      // "0x..."
- * console.log(market.base.symbol);    // "fFUEL"
- * console.log(market.quote.symbol);   // "fUSDC"
+ * console.log(market.base.symbol);    // "FUEL"
+ * console.log(market.quote.symbol);   // "USDC"
  * ```
  */
 export interface Market {
@@ -305,7 +305,7 @@ export interface DepthLevel {
  *
  * @example
  * ```ts
- * const depth = await client.getDepth("fFUEL/fUSDC");
+ * const depth = await client.getDepth("FUEL/USDC");
  * console.log(`Best bid: ${depth.buys[0]?.price}`);
  * console.log(`Best ask: ${depth.sells[0]?.price}`);
  * ```
@@ -525,7 +525,7 @@ export type DesiredQuantity =
  *
  * @example
  * ```ts
- * const orders = await client.getOrders(tradeAccountId, "fFUEL/fUSDC", true);
+ * const orders = await client.getOrders(tradeAccountId, "FUEL/USDC", true);
  * for (const order of orders) {
  *   console.log(`${order.side} ${order.quantity} @ ${order.price}`);
  * }
@@ -593,7 +593,7 @@ export interface OrdersResponse {
  *
  * @example
  * ```ts
- * const trades = await client.getTrades("fFUEL/fUSDC", 10);
+ * const trades = await client.getTrades("FUEL/USDC", 10);
  * for (const trade of trades) {
  *   console.log(`${trade.side} ${trade.quantity} @ ${trade.price}`);
  * }
@@ -661,7 +661,7 @@ export interface BalanceResponse {
  *
  * @example
  * ```ts
- * const bars = await client.getBars("fFUEL/fUSDC", "1h", fromTs, toTs);
+ * const bars = await client.getBars("FUEL/USDC", "1h", fromTs, toTs);
  * for (const bar of bars) {
  *   console.log(`${new Date(bar.time * 1000).toISOString()}: O=${bar.open} C=${bar.close}`);
  * }
@@ -793,7 +793,7 @@ export interface SessionActionsRequest {
  *
  * @example
  * ```ts
- * const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+ * const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
  * if (response.success) {
  *   console.log(`TX: ${response.txId}`);
  *   console.log(`Orders: ${response.orders?.length}`);
@@ -976,7 +976,7 @@ export interface AggregatedOrderbook {
  * Summary for a trading pair (CoinGecko-compatible format).
  */
 export interface PairSummary {
-  /** Trading pair identifier (e.g., `"fFUEL_fUSDC"`). */
+  /** Trading pair identifier (e.g., `"FUEL_USDC"`). */
   trading_pairs: string;
   /** Last traded price. */
   last_price: string;
@@ -1000,7 +1000,7 @@ export interface PairSummary {
  * Ticker data for a trading pair (CoinGecko-compatible format).
  */
 export interface PairTicker {
-  /** Ticker identifier (e.g., `"fFUEL_fUSDC"`). */
+  /** Ticker identifier (e.g., `"FUEL_USDC"`). */
   ticker_id: string;
   /** Base currency symbol. */
   base_currency: string;
@@ -1136,7 +1136,7 @@ export interface O2ErrorResponse {
  *
  * @example
  * ```ts
- * const session = await client.createSession(wallet, ["fFUEL/fUSDC"]);
+ * const session = await client.createSession(wallet, ["FUEL/USDC"]);
  * console.log(session.tradeAccountId); // "0x..."
  * console.log(session.expiry);         // Unix seconds
  * ```

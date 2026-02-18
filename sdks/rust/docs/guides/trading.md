@@ -11,7 +11,7 @@ passed to [`O2Client::create_order`](crate::client::O2Client::create_order).
 
 ```rust,ignore
 use o2_sdk::{O2Client, Network, OrderType, Side};
-let market = "fFUEL/fUSDC";
+let market = "FUEL/USDC";
 ```
 
 ### Spot (default)
@@ -100,7 +100,7 @@ types as `create_order`.
 
 ```rust,ignore
 let actions = client
-    .actions_for("fFUEL/fUSDC")
+    .actions_for("FUEL/USDC")
     .await?
     .settle_balance()
     .create_order(Side::Buy, "0.02", "100", OrderType::PostOnly)
@@ -108,7 +108,7 @@ let actions = client
     .build()?;
 
 let result = client
-    .batch_actions(&mut session, "fFUEL/fUSDC", actions, true)
+    .batch_actions(&mut session, "FUEL/USDC", actions, true)
     .await?;
 ```
 

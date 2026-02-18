@@ -13,7 +13,7 @@ branded hex IDs, and `Side` normalization are applied before delivery.
 Stream real-time order book updates:
 
 ```ts
-const stream = await client.streamDepth("fFUEL/fUSDC", 10);
+const stream = await client.streamDepth("FUEL/USDC", 10);
 for await (const update of stream) {
   const asks = update.view?.sells ?? update.changes?.sells ?? [];
   const bids = update.view?.buys ?? update.changes?.buys ?? [];
@@ -50,7 +50,7 @@ for await (const update of stream) {
 Stream trades as they occur in a market:
 
 ```ts
-const stream = await client.streamTrades("fFUEL/fUSDC");
+const stream = await client.streamTrades("FUEL/USDC");
 for await (const update of stream) {
   for (const trade of update.trades) {
     console.log(`${trade.side} ${trade.quantity} @ ${trade.price}`);  // bigint
@@ -91,7 +91,7 @@ async functions:
 
 ```ts
 async function monitorDepth() {
-  const stream = await client.streamDepth("fFUEL/fUSDC");
+  const stream = await client.streamDepth("FUEL/USDC");
   for await (const update of stream) {
     // Handle depth updates
   }

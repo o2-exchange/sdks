@@ -25,7 +25,7 @@ logger = logging.getLogger("market_maker")
 
 # Configuration
 PRIVATE_KEY = None  # Set to your owner private key hex, or None to generate
-MARKET_PAIR = "fFUEL/fUSDC"
+MARKET_PAIR = "FUEL/USDC"
 SPREAD_PCT = 0.02  # 2% spread
 ORDER_SIZE_USD = 2.0  # USD value per side
 CYCLE_INTERVAL = 15  # seconds between cycles

@@ -167,7 +167,7 @@ Session management
 
       session = await client.create_session(
           owner=owner,
-          markets=["fFUEL/fUSDC"],
+          markets=["FUEL/USDC"],
           expiry_days=7,
       )
 
@@ -236,24 +236,24 @@ Trading
       from o2_sdk import OrderSide, OrderType, LimitOrder, BoundedMarketOrder
 
       # Spot (default) — rests on the book
-      await client.create_order("fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+      await client.create_order("FUEL/USDC", OrderSide.BUY, 0.02, 100.0)
 
       # PostOnly — rejected if it would match immediately
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
           order_type=OrderType.POST_ONLY,
       )
 
       # BoundedMarket — market order with price bounds
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.025, 100.0,
           order_type=BoundedMarketOrder(max_price=0.03, min_price=0.01),
       )
 
       # Limit — with expiry timestamp
       import time
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
           order_type=LimitOrder(price=0.025, timestamp=int(time.time())),
       )
 
@@ -391,7 +391,7 @@ Market data
    Get a specific market by its pair symbol.
 
    :param symbol_pair: The trading pair (e.g., ``"FUEL/USDC"`` or
-       ``"fFUEL/fUSDC"``).
+       ``"FUEL/USDC"``).
    :type symbol_pair: str
    :returns: The market definition.
    :rtype: :class:`~o2_sdk.models.Market`
@@ -412,7 +412,7 @@ Market data
 
    .. code-block:: python
 
-      depth = await client.get_depth("fFUEL/fUSDC", precision=10)
+      depth = await client.get_depth("FUEL/USDC", precision=10)
       if depth.best_bid:
           print(f"Best bid: {depth.best_bid.price}")
       if depth.best_ask:
@@ -451,7 +451,7 @@ Market data
 
       import time
       bars = await client.get_bars(
-          "fFUEL/fUSDC",
+          "FUEL/USDC",
           resolution="1h",
           from_ts=int(time.time()) - 86400,
           to_ts=int(time.time()),
@@ -547,7 +547,7 @@ supports automatic reconnection with exponential backoff.
 
    .. code-block:: python
 
-      async for update in client.stream_depth("fFUEL/fUSDC"):
+      async for update in client.stream_depth("FUEL/USDC"):
           if update.is_snapshot:
               print(f"Snapshot: {len(update.changes.buys)} bids, {len(update.changes.sells)} asks")
           else:
@@ -624,7 +624,7 @@ Withdrawals
 
    .. code-block:: python
 
-      result = await client.withdraw(owner=owner, asset="fUSDC", amount=10.0)
+      result = await client.withdraw(owner=owner, asset="USDC", amount=10.0)
       if result.success:
           print(f"Withdrawal tx: {result.tx_id}")
 

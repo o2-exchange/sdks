@@ -28,7 +28,7 @@ Stream real-time order book updates:
 
 .. code-block:: python
 
-   async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
+   async for update in client.stream_depth("FUEL/USDC", precision=10):
        if update.is_snapshot:
            # First message is a full snapshot
            print(f"Snapshot: {len(update.changes.buys)} bids, {len(update.changes.sells)} asks")
@@ -66,7 +66,7 @@ Stream all trades for a market:
 
 .. code-block:: python
 
-   async for update in client.stream_trades("fFUEL/fUSDC"):
+   async for update in client.stream_trades("FUEL/USDC"):
        for trade in update.trades:
            print(f"{trade.side} {trade.quantity} @ {trade.price}")
 
@@ -106,7 +106,7 @@ concurrently:
    import asyncio
 
    async def watch_depth():
-       async for update in client.stream_depth("fFUEL/fUSDC"):
+       async for update in client.stream_depth("FUEL/USDC"):
            if update.changes.best_bid:
                print(f"Best bid: {update.changes.best_bid.price}")
 
@@ -116,7 +116,7 @@ concurrently:
                print(f"Order {order.order_id}: {'open' if order.is_open else 'closed'}")
 
    async def watch_trades():
-       async for update in client.stream_trades("fFUEL/fUSDC"):
+       async for update in client.stream_trades("FUEL/USDC"):
            for trade in update.trades:
                print(f"Trade: {trade.quantity} @ {trade.price}")
 
@@ -147,5 +147,5 @@ Or use the async context manager:
 .. code-block:: python
 
    async with O2Client(network=Network.TESTNET) as client:
-       async for update in client.stream_depth("fFUEL/fUSDC"):
+       async for update in client.stream_depth("FUEL/USDC"):
            ...

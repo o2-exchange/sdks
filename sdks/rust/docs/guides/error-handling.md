@@ -12,7 +12,7 @@ All SDK errors are represented by the [`O2Error`](crate::O2Error) enum, which im
 ```rust,ignore
 use o2_sdk::O2Error;
 
-let market = "fFUEL/fUSDC";
+let market = "FUEL/USDC";
 match client.create_order(&mut session, market, Side::Buy, "0.02", "100", OrderType::Spot, true, true).await {
     Ok(resp) => println!("Success: {:?}", resp.tx_id),
     Err(e) => println!("Error: {}", e),

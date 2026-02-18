@@ -16,8 +16,8 @@ import { O2Client, Network } from "@o2exchange/sdk";
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = O2Client.generateWallet();
 await client.setupAccount(wallet);
-await client.createSession(wallet, ["fFUEL/fUSDC"]);
-const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+await client.createSession(wallet, ["FUEL/USDC"]);
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "50");
 ```
 
 ## API Reference
@@ -108,8 +108,8 @@ import { ... } from "@o2exchange/sdk/internals";
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = O2Client.generateWallet();
 const { tradeAccountId } = await client.setupAccount(wallet);
-await client.createSession(wallet, ["fFUEL/fUSDC"]);
-const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+await client.createSession(wallet, ["FUEL/USDC"]);
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "50");
 console.log(`Order TX: ${response.txId}`);
 ```
 
@@ -129,7 +129,7 @@ while (true) {
   actions.push(createOrderAction("buy", buyPrice, qty, "PostOnly"));
   actions.push(createOrderAction("sell", sellPrice, qty, "PostOnly"));
 
-  const response = await client.batchActions([{ market: "fFUEL/fUSDC", actions }], true);
+  const response = await client.batchActions([{ market: "FUEL/USDC", actions }], true);
   buyId = response.orders?.find((o) => o.side === "buy")?.order_id ?? null;
   sellId = response.orders?.find((o) => o.side === "sell")?.order_id ?? null;
   await sleep(10_000);
@@ -139,7 +139,7 @@ while (true) {
 ### 3. Real-Time Depth Monitoring
 
 ```ts
-const depthStream = await client.streamDepth("fFUEL/fUSDC", 10);
+const depthStream = await client.streamDepth("FUEL/USDC", 10);
 for await (const update of depthStream) {
   const asks = update.view?.sells ?? update.changes?.sells ?? [];
   const bids = update.view?.buys ?? update.changes?.buys ?? [];
@@ -150,9 +150,9 @@ for await (const update of depthStream) {
 ### 4. Order Management
 
 ```ts
-await client.cancelOrder(orderId, "fFUEL/fUSDC");
-await client.cancelAllOrders("fFUEL/fUSDC");
-await client.settleBalance("fFUEL/fUSDC");
+await client.cancelOrder(orderId, "FUEL/USDC");
+await client.cancelAllOrders("FUEL/USDC");
+await client.settleBalance("FUEL/USDC");
 await client.refreshNonce();
 ```
 
@@ -180,7 +180,7 @@ for (const [symbol, bal] of Object.entries(balances)) {
   console.log(`${symbol}: ${bal.trading_account_balance}`);
 }
 
-await client.withdraw(wallet, "fUSDC", "100.0");
+await client.withdraw(wallet, "USDC", "100.0");
 ```
 
 ## Error Handling
@@ -200,7 +200,7 @@ On-chain reverts have no `code` field — check `error.reason` for revert name (
 
 ```ts
 try {
-  await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 } catch (error) {
   if (error instanceof O2Error) {
     console.log(error.code, error.message, error.reason);

@@ -26,7 +26,7 @@ import {
 
 const CONFIG = {
   network: Network.TESTNET,
-  marketPair: "fFUEL/fUSDC", // Adjust to match your testnet market
+  marketPair: "FUEL/USDC", // Adjust to match your testnet market
   spreadPercent: 0.02, // 2% spread
   orderQuantity: "100.0", // Base quantity per side (human-readable)
   cycleIntervalMs: 10000, // 10 seconds between cycles

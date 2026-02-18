@@ -18,10 +18,10 @@ async def main():
     client = O2Client(network=Network.TESTNET)
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
-    session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+    session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
+    result = await client.create_order("FUEL/USDC", OrderSide.BUY, 0.02, 100.0)
     batch = (
-        client.actions_for("fFUEL/fUSDC")
+        client.actions_for("FUEL/USDC")
         .settle_balance()
         .create_order(OrderSide.SELL, "0.03", "50", OrderType.POST_ONLY)
         .build()
@@ -145,8 +145,8 @@ High-level batch action models:
 client = O2Client(network=Network.TESTNET)
 owner = client.generate_wallet()
 account = await client.setup_account(owner)
-session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, "0.02", "100")
+session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
+result = await client.create_order("FUEL/USDC", OrderSide.BUY, "0.02", "100")
 ```
 
 ### 2. Market Maker Loop
@@ -178,7 +178,7 @@ while True:
 from o2_sdk import BoundedMarketOrder, OrderSide
 
 result = await client.create_order(
-    session, "fFUEL/fUSDC",
+    session, "FUEL/USDC",
     side=OrderSide.BUY,
     price=ask_price,
     quantity=quantity,
@@ -189,7 +189,7 @@ result = await client.create_order(
 ### 4. Real-Time Depth Monitoring
 
 ```python
-async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
+async for update in client.stream_depth("FUEL/USDC", precision=10):
     if update.changes.best_bid:
         print(f"Best bid: {update.changes.best_bid.price}")
 ```
@@ -198,13 +198,13 @@ async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
 
 ```python
 # Cancel specific order
-await client.cancel_order(order_id="0x...", market="fFUEL/fUSDC", session=session)
+await client.cancel_order(order_id="0x...", market="FUEL/USDC", session=session)
 
 # Cancel all open orders
-await client.cancel_all_orders("fFUEL/fUSDC", session=session)
+await client.cancel_all_orders("FUEL/USDC", session=session)
 
 # Settle balance
-await client.settle_balance("fFUEL/fUSDC", session=session)
+await client.settle_balance("FUEL/USDC", session=session)
 ```
 
 ### 6. Identity Construction
@@ -230,7 +230,7 @@ balances = await client.get_balances(account.trade_account_id)
 for symbol, bal in balances.items():
     print(f"{symbol}: {bal.trading_account_balance}")
 
-await client.withdraw(owner=owner, asset="fUSDC", amount=10.0)
+await client.withdraw(owner=owner, asset="USDC", amount=10.0)
 ```
 
 ## Error Handling

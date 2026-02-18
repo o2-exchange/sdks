@@ -1318,7 +1318,7 @@ mod tests {
                 max_precision: 6,
             },
             quote: MarketAsset {
-                symbol: "fUSDC".to_string(),
+                symbol: "USDC".to_string(),
                 asset: "0xquote".into(),
                 decimals: 9,
                 max_precision: 6,

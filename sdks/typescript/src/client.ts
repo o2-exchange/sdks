@@ -13,8 +13,8 @@
  * const client = new O2Client({ network: Network.TESTNET });
  * const wallet = O2Client.generateWallet();
  * await client.setupAccount(wallet);
- * await client.createSession(wallet, ["fFUEL/fUSDC"]);
- * const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+ * await client.createSession(wallet, ["FUEL/USDC"]);
+ * const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "50");
  * console.log(`Order TX: ${response.txId}`);
  * client.close();
  * ```
@@ -634,7 +634,7 @@ export class O2Client {
    * @example
    * ```ts
    * await client.batchActions([
-   *   { market: "fFUEL/fUSDC", actions: [
+   *   { market: "FUEL/USDC", actions: [
    *     settleBalanceAction(),
    *     createOrderAction("buy", "0.02", "100"),
    *     createOrderAction("sell", "0.05", "50", "PostOnly"),
@@ -682,7 +682,7 @@ export class O2Client {
   }
 
   /**
-   * Resolve a market by symbol pair (e.g., `"fFUEL/fUSDC"`) or hex market ID.
+   * Resolve a market by symbol pair (e.g., `"FUEL/USDC"`) or hex market ID.
    *
    * @param symbolPair - The market pair or hex ID.
    * @throws {@link O2Error} if the market is not found.
@@ -911,7 +911,7 @@ export class O2Client {
    * Withdraw funds from trading account to owner wallet.
    *
    * @param wallet - The owner wallet (not session key).
-   * @param asset - Asset symbol (e.g., `"fUSDC"`) or hex asset ID.
+   * @param asset - Asset symbol (e.g., `"USDC"`) or hex asset ID.
    * @param amount - Amount as human-readable string or raw bigint.
    * @param to - Destination address (defaults to wallet address).
    */

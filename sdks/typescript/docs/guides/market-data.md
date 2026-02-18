@@ -14,14 +14,14 @@ for (const market of markets) {
 To get a specific market by its symbol pair:
 
 ```ts
-const market = await client.getMarket("fFUEL/fUSDC");
+const market = await client.getMarket("FUEL/USDC");
 console.log(market.contract_id);
 console.log(market.base.decimals);  // e.g., 9
 console.log(market.quote.decimals); // e.g., 9
 ```
 
 The market pair lookup is case-insensitive and supports the `f`-prefix
-convention used on testnet (e.g., `"FUEL/USDC"` matches `"fFUEL/fUSDC"`).
+convention used on testnet (e.g., `"FUEL/USDC"` matches `"FUEL/USDC"`).
 You can also pass a hex `market_id` directly.
 
 ## Order Book Depth
@@ -29,7 +29,7 @@ You can also pass a hex `market_id` directly.
 Fetch a snapshot of the current order book:
 
 ```ts
-const depth = await client.getDepth("fFUEL/fUSDC", 10);
+const depth = await client.getDepth("FUEL/USDC", 10);
 
 console.log("Top 3 bids:");
 for (const level of depth.buys.slice(0, 3)) {
@@ -48,7 +48,7 @@ Depth level `price` and `quantity` are `bigint` chain integers. Use
 ```ts
 import { formatPrice, formatQuantity } from "@o2exchange/sdk";
 
-const market = await client.getMarket("fFUEL/fUSDC");
+const market = await client.getMarket("FUEL/USDC");
 const depth = await client.getDepth(market, 10);
 
 for (const level of depth.buys) {
@@ -59,7 +59,7 @@ for (const level of depth.buys) {
 ## Recent Trades
 
 ```ts
-const trades = await client.getTrades("fFUEL/fUSDC", 20);
+const trades = await client.getTrades("FUEL/USDC", 20);
 for (const trade of trades) {
   console.log(`${trade.side} ${trade.quantity} @ ${trade.price} — ${trade.timestamp}`);
   // trade.price, trade.quantity, trade.total are bigint
@@ -74,7 +74,7 @@ Fetch candlestick data for charting:
 const now = Math.floor(Date.now() / 1000);
 const oneDayAgo = now - 86400;
 
-const bars = await client.getBars("fFUEL/fUSDC", "1h", oneDayAgo, now);
+const bars = await client.getBars("FUEL/USDC", "1h", oneDayAgo, now);
 for (const bar of bars) {
   console.log(
     `${new Date(bar.time * 1000).toISOString()}: ` +
@@ -90,7 +90,7 @@ Supported resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`, `"1d"`,
 Get the current ticker for a market:
 
 ```ts
-const ticker = await client.getTicker("fFUEL/fUSDC");
+const ticker = await client.getTicker("FUEL/USDC");
 console.log(`Last: ${ticker.last_price}`);
 console.log(`Bid: ${ticker.best_bid} / Ask: ${ticker.best_ask}`);
 console.log(`Volume: ${ticker.base_volume} base, ${ticker.quote_volume} quote`);
@@ -118,7 +118,7 @@ helper functions to convert between human-readable and chain formats:
 ```ts
 import { formatPrice, formatQuantity, scalePriceForMarket, scaleQuantityForMarket } from "@o2exchange/sdk";
 
-const market = await client.getMarket("fFUEL/fUSDC");
+const market = await client.getMarket("FUEL/USDC");
 
 // Chain integer (bigint) → human-readable
 const humanPrice = formatPrice(market, 20000000n);      // e.g., 0.02
@@ -146,5 +146,5 @@ const accountTrades = await client.api.getTradesByAccount(
 
 // Aggregated data (CoinGecko format)
 const assets = await client.api.getAggregatedAssets();
-const orderbook = await client.api.getAggregatedOrderbook("fFUEL_fUSDC");
+const orderbook = await client.api.getAggregatedOrderbook("FUEL_USDC");
 ```

@@ -17,7 +17,7 @@ struct MakerConfig {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = MakerConfig {
-        market_pair: "fFUEL/fUSDC",
+        market_pair: "FUEL/USDC",
         spread_pct: "0.02".parse()?, // 2% spread
         order_size: "100".parse()?,  // base quantity
         cycle_interval: Duration::from_secs(30),

@@ -370,7 +370,7 @@ enclaves, use the external signer classes.
           b256_address="0x1234...abcd",
           sign_digest=kms_sign,
       )
-      session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
+      session = await client.create_session(owner=signer, markets=["FUEL/USDC"])
 
 .. class:: ExternalEvmSigner(b256_address, evm_address, sign_digest)
 

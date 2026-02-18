@@ -18,7 +18,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet()?;
     let _account = client.setup_account(&wallet).await?;
-    let market_symbol = "fFUEL/fUSDC";
+    let market_symbol = "FUEL/USDC";
     let mut session = client.create_session(&wallet, &[market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
     let market = client.get_market(market_symbol).await?;
     let price = market.price("0.05")?;
@@ -114,7 +114,7 @@ Note: `unsubscribe_orders` is currently connection-global in the backend API (no
 let mut client = O2Client::new(Network::Testnet);
 let wallet = client.generate_wallet()?;
 let account = client.setup_account(&wallet).await?;
-let market_symbol = "fFUEL/fUSDC";
+let market_symbol = "FUEL/USDC";
 let mut session = client.create_session(&wallet, &[market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
 let market = client.get_market(market_symbol).await?;
 let resp = client.create_order(
@@ -154,7 +154,7 @@ while let Some(update) = stream.next().await {
 ### 4. Order Management
 
 ```rust
-let market_symbol = "fFUEL/fUSDC";
+let market_symbol = "FUEL/USDC";
 let order_id: o2_sdk::OrderId = "0xorder_id...".into();
 client.cancel_order(&mut session, &order_id, market_symbol).await?;
 client.cancel_all_orders(&mut session, market_symbol).await?;
@@ -219,4 +219,4 @@ match client.create_order(&mut session, market_symbol, ...).await {
 - Function selectors are `u64(len) + utf8(name)`, NOT hashes
 - OrderType encoding is tightly packed (no padding)
 - gas = `u64::MAX`; chain_id can be 0 on testnet
-- Markets accept both hex IDs and symbol pairs (e.g., "fFUEL/fUSDC")
+- Markets accept both hex IDs and symbol pairs (e.g., "FUEL/USDC")

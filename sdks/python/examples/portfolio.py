@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s
 logger = logging.getLogger("portfolio")
 
 PRIVATE_KEY = None  # Set to your owner private key hex, or None to generate
-MARKET_PAIR = "fFUEL/fUSDC"
+MARKET_PAIR = "FUEL/USDC"
 
 
 async def main():

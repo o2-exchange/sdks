@@ -368,7 +368,7 @@ class ExternalSigner:
             b256_address="0x1234...abcd",
             sign_digest=kms_sign,
         )
-        session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
+        session = await client.create_session(owner=signer, markets=["FUEL/USDC"])
     """
 
     def __init__(self, b256_address: str, sign_digest: SignDigestFn) -> None:
@@ -415,7 +415,7 @@ class ExternalEvmSigner:
             evm_address="0xabcd...1234",
             sign_digest=kms_sign,
         )
-        session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
+        session = await client.create_session(owner=signer, markets=["FUEL/USDC"])
     """
 
     def __init__(self, b256_address: str, evm_address: str, sign_digest: SignDigestFn) -> None:

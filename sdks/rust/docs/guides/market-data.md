@@ -19,13 +19,13 @@ for market in &markets {
 }
 
 // Get a specific market
-let market = client.get_market("fFUEL/fUSDC").await?;
+let market = client.get_market("FUEL/USDC").await?;
 println!("Min order: {}", market.min_order);
 println!("Maker fee: {}", market.maker_fee);
 ```
 
 The market pair lookup is case-sensitive and supports the `f`-prefix
-convention used on testnet (e.g., `"fFUEL/fUSDC"`). You can also look up
+convention used on testnet (e.g., `"FUEL/USDC"`). You can also look up
 by hex market ID using [`O2Client::get_market_by_id`](crate::client::O2Client::get_market_by_id).
 
 ## Order Book Depth
@@ -33,7 +33,7 @@ by hex market ID using [`O2Client::get_market_by_id`](crate::client::O2Client::g
 Fetch a snapshot of the order book:
 
 ```rust,ignore
-let depth = client.get_depth("fFUEL/fUSDC", 10).await?;
+let depth = client.get_depth("FUEL/USDC", 10).await?;
 
 let buys = depth.buys.as_deref().unwrap_or_default();
 let sells = depth.sells.as_deref().unwrap_or_default();
@@ -60,7 +60,7 @@ produce fewer, wider price levels.
 ## Recent Trades
 
 ```rust,ignore
-let trades_resp = client.get_trades("fFUEL/fUSDC", 20).await?;
+let trades_resp = client.get_trades("FUEL/USDC", 20).await?;
 if let Some(trades) = &trades_resp.trades {
     for trade in trades {
         println!(
@@ -80,7 +80,7 @@ if let Some(trades) = &trades_resp.trades {
 use std::time::{SystemTime, UNIX_EPOCH};
 
 let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-let bars = client.get_bars("fFUEL/fUSDC", "1h", now - 86400, now).await?;
+let bars = client.get_bars("FUEL/USDC", "1h", now - 86400, now).await?;
 
 for bar in &bars {
     println!(
@@ -101,7 +101,7 @@ Supported resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`,
 ## Ticker Data
 
 ```rust,ignore
-let ticker = client.get_ticker("fFUEL/fUSDC").await?;
+let ticker = client.get_ticker("FUEL/USDC").await?;
 println!("Last: {}", ticker.last_price.as_deref().unwrap_or("?"));
 println!("Bid: {} / Ask: {}",
     ticker.best_bid.as_deref().unwrap_or("?"),
@@ -115,8 +115,8 @@ Market data is returned in on-chain integer format. Use the [`Market`](crate::Ma
 helper methods to convert to/from human-readable values:
 
 ```rust,ignore
-let market = client.get_market("fFUEL/fUSDC").await?;
-let depth = client.get_depth("fFUEL/fUSDC", 10).await?;
+let market = client.get_market("FUEL/USDC").await?;
+let depth = client.get_depth("FUEL/USDC", 10).await?;
 
 if let Some(best_ask) = depth.sells.as_deref().and_then(|s| s.first()) {
     let chain_price: u64 = best_ask.price.parse().unwrap_or(0);
@@ -154,7 +154,7 @@ through the `api` field:
 let assets = client.api.get_aggregated_assets().await?;
 
 // Aggregated order book
-let book = client.api.get_aggregated_orderbook("fFUEL_fUSDC").await?;
+let book = client.api.get_aggregated_orderbook("FUEL_USDC").await?;
 
 // Market summaries
 let summaries = client.api.get_aggregated_summary().await?;

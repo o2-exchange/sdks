@@ -46,8 +46,8 @@ async def main():
     client = O2Client(network=Network.TESTNET)
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
-    session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0)
+    session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
+    result = await client.create_order("FUEL/USDC", OrderSide.BUY, price=0.02, quantity=100.0)
     print(f"Created order with transaction ID {result.tx_id}")
     await client.close()
 
@@ -62,8 +62,8 @@ import { O2Client, Network } from "@o2exchange/sdk";
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = client.generateWallet();
 const { tradeAccountId } = await client.setupAccount(wallet);
-const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
-const { response } = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
+const session = await client.createSession(wallet, tradeAccountId, ["FUEL/USDC"]);
+const { response } = await client.createOrder(session, "FUEL/USDC", "Buy", 0.02, 50.0);
 console.log(response.tx_id);
 ```
 
@@ -77,9 +77,9 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet()?;
     let account = client.setup_account(&wallet).await?;
-    let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
+    let mut session = client.create_session(&wallet, &["FUEL/USDC"], 30).await?;
     let order = client.create_order(
-        &mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?,
+        &mut session, "FUEL/USDC", Side::Buy, "0.05".parse()?, "100".parse()?,
         OrderType::Spot, true, true,
     ).await?;
     Ok(())

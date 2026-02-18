@@ -25,7 +25,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
 
    .. code-block:: python
 
-      await client.create_order("fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+      await client.create_order("FUEL/USDC", OrderSide.BUY, 0.02, 100.0)
 
 **PostOnly**
    Guaranteed to be a maker order. Rejected immediately if it would cross
@@ -34,7 +34,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
           order_type=OrderType.POST_ONLY,
       )
 
@@ -45,7 +45,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.03, 100.0,
           order_type=OrderType.MARKET,
       )
 
@@ -56,7 +56,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.03, 100.0,
           order_type=OrderType.FILL_OR_KILL,
       )
 
@@ -69,7 +69,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
       import time
 
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
           order_type=LimitOrder(price=0.025, timestamp=int(time.time())),
       )
 
@@ -81,7 +81,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
+          "FUEL/USDC", OrderSide.BUY, 0.025, 100.0,
           order_type=BoundedMarketOrder(max_price=0.03, min_price=0.01),
       )
 
@@ -94,10 +94,10 @@ To cancel an existing order and place a new one:
 .. code-block:: python
 
    # Cancel by order ID
-   await client.cancel_order(order_id="0xabc...", market="fFUEL/fUSDC")
+   await client.cancel_order(order_id="0xabc...", market="FUEL/USDC")
 
    # Cancel all open orders
-   await client.cancel_all_orders("fFUEL/fUSDC")
+   await client.cancel_all_orders("FUEL/USDC")
 
 To atomically cancel-and-replace in a single transaction, use
 :meth:`~o2_sdk.client.O2Client.actions_for` + :meth:`~o2_sdk.client.O2Client.batch_actions`:
@@ -108,7 +108,7 @@ To atomically cancel-and-replace in a single transaction, use
 
    result = await client.batch_actions(
        actions=[
-           client.actions_for("fFUEL/fUSDC")
+           client.actions_for("FUEL/USDC")
            .cancel_order(old_order_id)
            .settle_balance()
            .create_order(OrderSide.BUY, new_price, new_qty, OrderType.SPOT)
@@ -137,7 +137,7 @@ when ``settle_first=True`` (the default). You can also settle manually:
 
 .. code-block:: python
 
-   await client.settle_balance("fFUEL/fUSDC")
+   await client.settle_balance("FUEL/USDC")
 
 
 Market maker pattern
@@ -153,7 +153,7 @@ A simple two-sided quoting loop using typed actions:
        MarketActions, OrderSide, OrderType,
    )
 
-   market = await client.get_market("fFUEL/fUSDC")
+   market = await client.get_market("FUEL/USDC")
    spread = 0.001
    qty = 50.0
    active_buy = None
@@ -161,7 +161,7 @@ A simple two-sided quoting loop using typed actions:
 
    while True:
        # Get current mid price
-       depth = await client.get_depth("fFUEL/fUSDC")
+       depth = await client.get_depth("FUEL/USDC")
        if depth.best_bid and depth.best_ask:
            mid = (float(depth.best_bid.price) + float(depth.best_ask.price)) / 2
            mid = market.format_price(int(mid))
@@ -212,13 +212,13 @@ Query order status:
 .. code-block:: python
 
    # All orders for an account
-   orders = await client.get_orders(account, "fFUEL/fUSDC")
+   orders = await client.get_orders(account, "FUEL/USDC")
 
    # Open orders only
-   open_orders = await client.get_orders(account, "fFUEL/fUSDC", is_open=True)
+   open_orders = await client.get_orders(account, "FUEL/USDC", is_open=True)
 
    # Single order by ID
-   order = await client.get_order("fFUEL/fUSDC", order_id="0xabc...")
+   order = await client.get_order("FUEL/USDC", order_id="0xabc...")
    print(f"Status: {'open' if order.is_open else 'closed'}")
    print(f"Filled: {order.quantity_fill} / {order.quantity}")
 
@@ -238,7 +238,7 @@ Withdraw funds from the trading account:
 
 .. code-block:: python
 
-   result = await client.withdraw(owner=owner, asset="fUSDC", amount=10.0)
+   result = await client.withdraw(owner=owner, asset="USDC", amount=10.0)
    if result.success:
        print(f"Withdrawal tx: {result.tx_id}")
 

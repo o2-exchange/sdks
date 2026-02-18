@@ -74,7 +74,7 @@ It performs the following steps automatically:
 ```ts
 await client.createSession(
   wallet,
-  ["fFUEL/fUSDC"],
+  ["FUEL/USDC"],
   30, // expiry in days (default)
 );
 ```
@@ -101,7 +101,7 @@ Prices and quantities accept dual-mode `Numeric` values:
 
 ```ts
 const response = await client.createOrder(
-  "fFUEL/fUSDC",
+  "FUEL/USDC",
   "buy",
   "0.02",   // price (human-readable string, auto-scaled)
   "100",    // quantity
@@ -145,10 +145,10 @@ async function main() {
   const { tradeAccountId } = await client.setupAccount(wallet);
 
   // Session (stored on client, tradeAccountId resolved from wallet)
-  await client.createSession(wallet, ["fFUEL/fUSDC"]);
+  await client.createSession(wallet, ["FUEL/USDC"]);
 
   // Place order (string prices, auto-scaled — session used implicitly)
-  const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+  const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
   if (response.success) {
     console.log(`txId=${response.txId}`);
   }

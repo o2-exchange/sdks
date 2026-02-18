@@ -87,7 +87,7 @@ describe("O2Api trades parsing", () => {
       ],
     });
 
-    const trades = await api.getAggregatedTrades("fFUEL_fUSDC");
+    const trades = await api.getAggregatedTrades("FUEL_USDC");
 
     expect(trades).toHaveLength(1);
     expect(trades[0].side).toBe("sell");
@@ -106,7 +106,7 @@ describe("O2Api trades parsing", () => {
       },
     ]);
 
-    const trades = await api.getAggregatedTrades("fFUEL_fUSDC");
+    const trades = await api.getAggregatedTrades("FUEL_USDC");
 
     expect(trades).toHaveLength(1);
     expect(trades[0].side).toBe("buy");

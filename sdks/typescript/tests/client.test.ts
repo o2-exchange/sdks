@@ -28,13 +28,13 @@ const MARKET: Market = {
   dust: 0n,
   price_window: 0,
   base: {
-    symbol: "fFUEL",
+    symbol: "FUEL",
     asset: BASE_ASSET_ID,
     decimals: 9,
     max_precision: 9,
   },
   quote: {
-    symbol: "fUSDC",
+    symbol: "USDC",
     asset: QUOTE_ASSET_ID,
     decimals: 9,
     max_precision: 9,
@@ -242,7 +242,7 @@ describe("O2Client bigint precision", () => {
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
     const submitActionsSpy = vi.spyOn(client.api, "submitActions");
 
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 100000000n, 123456789n)).rejects.toThrow(
+    await expect(client.createOrder("FUEL/USDC", "buy", 100000000n, 123456789n)).rejects.toThrow(
       "Quantity must be a multiple of 1000000",
     );
     expect(submitActionsSpy).not.toHaveBeenCalled();
@@ -258,7 +258,7 @@ describe("O2Client bigint precision", () => {
     await expect(
       client.batchActions([
         {
-          market: "fFUEL/fUSDC",
+          market: "FUEL/USDC",
           actions: [{ type: "createOrder", side: "buy", price: 100000000n, quantity: 123456789n }],
         },
       ]),
@@ -273,7 +273,7 @@ describe("O2Client bigint precision", () => {
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
     const submitActionsSpy = vi.spyOn(client.api, "submitActions");
 
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 123456789n, 123000000n)).rejects.toThrow(
+    await expect(client.createOrder("FUEL/USDC", "buy", 123456789n, 123000000n)).rejects.toThrow(
       "Price must be a multiple of 1000000",
     );
     expect(submitActionsSpy).not.toHaveBeenCalled();
@@ -289,7 +289,7 @@ describe("O2Client bigint precision", () => {
     await expect(
       client.batchActions([
         {
-          market: "fFUEL/fUSDC",
+          market: "FUEL/USDC",
           actions: [{ type: "createOrder", side: "buy", price: 123456789n, quantity: 123000000n }],
         },
       ]),
@@ -306,7 +306,7 @@ describe("O2Client runtime numeric guards", () => {
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
     const submitActionsSpy = vi.spyOn(client.api, "submitActions");
 
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 1 as any, "1")).rejects.toThrow(
+    await expect(client.createOrder("FUEL/USDC", "buy", 1 as any, "1")).rejects.toThrow(
       "Invalid price type: expected string or bigint, got number",
     );
     expect(submitActionsSpy).not.toHaveBeenCalled();
@@ -322,7 +322,7 @@ describe("O2Client runtime numeric guards", () => {
     await expect(
       client.batchActions([
         {
-          market: "fFUEL/fUSDC",
+          market: "FUEL/USDC",
           actions: [{ type: "createOrder", side: "buy", price: "1", quantity: 1 as any }],
         },
       ]),
@@ -338,7 +338,7 @@ describe("O2Client runtime numeric guards", () => {
     const submitActionsSpy = vi.spyOn(client.api, "submitActions");
 
     await expect(
-      client.createOrder("fFUEL/fUSDC", "buy", "1", "1", {
+      client.createOrder("FUEL/USDC", "buy", "1", "1", {
         orderType: {
           BoundedMarket: { max_price: 1 as any, min_price: "0" },
         },
@@ -372,7 +372,7 @@ describe("O2Client runtime numeric guards", () => {
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
     const withdrawSpy = vi.spyOn(client.api, "withdraw");
 
-    await expect(client.withdraw(signer, "fFUEL", 1 as any)).rejects.toThrow(
+    await expect(client.withdraw(signer, "FUEL", 1 as any)).rejects.toThrow(
       "Invalid amount type: expected string or bigint, got number",
     );
     expect(withdrawSpy).not.toHaveBeenCalled();

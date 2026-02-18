@@ -90,14 +90,14 @@ export function registerRefererAction(to: Identity): Action {
  * A group of actions targeting a specific market.
  *
  * Used with {@link O2Client.batchActions}. The `market` field accepts
- * a symbol pair string (e.g., `"fFUEL/fUSDC"`) which is resolved
+ * a symbol pair string (e.g., `"FUEL/USDC"`) which is resolved
  * internally by the SDK.
  *
  * @example
  * ```ts
  * const groups: MarketActionGroup[] = [
  *   {
- *     market: "fFUEL/fUSDC",
+ *     market: "FUEL/USDC",
  *     actions: [
  *       settleBalanceAction(),
  *       createOrderAction("buy", "0.02", "100"),
@@ -109,7 +109,7 @@ export function registerRefererAction(to: Identity): Action {
  * ```
  */
 export interface MarketActionGroup {
-  /** Market symbol pair (e.g., `"fFUEL/fUSDC"`) or hex market ID. */
+  /** Market symbol pair (e.g., `"FUEL/USDC"`) or hex market ID. */
   market: string;
   /** Actions to execute on this market (max 5 per group). */
   actions: Action[];

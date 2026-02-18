@@ -493,7 +493,7 @@ export class O2Api {
 
   /**
    * Fetch aggregated order book (CoinGecko-compatible).
-   * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
+   * @param marketPair - The market pair (e.g., `"FUEL_USDC"`).
    * @param depth - Number of levels (default: 500).
    * @param level - Aggregation level (default: 2).
    */
@@ -521,7 +521,7 @@ export class O2Api {
 
   /**
    * Fetch aggregated trades for a pair (CoinGecko-compatible).
-   * @param marketPair - The market pair (e.g., `"fFUEL_fUSDC"`).
+   * @param marketPair - The market pair (e.g., `"FUEL_USDC"`).
    */
   async getAggregatedTrades(marketPair: string): Promise<Trade[]> {
     const data = await this.get<unknown>("/v1/aggregated/trades", {

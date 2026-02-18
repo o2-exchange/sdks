@@ -105,7 +105,7 @@ A **market** represents a trading pair on the O2 Exchange (e.g.,
   ``dust`` threshold.
 
 The SDK automatically resolves human-readable pair names (like
-``"fFUEL/fUSDC"``) to their on-chain identifiers.
+``"FUEL/USDC"``) to their on-chain identifiers.
 
 Price and quantity scaling
 --------------------------
@@ -116,7 +116,7 @@ floats and on-chain integers automatically:
 
 .. code-block:: python
 
-   market = await client.get_market("fFUEL/fUSDC")
+   market = await client.get_market("FUEL/USDC")
 
    # Human → on-chain
    chain_price = market.scale_price(0.025)    # e.g. 25000
@@ -176,7 +176,7 @@ A common pattern is to settle + cancel + place in one batch:
    from o2_sdk import OrderSide, OrderType
 
    result = await client.batch_actions([
-       client.actions_for("fFUEL/fUSDC")
+       client.actions_for("FUEL/USDC")
        .settle_balance()
        .cancel_order(old_order_id)
        .create_order(OrderSide.BUY, "0.02", "100", OrderType.SPOT)

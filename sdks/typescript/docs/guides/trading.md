@@ -12,7 +12,7 @@ option of `O2Client.createOrder`.
 A standard limit order that rests on the book if not immediately filled.
 
 ```ts
-await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 ```
 
 ### PostOnly
@@ -21,7 +21,7 @@ Guaranteed to be a maker order. Rejected immediately if it would cross
 the spread and match an existing order.
 
 ```ts
-await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100", { orderType: "PostOnly" });
+await client.createOrder("FUEL/USDC", "buy", "0.02", "100", { orderType: "PostOnly" });
 ```
 
 ### Market
@@ -29,7 +29,7 @@ await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100", { orderType: "Post
 Executes immediately at the best available price.
 
 ```ts
-await client.createOrder("fFUEL/fUSDC", "buy", "0.03", "100", { orderType: "Market" });
+await client.createOrder("FUEL/USDC", "buy", "0.03", "100", { orderType: "Market" });
 ```
 
 ### FillOrKill
@@ -37,7 +37,7 @@ await client.createOrder("fFUEL/fUSDC", "buy", "0.03", "100", { orderType: "Mark
 Must be filled entirely in a single match, or the entire order is rejected.
 
 ```ts
-await client.createOrder("fFUEL/fUSDC", "buy", "0.03", "100", { orderType: "FillOrKill" });
+await client.createOrder("FUEL/USDC", "buy", "0.03", "100", { orderType: "FillOrKill" });
 ```
 
 ### Limit
@@ -49,7 +49,7 @@ Use the `limitOrder()` helper:
 import { limitOrder } from "@o2exchange/sdk";
 
 await client.createOrder(
-  "fFUEL/fUSDC", "buy", "0.02", "100",
+  "FUEL/USDC", "buy", "0.02", "100",
   { orderType: limitOrder("0.025", String(Math.floor(Date.now() / 1000))) },
 );
 ```
@@ -62,7 +62,7 @@ A market order with price bounds. Use the `boundedMarketOrder()` helper:
 import { boundedMarketOrder } from "@o2exchange/sdk";
 
 await client.createOrder(
-  "fFUEL/fUSDC", "buy", "0.025", "100",
+  "FUEL/USDC", "buy", "0.025", "100",
   { orderType: boundedMarketOrder("0.03", "0.01") },
 );
 ```
@@ -80,7 +80,7 @@ const opts: CreateOrderOptions = {
   collectOrders: true,      // default: true
 };
 
-await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100", opts);
+await client.createOrder("FUEL/USDC", "buy", "0.02", "100", opts);
 ```
 
 ## Dual-Mode Numerics
@@ -94,13 +94,13 @@ Price and quantity parameters accept a `Numeric` type (`string | bigint`):
 
 ```ts
 // Human-readable strings (auto-scaled):
-await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 
 // Raw bigints (pass-through for power users):
-await client.createOrder("fFUEL/fUSDC", "buy", 20000000n, 100000000000n);
+await client.createOrder("FUEL/USDC", "buy", 20000000n, 100000000000n);
 
 // Mix modes:
-await client.createOrder("fFUEL/fUSDC", "buy", "0.02", 100000000000n);
+await client.createOrder("FUEL/USDC", "buy", "0.02", 100000000000n);
 ```
 
 Values from API responses (e.g., `order.price`, `depth.sells[0].price`) are
@@ -111,10 +111,10 @@ Values from API responses (e.g., `order.price`, `depth.sells[0].price`) are
 Cancel an existing order:
 
 ```ts
-await client.cancelOrder(orderId, "fFUEL/fUSDC");
+await client.cancelOrder(orderId, "FUEL/USDC");
 
 // Cancel all open orders
-await client.cancelAllOrders("fFUEL/fUSDC");
+await client.cancelAllOrders("FUEL/USDC");
 ```
 
 ## Batch Actions
@@ -132,7 +132,7 @@ import {
 
 const groups: MarketActionGroup[] = [
   {
-    market: "fFUEL/fUSDC",
+    market: "FUEL/USDC",
     actions: [
       cancelOrderAction(oldOrderId),
       settleBalanceAction(),
@@ -161,7 +161,7 @@ contract until they are settled back to your trading account.
 (the default). You can also settle manually:
 
 ```ts
-await client.settleBalance("fFUEL/fUSDC");
+await client.settleBalance("FUEL/USDC");
 ```
 
 ## Market Maker Pattern
@@ -178,7 +178,7 @@ import {
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = O2Client.generateWallet();
 await client.setupAccount(wallet);
-await client.createSession(wallet, ["fFUEL/fUSDC"], 30);
+await client.createSession(wallet, ["FUEL/USDC"], 30);
 
 let buyId: OrderId | null = null;
 let sellId: OrderId | null = null;
@@ -193,7 +193,7 @@ while (true) {
   actions.push(createOrderAction("sell", sellPrice, qty, "PostOnly"));
 
   const response = await client.batchActions(
-    [{ market: "fFUEL/fUSDC", actions }],
+    [{ market: "FUEL/USDC", actions }],
     true,
   );
 
@@ -210,13 +210,13 @@ Query order status:
 
 ```ts
 // All orders for an account
-const orders = await client.getOrders(tradeAccountId, "fFUEL/fUSDC");
+const orders = await client.getOrders(tradeAccountId, "FUEL/USDC");
 
 // Open orders only
-const openOrders = await client.getOrders(tradeAccountId, "fFUEL/fUSDC", true);
+const openOrders = await client.getOrders(tradeAccountId, "FUEL/USDC", true);
 
 // Single order by ID
-const order = await client.getOrder("fFUEL/fUSDC", orderId);
+const order = await client.getOrder("FUEL/USDC", orderId);
 console.log(`Closed: ${order.close}`);
 console.log(`Filled: ${order.quantity_fill} / ${order.quantity}`); // bigint values
 ```
@@ -237,11 +237,11 @@ for await (const update of stream) {
 Withdraw funds from the trading account to the owner wallet:
 
 ```ts
-const result = await client.withdraw(wallet, "fUSDC", "100.0");
+const result = await client.withdraw(wallet, "USDC", "100.0");
 console.log(`Withdrawal tx: ${result.tx_id}`);
 ```
 
-The asset accepts symbol names (`"fUSDC"`) or hex asset IDs. The amount
+The asset accepts symbol names (`"USDC"`) or hex asset IDs. The amount
 is `Numeric` — pass a human-readable string or raw `bigint`. The trade
 account ID and destination are resolved from the wallet automatically.
 

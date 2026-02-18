@@ -32,8 +32,8 @@ import { O2Client, Network } from "@o2exchange/sdk";
 const client = new O2Client({ network: Network.TESTNET });
 const wallet = O2Client.generateWallet();
 await client.setupAccount(wallet);
-await client.createSession(wallet, ["fFUEL/fUSDC"]);
-const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+await client.createSession(wallet, ["FUEL/USDC"]);
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "50");
 console.log(response.txId);
 ```
 

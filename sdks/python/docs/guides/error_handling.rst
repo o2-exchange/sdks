@@ -56,7 +56,7 @@ Basic error handling
 
    try:
        result = await client.create_order(
-           "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+           "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
    except O2Error as e:
        print(f"Error: {e.message} (code={e.code})")
@@ -78,15 +78,15 @@ Catching specific errors
 
    try:
        result = await client.create_order(
-           "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+           "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
    except SessionExpired:
        # The session has expired — create a new one
        session = await client.create_session(
-           owner=owner, markets=["fFUEL/fUSDC"]
+           owner=owner, markets=["FUEL/USDC"]
        )
        result = await client.create_order(
-           "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+           "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
    except InvalidSignature:
        # Signing verification failed — check your key/signer setup

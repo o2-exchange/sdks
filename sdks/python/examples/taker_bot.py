@@ -15,7 +15,7 @@ logger = logging.getLogger("taker_bot")
 
 # Configuration
 PRIVATE_KEY = None  # Set to your owner private key hex, or None to generate
-MARKET_PAIR = "fFUEL/fUSDC"
+MARKET_PAIR = "FUEL/USDC"
 BUY_BELOW_PRICE = 0.020  # Buy when best ask drops below this price
 MAX_QUANTITY = 50.0  # Maximum quantity per trade
 SLIPPAGE_PCT = 0.005  # 0.5% slippage tolerance

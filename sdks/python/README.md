@@ -43,10 +43,10 @@ async def main():
     client = O2Client(network=Network.TESTNET)
     owner = client.generate_wallet()
     account = await client.setup_account(owner)
-    session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0)
+    session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
+    result = await client.create_order("FUEL/USDC", OrderSide.BUY, price=0.02, quantity=100.0)
     batch = (
-        client.actions_for("fFUEL/fUSDC")
+        client.actions_for("FUEL/USDC")
         .settle_balance()
         .create_order(OrderSide.SELL, "0.03", "50", OrderType.POST_ONLY)
         .build()

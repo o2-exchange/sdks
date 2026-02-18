@@ -34,9 +34,9 @@ Quick example
        client = O2Client(network=Network.TESTNET)
        owner = client.generate_wallet()
        account = await client.setup_account(owner)
-       session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
+       session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
        result = await client.create_order(
-           "fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0
+           "FUEL/USDC", OrderSide.BUY, price=0.02, quantity=100.0
        )
        print(result.tx_id)
        await client.close()

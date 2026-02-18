@@ -71,7 +71,7 @@ Step 4: Create a trading session
 
    session = await client.create_session(
        owner=owner,
-       markets=["fFUEL/fUSDC"],
+       markets=["FUEL/USDC"],
        expiry_days=30,
    )
 
@@ -98,7 +98,7 @@ Step 5: Place an order
    from o2_sdk import OrderSide, OrderType
 
    result = await client.create_order(
-       market="fFUEL/fUSDC",
+       market="FUEL/USDC",
        side=OrderSide.BUY,
        price=0.02,
        quantity=100.0,
@@ -148,12 +148,12 @@ Complete example
            # Session
            session = await client.create_session(
                owner=owner,
-               markets=["fFUEL/fUSDC"],
+               markets=["FUEL/USDC"],
            )
 
            # Place order
            result = await client.create_order(
-               "fFUEL/fUSDC", OrderSide.BUY,
+               "FUEL/USDC", OrderSide.BUY,
                price=0.02, quantity=100.0,
            )
            print(f"tx_id={result.tx_id}")
