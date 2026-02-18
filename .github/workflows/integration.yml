@@ -31,6 +31,11 @@ jobs:
           cache: pip
           cache-dependency-path: sdks/python/pyproject.toml
       - run: pip install -e ".[dev]"
+      - name: Write integration wallets
+        if: env.PY_INTEGRATION_WALLETS != ''
+        env:
+          PY_INTEGRATION_WALLETS: ${{ secrets.PY_INTEGRATION_WALLETS }}
+        run: echo "$PY_INTEGRATION_WALLETS" > .integration-wallets.json
       - run: pytest tests/test_integration.py -m integration -v --timeout=600
 
   typescript-integration:
@@ -48,6 +53,11 @@ jobs:
         with:
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
+      - name: Write integration wallets
+        if: env.TS_INTEGRATION_WALLETS != ''
+        env:
+          TS_INTEGRATION_WALLETS: ${{ secrets.TS_INTEGRATION_WALLETS }}
+        run: echo "$TS_INTEGRATION_WALLETS" > .integration-wallets.json
       - run: npm ci
       - run: npm run build
       - run: npm test
@@ -65,4 +75,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: sdks/rust -> target
+      - name: Write integration wallets
+        if: env.RUST_INTEGRATION_WALLETS != ''
+        env:
+          RUST_INTEGRATION_WALLETS: ${{ secrets.RUST_INTEGRATION_WALLETS }}
+        run: echo "$RUST_INTEGRATION_WALLETS" > .integration-wallets.json
       - run: cargo test --features integration --test integration_tests -- --test-threads=1
