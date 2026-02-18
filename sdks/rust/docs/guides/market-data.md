@@ -35,21 +35,18 @@ Fetch a snapshot of the order book:
 ```rust,ignore
 let depth = client.get_depth("FUEL/USDC", 10).await?;
 
-let buys = depth.buys.as_deref().unwrap_or_default();
-let sells = depth.sells.as_deref().unwrap_or_default();
-
-if let Some(best_bid) = buys.first() {
+if let Some(best_bid) = depth.buys.first() {
     println!("Best bid: {} x {}", best_bid.price, best_bid.quantity);
 }
-if let Some(best_ask) = sells.first() {
+if let Some(best_ask) = depth.sells.first() {
     println!("Best ask: {} x {}", best_ask.price, best_ask.quantity);
 }
 
 // Iterate price levels
-for level in buys.iter().take(5) {
+for level in depth.buys.iter().take(5) {
     println!("  BID {} x {}", level.price, level.quantity);
 }
-for level in sells.iter().take(5) {
+for level in depth.sells.iter().take(5) {
     println!("  ASK {} x {}", level.price, level.quantity);
 }
 ```
@@ -61,16 +58,14 @@ produce fewer, wider price levels.
 
 ```rust,ignore
 let trades_resp = client.get_trades("FUEL/USDC", 20).await?;
-if let Some(trades) = &trades_resp.trades {
-    for trade in trades {
-        println!(
-            "{} {} @ {} (id={})",
-            trade.side.as_deref().unwrap_or("?"),
-            trade.quantity.as_deref().unwrap_or("0"),
-            trade.price.as_deref().unwrap_or("0"),
-            trade.trade_id.as_deref().unwrap_or("?"),
-        );
-    }
+for trade in &trades_resp.trades {
+    println!(
+        "{:?} {} @ {} (id={})",
+        trade.side,
+        trade.quantity,
+        trade.price,
+        trade.trade_id,
+    );
 }
 ```
 
@@ -84,13 +79,14 @@ let bars = client.get_bars("FUEL/USDC", "1h", now - 86400, now).await?;
 
 for bar in &bars {
     println!(
-        "{}: O={} H={} L={} C={} V={}",
-        bar.timestamp.as_ref().map(|v| v.to_string()).unwrap_or_default(),
-        bar.open.as_deref().unwrap_or("?"),
-        bar.high.as_deref().unwrap_or("?"),
-        bar.low.as_deref().unwrap_or("?"),
-        bar.close.as_deref().unwrap_or("?"),
-        bar.volume.as_deref().unwrap_or("?"),
+        "{}: O={} H={} L={} C={} BuyVol={} SellVol={}",
+        bar.timestamp,
+        bar.open,
+        bar.high,
+        bar.low,
+        bar.close,
+        bar.buy_volume,
+        bar.sell_volume,
     );
 }
 ```
@@ -101,12 +97,20 @@ Supported resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`,
 ## Ticker Data
 
 ```rust,ignore
+<<<<<<< HEAD
 let ticker = client.get_ticker("FUEL/USDC").await?;
 println!("Last: {}", ticker.last_price.as_deref().unwrap_or("?"));
 println!("Bid: {} / Ask: {}",
     ticker.best_bid.as_deref().unwrap_or("?"),
     ticker.best_ask.as_deref().unwrap_or("?"),
 );
+=======
+let ticker = client.get_ticker("fFUEL/fUSDC").await?;
+if let Some(last) = ticker.last {
+    println!("Last: {}", last);
+}
+println!("Bid: {:?} / Ask: {:?}", ticker.bid, ticker.ask);
+>>>>>>> main
 ```
 
 ## Price Conversion
@@ -118,9 +122,8 @@ helper methods to convert to/from human-readable values:
 let market = client.get_market("FUEL/USDC").await?;
 let depth = client.get_depth("FUEL/USDC", 10).await?;
 
-if let Some(best_ask) = depth.sells.as_deref().and_then(|s| s.first()) {
-    let chain_price: u64 = best_ask.price.parse().unwrap_or(0);
-    let human_price = market.format_price(chain_price);
+if let Some(best_ask) = depth.sells.first() {
+    let human_price = market.format_price(best_ask.price);
     println!("Best ask: {}", human_price);
 }
 
@@ -135,12 +138,9 @@ let chain_qty = market.scale_quantity(&"100".parse()?);
 let balances = client.get_balances(&session.trade_account_id).await?;
 for (symbol, bal) in &balances {
     println!("{}:", symbol);
-    println!("  Trading account: {}",
-        bal.trading_account_balance.as_deref().unwrap_or("0"));
-    println!("  Locked in orders: {}",
-        bal.total_locked.as_deref().unwrap_or("0"));
-    println!("  Unlocked: {}",
-        bal.total_unlocked.as_deref().unwrap_or("0"));
+    println!("  Trading account: {}", bal.trading_account_balance);
+    println!("  Locked in orders: {}", bal.total_locked);
+    println!("  Unlocked: {}", bal.total_unlocked);
 }
 ```
 

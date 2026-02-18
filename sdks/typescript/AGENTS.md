@@ -31,6 +31,7 @@ const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "50");
 | `O2Client.generateEvmWallet()` | — | `WalletState` | Generate EVM wallet |
 | `O2Client.loadWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load Fuel wallet from hex |
 | `O2Client.loadEvmWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load EVM wallet from hex |
+| `session` | — | `SessionState \| null` | Getter: the currently active session |
 | `setSession(session)` | `SessionState` | `void` | Restore a serialized session |
 | `setupAccount(wallet)` | `Signer` | `{ tradeAccountId, nonce }` | Idempotent account setup |
 | `createSession(wallet, markets, expiryDays?)` | `Signer`, market list, days | `SessionState` | Create and store trading session |
@@ -168,8 +169,19 @@ const signer = new ExternalSigner("0x1234...abcd", (digest) => {
 });
 
 await client.setupAccount(signer);
-await client.createSession(signer, ["FUEL/USDC"]);
-const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
+await client.createSession(signer, ["fFUEL/fUSDC"]);
+const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+```
+
+For EVM accounts, use `ExternalEvmSigner` with an additional `evmAddress` parameter:
+
+```ts
+import { ExternalEvmSigner } from "@o2exchange/sdk";
+
+const evmSigner = new ExternalEvmSigner("0x000...abcd", "0xabcd...1234", (digest) => {
+  const { r, s, recoveryId } = myKms.sign(digest);
+  return toFuelCompactSignature(r, s, recoveryId);
+});
 ```
 
 ### 6. Balance Tracking & Withdrawals
@@ -208,10 +220,21 @@ try {
 }
 ```
 
+## Action Factories
+
+Helper functions for building typed actions (used with `batchActions`):
+
+| Function | Params | Description |
+|----------|--------|-------------|
+| `createOrderAction(side, price, qty, orderType?)` | `Side`, `Numeric`, `Numeric`, `OrderType` | Create order action |
+| `cancelOrderAction(orderId)` | `OrderId` | Cancel order action |
+| `settleBalanceAction()` | — | Settle balance action |
+| `registerRefererAction(to)` | `Identity` | Register a referrer |
+
 ## Critical Implementation Notes
 
 - **Session is stored on the client**: after `createSession()` or `setSession()`, trading methods use that stored session implicitly.
-- **External signers**: `setupAccount()`, `createSession()`, and `withdraw()` accept any `Signer`. Session actions use the session key, not the owner signer.
+- **External signers**: `setupAccount()`, `createSession()`, and `withdraw()` accept any `Signer` (`ExternalSigner` for Fuel, `ExternalEvmSigner` for EVM). Session actions use the session key, not the owner signer.
 - Session creation uses `personalSign` (Fuel/EVM prefixed). Session actions use `rawSign` (no prefix).
 - Nonce increments on-chain even on reverts. The SDK auto-resyncs in many error paths; call `refreshNonce()` after failures if needed.
 - Function selectors are `u64(len) + utf8(name)`, not keccak hashes.

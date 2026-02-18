@@ -44,21 +44,17 @@ let mut stream = client.stream_depth(&market.market_id, "10").await?;
 while let Some(Ok(update)) = stream.next().await {
     // First message is a full snapshot (action = "subscribe_depth")
     // Subsequent messages are incremental updates (action = "subscribe_depth_update")
-    let is_snapshot = update.action.as_deref() == Some("subscribe_depth");
+    let is_snapshot = update.action == "subscribe_depth";
 
     if is_snapshot {
         if let Some(ref view) = update.view {
-            let buys = view.buys.as_deref().unwrap_or_default();
-            let sells = view.sells.as_deref().unwrap_or_default();
-            println!("Snapshot: {} bids, {} asks", buys.len(), sells.len());
+            println!("Snapshot: {} bids, {} asks", view.buys.len(), view.sells.len());
         }
     } else if let Some(ref changes) = update.changes {
-        let buys = changes.buys.as_deref().unwrap_or_default();
-        let sells = changes.sells.as_deref().unwrap_or_default();
-        if let Some(bid) = buys.first() {
+        if let Some(bid) = changes.buys.first() {
             println!("Best bid: {}", bid.price);
         }
-        if let Some(ask) = sells.first() {
+        if let Some(ask) = changes.sells.first() {
             println!("Best ask: {}", ask.price);
         }
     }
@@ -80,24 +76,22 @@ let identity = Identity::ContractId(session.trade_account_id.to_string());
 let mut stream = client.stream_orders(&[identity]).await?;
 
 while let Some(Ok(update)) = stream.next().await {
-    if let Some(ref orders) = update.orders {
-        for order in orders {
-            let status = if order.close == Some(true) { "CLOSED" } else { "OPEN" };
-            let filled = format!(
-                "{}/{}",
-                order.quantity_fill.as_deref().unwrap_or("0"),
-                order.quantity.as_deref().unwrap_or("0"),
-            );
-            println!(
-                "[{}] {} {}: {}",
-                status,
-                order.side.as_deref().unwrap_or("?"),
-                order.order_id.as_deref().unwrap_or("?"),
-                filled,
-            );
-            if order.cancel == Some(true) {
-                println!("  Canceled");
-            }
+    for order in &update.orders {
+        let status = if order.close { "CLOSED" } else { "OPEN" };
+        let filled = format!(
+            "{}/{}",
+            order.quantity_fill.unwrap_or(0),
+            order.quantity,
+        );
+        println!(
+            "[{}] {:?} {}: {}",
+            status,
+            order.side,
+            order.order_id,
+            filled,
+        );
+        if order.cancel {
+            println!("  Canceled");
         }
     }
 }
@@ -114,15 +108,13 @@ let market = client.get_market("FUEL/USDC").await?;
 let mut stream = client.stream_trades(&market.market_id).await?;
 
 while let Some(Ok(update)) = stream.next().await {
-    if let Some(ref trades) = update.trades {
-        for trade in trades {
-            println!(
-                "{} {} @ {}",
-                trade.side.as_deref().unwrap_or("?"),
-                trade.quantity.as_deref().unwrap_or("0"),
-                trade.price.as_deref().unwrap_or("0"),
-            );
-        }
+    for trade in &update.trades {
+        println!(
+            "{:?} {} @ {}",
+            trade.side,
+            trade.quantity,
+            trade.price,
+        );
     }
 }
 ```
@@ -139,15 +131,13 @@ let identity = Identity::ContractId(session.trade_account_id.to_string());
 let mut stream = client.stream_balances(&[identity]).await?;
 
 while let Some(Ok(update)) = stream.next().await {
-    if let Some(ref entries) = update.balance {
-        for entry in entries {
-            println!(
-                "Balance: {} (locked: {}, unlocked: {})",
-                entry.trading_account_balance.as_deref().unwrap_or("0"),
-                entry.total_locked.as_deref().unwrap_or("0"),
-                entry.total_unlocked.as_deref().unwrap_or("0"),
-            );
-        }
+    for entry in &update.balance {
+        println!(
+            "Balance: {} (locked: {}, unlocked: {})",
+            entry.trading_account_balance,
+            entry.total_locked,
+            entry.total_unlocked,
+        );
     }
 }
 ```
@@ -167,8 +157,8 @@ let mut stream = client.stream_nonce(&[identity]).await?;
 while let Some(Ok(update)) = stream.next().await {
     println!(
         "Nonce changed: {} (account={})",
-        update.nonce.as_deref().unwrap_or("?"),
-        update.contract_id.as_deref().unwrap_or("?"),
+        update.nonce,
+        update.contract_id,
     );
 }
 ```
@@ -191,7 +181,7 @@ let mut trade_stream = client.stream_trades(&market.market_id).await?;
 let depth_task = tokio::spawn(async move {
     while let Some(Ok(update)) = depth_stream.next().await {
         if let Some(ref changes) = update.changes {
-            if let Some(bid) = changes.buys.as_deref().and_then(|b| b.first()) {
+            if let Some(bid) = changes.buys.first() {
                 println!("Best bid: {}", bid.price);
             }
         }
@@ -200,25 +190,21 @@ let depth_task = tokio::spawn(async move {
 
 let order_task = tokio::spawn(async move {
     while let Some(Ok(update)) = order_stream.next().await {
-        if let Some(ref orders) = update.orders {
-            for order in orders {
-                let status = if order.close == Some(true) { "closed" } else { "open" };
-                println!("Order {}: {}", order.order_id.as_deref().unwrap_or("?"), status);
-            }
+        for order in &update.orders {
+            let status = if order.close { "closed" } else { "open" };
+            println!("Order {}: {}", order.order_id, status);
         }
     }
 });
 
 let trade_task = tokio::spawn(async move {
     while let Some(Ok(update)) = trade_stream.next().await {
-        if let Some(ref trades) = update.trades {
-            for trade in trades {
-                println!(
-                    "Trade: {} @ {}",
-                    trade.quantity.as_deref().unwrap_or("0"),
-                    trade.price.as_deref().unwrap_or("0"),
-                );
-            }
+        for trade in &update.trades {
+            println!(
+                "Trade: {} @ {}",
+                trade.quantity,
+                trade.price,
+            );
         }
     }
 });
