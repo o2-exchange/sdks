@@ -181,12 +181,10 @@ let mut active_sell: Option<String> = None;
 loop {
     // Get current mid price
     let depth = client.get_depth(market, 10).await?;
-    let buys = depth.buys.as_deref().unwrap_or_default();
-    let sells = depth.sells.as_deref().unwrap_or_default();
 
-    let mid = if let (Some(bid), Some(ask)) = (buys.first(), sells.first()) {
-        let bid_price: f64 = bid.price.parse().unwrap_or(0.0);
-        let ask_price: f64 = ask.price.parse().unwrap_or(0.0);
+    let mid = if let (Some(bid), Some(ask)) = (depth.buys.first(), depth.sells.first()) {
+        let bid_price = market.format_price(bid.price);
+        let ask_price = market.format_price(ask.price);
         (bid_price + ask_price) / 2.0
     } else {
         tokio::time::sleep(Duration::from_secs(5)).await;
@@ -222,11 +220,11 @@ loop {
 
     if let Some(ref orders) = result.orders {
         active_buy = orders.iter()
-            .find(|o| o.side.as_deref() == Some("Buy"))
-            .and_then(|o| o.order_id.as_ref().map(|id| id.to_string()));
+            .find(|o| o.side == Side::Buy)
+            .map(|o| o.order_id.to_string());
         active_sell = orders.iter()
-            .find(|o| o.side.as_deref() == Some("Sell"))
-            .and_then(|o| o.order_id.as_ref().map(|id| id.to_string()));
+            .find(|o| o.side == Side::Sell)
+            .map(|o| o.order_id.to_string());
     }
 
     tokio::time::sleep(Duration::from_secs(15)).await;
@@ -250,12 +248,11 @@ let open_orders = client.get_orders(
 
 // Single order by ID
 let order = client.get_order(market, "0xabc...").await?;
-let is_open = order.close != Some(true);
-println!("Status: {}", if is_open { "open" } else { "closed" });
+println!("Status: {}", if !order.close { "open" } else { "closed" });
 println!(
     "Filled: {} / {}",
-    order.quantity_fill.as_deref().unwrap_or("0"),
-    order.quantity.as_deref().unwrap_or("0"),
+    order.quantity_fill.unwrap_or(0),
+    order.quantity,
 );
 ```
 
@@ -269,11 +266,9 @@ let identity = Identity::ContractId(session.trade_account_id.to_string());
 let mut stream = client.stream_orders(&[identity]).await?;
 
 while let Some(Ok(update)) = stream.next().await {
-    if let Some(ref orders) = update.orders {
-        for order in orders {
-            let status = if order.close == Some(true) { "closed" } else { "open" };
-            println!("Order {}: {}", order.order_id.as_deref().unwrap_or("?"), status);
-        }
+    for order in &update.orders {
+        let status = if order.close { "closed" } else { "open" };
+        println!("Order {}: {}", order.order_id, status);
     }
 }
 ```

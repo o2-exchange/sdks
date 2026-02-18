@@ -51,7 +51,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `generate_evm_wallet()` | - | `Result<EvmWallet>` | Generate EVM keypair |
 | `load_wallet(hex)` | `&str` | `Result<Wallet>` | Load from private key |
 | `load_evm_wallet(hex)` | `&str` | `Result<EvmWallet>` | Load EVM from private key |
-| `setup_account(wallet)` | `&Wallet` | `Result<AccountResponse>` | Idempotent account setup |
+| `setup_account(wallet)` | `&impl SignableWallet` | `Result<AccountResponse>` | Idempotent account setup |
 | `create_session(owner, markets, ttl)` | `&impl SignableWallet, &[impl AsRef<str>], Duration` | `Result<Session>` | Create trading session (symbols validated/normalized) |
 | `create_session_until(owner, markets, expiry_unix_secs)` | `&impl SignableWallet, &[impl AsRef<str>], u64` | `Result<Session>` | Create session with absolute expiry |
 | `set_metadata_policy(policy)` | `MetadataPolicy` | `()` | Configure market metadata refresh strategy |
@@ -60,15 +60,18 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `cancel_order(session, order_id, market)` | `&mut Session, &OrderId, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Cancel order |
 | `cancel_all_orders(session, market)` | `&mut Session, impl IntoMarketSymbol` | `Result<Vec<...>>` | Cancel all open orders |
 | `settle_balance(session, market)` | `&mut Session, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Settle balance |
-| `batch_actions(session, actions, calls, collect)` | advanced | `Result<SessionActionsResponse>` | Raw batch submit |
+| `batch_actions(session, market, actions, collect)` | `&mut Session, impl IntoMarketSymbol, Vec<Action>, bool` | `Result<SessionActionsResponse>` | Single-market batch submit |
+| `batch_actions_multi(session, market_actions, collect)` | `&mut Session, &[(impl IntoMarketSymbol, Vec<Action>)], bool` | `Result<SessionActionsResponse>` | Multi-market batch submit |
 | `get_markets()` | - | `Result<Vec<Market>>` | List markets |
 | `get_market(name)` | `impl IntoMarketSymbol` | `Result<Market>` | Get by symbol pair |
+| `get_market_by_id(market_id)` | `&MarketId` | `Result<Market>` | Get by hex market ID |
 | `get_depth(market, precision)` | `impl IntoMarketSymbol, u64` | `Result<DepthSnapshot>` | Order book depth |
 | `get_trades(market, count)` | `impl IntoMarketSymbol, u32` | `Result<TradesResponse>` | Recent trades |
 | `get_bars(market, res, from, to)` | `impl IntoMarketSymbol, &str, u64, u64` | `Result<Vec<Bar>>` | OHLCV data |
 | `get_ticker(market)` | `impl IntoMarketSymbol` | `Result<MarketTicker>` | Ticker data |
 | `get_balances(trade_account_id)` | `&TradeAccountId` | `Result<HashMap<String, BalanceResponse>>` | All balances |
 | `get_orders(account, market, is_open, count)` | `&TradeAccountId, impl IntoMarketSymbol, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
+| `get_order(market, order_id)` | `impl IntoMarketSymbol, &str` | `Result<Order>` | Single order by ID |
 | `get_nonce(trade_account_id)` | `&str` | `Result<u64>` | Current nonce |
 | `refresh_nonce(session)` | `&mut Session` | `Result<u64>` | Re-sync nonce from API |
 | `stream_depth(market_id, precision)` | `&str, &str` | `Result<TypedStream<DepthUpdate>>` | Stream depth |
@@ -76,6 +79,9 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `stream_trades(market_id)` | `&str` | `Result<TypedStream<TradeUpdate>>` | Stream trades |
 | `stream_balances(identities)` | `&[Identity]` | `Result<TypedStream<BalanceUpdate>>` | Stream balances |
 | `stream_nonce(identities)` | `&[Identity]` | `Result<TypedStream<NonceUpdate>>` | Stream nonce |
+| `subscribe_ws_lifecycle()` | — | `Result<Receiver<WsLifecycleEvent>>` | WebSocket lifecycle events (reconnect, disconnect) |
+| `disconnect_ws()` | — | `Result<()>` | Close WebSocket connection |
+| `withdraw(owner, session, asset_id, amount, to)` | `&impl SignableWallet, &Session, &AssetId, &str, Option<&str>` | `Result<WithdrawResponse>` | Withdraw funds |
 
 Note: `unsubscribe_orders` is currently connection-global in the backend API (not identity-scoped), so it removes all order subscriptions for that socket.
 

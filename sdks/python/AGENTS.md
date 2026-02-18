@@ -44,16 +44,19 @@ asyncio.run(main())
 | `generate_evm_wallet()` | - | `EvmWallet` | New EVM wallet (static) |
 | `load_wallet(pk_hex)` | `private_key_hex: str` | `Wallet` | Load Fuel wallet |
 | `load_evm_wallet(pk_hex)` | `private_key_hex: str` | `EvmWallet` | Load EVM wallet |
-| `setup_account(wallet)` | `wallet: Wallet\|EvmWallet` | `AccountInfo` | Idempotent account setup (create+fund+whitelist) |
-| `create_session(owner, markets, expiry_days=30)` | `owner, markets: list[str], expiry_days: int` | `SessionInfo` | Create trading session |
+| `setup_account(wallet)` | `wallet: Signer` | `AccountInfo` | Idempotent account setup (create+fund+whitelist) |
+| `create_session(owner, markets, expiry_days=30)` | `owner: Signer, markets: list[str \| Market], expiry_days: int` | `SessionInfo` | Create trading session |
+| `set_session(session)` | `session: SessionInfo` | `None` | Restore a saved session onto the client |
+| `clear_session()` | - | `None` | Clear the active session |
+| `session` | - | `SessionInfo \| None` | Property: the currently active session |
 | `create_order(market, side, price, quantity, ..., session=None)` | see below | `ActionsResponse` | Place an order |
 | `cancel_order(order_id, market=None, market_id=None, session=None)` | - | `ActionsResponse` | Cancel an order |
-| `cancel_all_orders(market, session=None)` | - | `ActionsResponse` | Cancel all open orders |
+| `cancel_all_orders(market, session=None)` | - | `list[ActionsResponse]` | Cancel all open orders (batches of 5) |
 | `settle_balance(market, session=None)` | - | `ActionsResponse` | Settle filled order proceeds |
 | `actions_for(market)` | `market: str \| Market` | `MarketActionsBuilder` | Fluent high-level action builder |
 | `batch_actions(actions, collect_orders=False, session=None)` | `Sequence[MarketActions \| MarketActionGroup]` | `ActionsResponse` | Submit low/high-level batch actions |
 | `get_markets()` | - | `list[Market]` | List all markets |
-| `get_market(symbol_pair)` | `"FUEL/USDC"` | `Market` | Get specific market |
+| `get_market(symbol_pair)` | `"fFUEL/fUSDC"` | `Market` | Get specific market |
 | `get_depth(market, precision=10)` | - | `DepthSnapshot` | Order book depth |
 | `get_trades(market, count=50)` | - | `list[Trade]` | Recent trades |
 | `get_bars(market, resolution, from_ts, to_ts)` | - | `list[Bar]` | OHLCV candles |
@@ -75,14 +78,14 @@ asyncio.run(main())
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
-| `session` | `SessionInfo \| None` | optional | Explicit session override (defaults to active client session) |
-| `market` | `str` | required | Market pair or ID |
+| `market` | `str \| Market` | required | Market pair, ID, or Market object |
 | `side` | `OrderSide` | required | `OrderSide.BUY` or `OrderSide.SELL` |
-| `price` | `NumericInput` | required | Human-readable (`str`/`float`) or `ChainInt` raw |
-| `quantity` | `NumericInput` | required | Human-readable (`str`/`float`) or `ChainInt` raw |
+| `price` | `NumericInput` | required | Human-readable (`str`/`int`/`float`/`Decimal`) or `ChainInt` raw |
+| `quantity` | `NumericInput` | required | Human-readable (`str`/`int`/`float`/`Decimal`) or `ChainInt` raw |
 | `order_type` | `OrderType \| LimitOrder \| BoundedMarketOrder` | `OrderType.SPOT` | Simple enum or typed class |
 | `settle_first` | `bool` | `True` | Auto-prepend SettleBalance |
 | `collect_orders` | `bool` | `True` | Return order details |
+| `session` | `SessionInfo \| None` | `None` | Explicit session override (defaults to active client session) |
 
 #### Enums & Order Type Parameters
 
@@ -159,7 +162,6 @@ while True:
     if active_buy_id:
         builder = builder.cancel_order(active_buy_id)
     result = await client.batch_actions(
-        session,
         [
             builder
             .settle_balance()
@@ -178,8 +180,8 @@ while True:
 from o2_sdk import BoundedMarketOrder, OrderSide
 
 result = await client.create_order(
-    session, "fFUEL/fUSDC",
-    side=OrderSide.BUY,
+    "fFUEL/fUSDC",
+    OrderSide.BUY,
     price=ask_price,
     quantity=quantity,
     order_type=BoundedMarketOrder(max_price=ask_price * 1.005, min_price=0.0),
@@ -223,7 +225,28 @@ identity = Identity.from_dict({"ContractId": "0xdef..."}) # returns ContractIden
 # Both are subtypes of Identity and work wherever Identity is expected
 ```
 
-### 7. Balance Tracking & Withdrawals
+### 7. External Signer (KMS/HSM)
+
+```python
+from o2_sdk import ExternalSigner, to_fuel_compact_signature
+
+def kms_sign(digest: bytes) -> bytes:
+    r, s, v = my_kms.sign(key_id="...", digest=digest)
+    return to_fuel_compact_signature(r, s, v)
+
+signer = ExternalSigner(
+    b256_address="0x1234...abcd",
+    sign_digest=kms_sign,
+)
+
+await client.setup_account(signer)
+session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
+result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, "0.02", "100")
+```
+
+For EVM accounts, use `ExternalEvmSigner` (same interface but with `evm_address` param and keccak256 hashing).
+
+### 8. Balance Tracking & Withdrawals
 
 ```python
 balances = await client.get_balances(account.trade_account_id)
