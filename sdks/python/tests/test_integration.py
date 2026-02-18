@@ -346,6 +346,66 @@ async def _conservative_post_only_buy_price(client, market):
     return max(price_step, fallback)
 
 
+def _floor_to_step(value, step):
+    if step <= 0:
+        return value
+    return math.floor(value / step) * step
+
+
+async def _symbol_balance_chain(client, trade_account_id, symbol):
+    balances = await client.get_balances(trade_account_id)
+    bal = balances.get(symbol)
+    if bal is None:
+        return 0
+    return int(bal.trading_account_balance)
+
+
+async def _cross_fill_quantity(
+    client,
+    market,
+    price,
+    maker_trade_account_id,
+    taker_trade_account_id,
+):
+    """Choose minimal deterministic cross-fill quantity, funding and failing explicitly if needed."""
+    min_qty = _min_quantity_for_min_order(market, price)
+    target_qty = min_qty * 1.05
+
+    base_decimals = market.base.decimals
+    quote_decimals = market.quote.decimals
+    step = 10 ** (base_decimals - market.base.max_precision) / (10**base_decimals)
+
+    last_details = ""
+    for attempt in range(2):
+        taker_base_chain = await _symbol_balance_chain(
+            client, taker_trade_account_id, market.base.symbol
+        )
+        maker_quote_chain = await _symbol_balance_chain(
+            client, maker_trade_account_id, market.quote.symbol
+        )
+
+        taker_base_human_cap = (taker_base_chain / (10**base_decimals)) * 0.9
+        maker_quote_human_cap = (maker_quote_chain / (10**quote_decimals)) * 0.9
+        maker_affordable_qty_cap = maker_quote_human_cap / price if price > 0 else 0
+
+        cap = min(taker_base_human_cap, maker_affordable_qty_cap)
+        qty = _floor_to_step(min(target_qty, cap), step)
+        last_details = (
+            f"min_qty={min_qty}, proposed_qty={qty}, cap={cap}, "
+            f"taker_base_chain={taker_base_chain}, maker_quote_chain={maker_quote_chain}, "
+            f"market={market.pair}, price={price}"
+        )
+        if qty >= min_qty:
+            return qty
+
+        if attempt == 0:
+            # Refresh funding and retry once before failing invariant.
+            await _mint_with_retry(client.api, maker_trade_account_id, max_retries=2)
+            await _mint_with_retry(client.api, taker_trade_account_id, max_retries=2)
+
+    raise AssertionError(f"Unable to compute valid cross-fill quantity: {last_details}")
+
+
 async def _cleanup_open_orders(client, wallet, market_pair):
     """Best-effort cleanup: cancel all open orders and settle balance for an account."""
     with contextlib.suppress(Exception):
@@ -449,7 +509,13 @@ class TestTradingFlow:
         # Taker FillOrKill sell targets the maker directly, avoiding
         # the gas cost of walking through many intermediate orders.
         fill_price = await _conservative_post_only_buy_price(client, market)
-        quantity = _fill_quantity(market, fill_price)
+        quantity = await _cross_fill_quantity(
+            client,
+            market,
+            fill_price,
+            maker_account.trade_account_id,
+            taker_account.trade_account_id,
+        )
 
         # Check maker has enough quote to buy
         balances = await client.get_balances(maker_account.trade_account_id)
@@ -561,7 +627,13 @@ class TestWebSocket:
 
             # Deterministic pricing
             fill_price = await _conservative_post_only_buy_price(ws_client, market)
-            quantity = _fill_quantity(market, fill_price)
+            quantity = await _cross_fill_quantity(
+                ws_client,
+                market,
+                fill_price,
+                maker_account.trade_account_id,
+                taker_account.trade_account_id,
+            )
 
             # Maker: PostOnly Buy at moderate price — rests below stale sells
             maker_session = await ws_client.create_session(
@@ -1005,7 +1077,13 @@ class TestWebSocket:
 
             # Cross-account fill
             fill_price = await _conservative_post_only_buy_price(ws_client, market)
-            quantity = _fill_quantity(market, fill_price)
+            quantity = await _cross_fill_quantity(
+                ws_client,
+                market,
+                fill_price,
+                maker_account.trade_account_id,
+                taker_account.trade_account_id,
+            )
 
             maker_session = await ws_client.create_session(
                 owner=maker_wallet, markets=[market.pair], expiry_days=1
