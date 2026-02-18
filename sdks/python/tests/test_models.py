@@ -1,5 +1,6 @@
 """Unit tests for model parsing."""
 
+from decimal import Decimal
 from typing import ClassVar
 
 from o2_sdk.models import (
@@ -7,6 +8,7 @@ from o2_sdk.models import (
     ActionsResponse,
     AddressIdentity,
     Balance,
+    ChainInt,
     ContractIdentity,
     DepthSnapshot,
     DepthUpdate,
@@ -67,6 +69,8 @@ class TestMarket:
         # quote decimals=9, max_precision=9 -> truncate_factor=1
         assert m.scale_price(0.1) == 100000000
         assert m.scale_price(1.0) == 1000000000
+        assert m.scale_price("0.1") == 100000000
+        assert m.scale_price(Decimal("1.23456789")) == 1234567890
 
     def test_format_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -77,6 +81,8 @@ class TestMarket:
         # base decimals=9, max_precision=3 -> truncate_factor=10^6
         result = m.scale_quantity(5.0)
         assert result == 5000000000
+        assert m.scale_quantity("5.0") == 5000000000
+        assert m.scale_quantity(Decimal("5.123")) == 5123000000
 
     def test_scale_quantity_truncation(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -86,6 +92,27 @@ class TestMarket:
         # 5.1234567 * 10^9 = 5123456700
         # floor(5123456700 / 1000000) * 1000000 = 5123000000
         assert result == 5123000000
+
+    def test_scale_rejects_negative_or_invalid(self):
+        m = Market.from_dict(self.MARKET_JSON)
+        import pytest
+
+        with pytest.raises(ValueError, match="non-negative"):
+            m.scale_price("-1")
+        with pytest.raises(ValueError, match="Invalid quantity"):
+            m.scale_quantity("not-a-number")
+
+    def test_scale_accepts_chain_int(self):
+        m = Market.from_dict(self.MARKET_JSON)
+        assert m.scale_price(ChainInt(100000000)) == 100000000
+        assert m.scale_quantity(ChainInt(5000000000)) == 5000000000
+
+    def test_scale_chain_int_rejects_bad_precision(self):
+        m = Market.from_dict(self.MARKET_JSON)
+        import pytest
+
+        with pytest.raises(ValueError, match="raw quantity precision"):
+            m.scale_quantity(ChainInt(5000000001))
 
     def test_validate_order_passes(self):
         m = Market.from_dict(self.MARKET_JSON)
