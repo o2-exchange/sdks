@@ -14,14 +14,10 @@ import logging
 import signal
 
 from o2_sdk import (
-    CancelOrderAction,
-    CreateOrderAction,
-    MarketActions,
     Network,
     O2Client,
     OrderSide,
     OrderType,
-    SettleBalanceAction,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -108,50 +104,36 @@ async def main():
                 # 3. Calculate quantity
                 quantity = ORDER_SIZE_USD / ref_price
 
-                # 4. Build actions
-                actions_list = []
+                # 4. Build actions with high-level fluent builder
+                builder = client.actions_for(market)
 
-                # Cancel stale orders (skip if filled)
+                # Cancel stale orders (skip if already known closed)
                 if active_buy_id and active_buy_id not in filled_orders:
-                    actions_list.append(CancelOrderAction(order_id=active_buy_id))
+                    builder = builder.cancel_order(active_buy_id)
                 if active_sell_id and active_sell_id not in filled_orders:
-                    actions_list.append(CancelOrderAction(order_id=active_sell_id))
+                    builder = builder.cancel_order(active_sell_id)
 
-                # Settle
-                actions_list.append(SettleBalanceAction(to=session.trade_account_id))
-
-                # Place new orders
-                scaled_buy_price = market.scale_price(buy_price)
-                scaled_sell_price = market.scale_price(sell_price)
-                scaled_quantity = market.scale_quantity(quantity)
-                scaled_quantity = market.adjust_quantity(scaled_buy_price, scaled_quantity)
-
-                actions_list.append(
-                    CreateOrderAction(
-                        side=OrderSide.BUY,
-                        price=str(scaled_buy_price),
-                        quantity=str(scaled_quantity),
-                        order_type=OrderType.SPOT,
-                    )
+                # Settle first, then place fresh quotes
+                builder = builder.settle_balance()
+                builder = builder.create_order(
+                    OrderSide.BUY,
+                    buy_price,
+                    quantity,
+                    OrderType.SPOT,
+                )
+                builder = builder.create_order(
+                    OrderSide.SELL,
+                    sell_price,
+                    quantity,
+                    OrderType.SPOT,
                 )
 
-                scaled_sell_qty = market.adjust_quantity(scaled_sell_price, scaled_quantity)
-                actions_list.append(
-                    CreateOrderAction(
-                        side=OrderSide.SELL,
-                        price=str(scaled_sell_price),
-                        quantity=str(scaled_sell_qty),
-                        order_type=OrderType.SPOT,
-                    )
-                )
-
-                # Limit to 5 actions
-                actions_list = actions_list[:5]
+                batch = builder.build()
 
                 # 5. Submit
                 result = await client.batch_actions(
                     session=session,
-                    actions=[MarketActions(market_id=market.market_id, actions=actions_list)],
+                    actions=[batch],
                     collect_orders=True,
                 )
 

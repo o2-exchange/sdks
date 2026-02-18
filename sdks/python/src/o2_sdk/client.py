@@ -6,9 +6,10 @@ trading, market data, and WebSocket streaming.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 
 from .api import O2Api
 from .config import Network, NetworkConfig, get_config
@@ -38,21 +39,26 @@ from .models import (
     Bar,
     BoundedMarketOrder,
     CancelOrderAction,
+    CancelOrderRequestAction,
     CreateOrderAction,
+    CreateOrderRequestAction,
     DepthSnapshot,
     DepthUpdate,
     Id,
     LimitOrder,
     Market,
+    MarketActionGroup,
     MarketActions,
     MarketsResponse,
     NonceUpdate,
+    NumericInput,
     Order,
     OrderSide,
     OrderType,
     OrderUpdate,
     SessionInfo,
     SettleBalanceAction,
+    SettleBalanceRequestAction,
     Trade,
     TradeUpdate,
     WithdrawResponse,
@@ -60,6 +66,44 @@ from .models import (
 from .websocket import O2WebSocket
 
 logger = logging.getLogger("o2_sdk.client")
+
+
+class MarketActionsBuilder:
+    """Fluent builder for high-level market-scoped action batches."""
+
+    def __init__(self, market: str | Market):
+        self._market = market
+        self._actions: list[
+            CreateOrderRequestAction | CancelOrderRequestAction | SettleBalanceRequestAction
+        ] = []
+
+    def settle_balance(self) -> MarketActionsBuilder:
+        self._actions.append(SettleBalanceRequestAction())
+        return self
+
+    def cancel_order(self, order_id: str | Id) -> MarketActionsBuilder:
+        self._actions.append(CancelOrderRequestAction(order_id=order_id))
+        return self
+
+    def create_order(
+        self,
+        side: OrderSide,
+        price: NumericInput,
+        quantity: NumericInput,
+        order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT,
+    ) -> MarketActionsBuilder:
+        self._actions.append(
+            CreateOrderRequestAction(
+                side=side,
+                price=price,
+                quantity=quantity,
+                order_type=order_type,
+            )
+        )
+        return self
+
+    def build(self) -> MarketActionGroup:
+        return MarketActionGroup(market=self._market, actions=list(self._actions))
 
 
 class O2Client:
@@ -80,6 +124,7 @@ class O2Client:
         self._ws: O2WebSocket | None = None
         self._markets_cache: MarketsResponse | None = None
         self._nonce_cache: dict[str, int] = {}
+        self._session: SessionInfo | None = None
 
     async def close(self) -> None:
         """Close all connections."""
@@ -92,6 +137,19 @@ class O2Client:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
+
+    @property
+    def session(self) -> SessionInfo | None:
+        """Return the currently active session, if any."""
+        return self._session
+
+    def set_session(self, session: SessionInfo) -> None:
+        """Set or restore the active session used by trading calls."""
+        self._session = session
+
+    def clear_session(self) -> None:
+        """Clear the active session."""
+        self._session = None
 
     # -----------------------------------------------------------------------
     # Wallet management
@@ -143,29 +201,109 @@ class O2Client:
 
         trade_account_id = account.trade_account_id
 
-        # Step 3: Faucet (testnet/devnet only, non-fatal)
-        if self._config.faucet_url and trade_account_id:
-            try:
-                resp = await self.api.mint_to_contract(trade_account_id)
-                if resp.success:
-                    logger.info("Faucet mint successful")
-                else:
-                    logger.warning("Faucet: %s", resp.error)
-            except Exception as e:
-                logger.warning("Faucet mint failed (non-fatal): %s", e)
+        if trade_account_id is None:
+            raise O2Error(message="Account must have a trade_account_id")
 
-        # Step 4: Whitelist (idempotent)
-        if trade_account_id:
+        # Step 3: Faucet (non-mainnet only). Skip if balance is already non-zero.
+        if self._config.faucet_url:
+            has_balance = await self._has_any_balance(trade_account_id)
+            if has_balance:
+                logger.debug("Skipping faucet mint for %s (non-zero balance)", trade_account_id)
+            else:
+                minted = await self._retry_mint_to_contract(trade_account_id)
+                if not minted:
+                    logger.warning("Faucet mint failed after retries (non-fatal)")
+
+        # Step 4: Whitelist (required on configured networks)
+        if self._config.whitelist_required:
+            whitelisted = await self._retry_whitelist_account(trade_account_id)
+            if not whitelisted:
+                raise O2Error(
+                    message=(
+                        "Failed to whitelist account after retries. "
+                        "Account setup cannot continue on this network."
+                    )
+                )
+
+        return account
+
+    async def _has_any_balance(self, trade_account_id: str) -> bool:
+        try:
+            markets = await self._get_markets_cached()
+            balance = await self.api.get_balance(
+                asset_id=markets.base_asset_id,
+                contract=trade_account_id,
+            )
+            return int(balance.trading_account_balance) > 0
+        except Exception as e:
+            logger.debug("Balance probe failed for %s: %s", trade_account_id, e)
+            # If balance check fails, fall back to attempting faucet mint.
+            return False
+
+    async def _retry_whitelist_account(self, trade_account_id: str) -> bool:
+        delays = [0, 2, 5]
+        last_error = ""
+        for idx, delay in enumerate(delays):
+            if delay > 0:
+                await asyncio.sleep(delay)
             try:
                 wl = await self.api.whitelist_account(trade_account_id)
                 if wl.already_whitelisted:
                     logger.info("Account already whitelisted")
                 else:
                     logger.info("Account whitelisted successfully")
+                return True
             except Exception as e:
-                logger.warning("Whitelist failed (non-fatal): %s", e)
+                last_error = str(e)
+                if idx < len(delays) - 1:
+                    logger.warning(
+                        "whitelist attempt %d failed for %s: %s (retrying)",
+                        idx + 1,
+                        trade_account_id,
+                        last_error,
+                    )
+        logger.error(
+            "whitelist failed after %d attempts for %s: %s",
+            len(delays),
+            trade_account_id,
+            last_error,
+        )
+        return False
 
-        return account
+    async def _retry_mint_to_contract(self, trade_account_id: str) -> bool:
+        attempts = 4
+        last_error = ""
+        for idx in range(attempts):
+            if idx > 0:
+                lower = last_error.lower()
+                wait_secs = (
+                    65
+                    if ("cooldown" in lower or "rate limit" in lower or "too many" in lower)
+                    else 5
+                )
+                await asyncio.sleep(wait_secs)
+            try:
+                resp = await self.api.mint_to_contract(trade_account_id)
+                if resp.success:
+                    logger.info("Faucet mint successful")
+                    return True
+                last_error = resp.error or "Unknown faucet error"
+            except Exception as e:
+                last_error = str(e)
+            if idx < attempts - 1:
+                logger.warning(
+                    "faucet attempt %d failed for %s: %s (retrying)",
+                    idx + 1,
+                    trade_account_id,
+                    last_error,
+                )
+        logger.error(
+            "faucet failed after %d attempts for %s: %s",
+            attempts,
+            trade_account_id,
+            last_error,
+        )
+        return False
 
     # -----------------------------------------------------------------------
     # Session management
@@ -174,7 +312,7 @@ class O2Client:
     async def create_session(
         self,
         owner: Signer,
-        markets: list[str],
+        markets: list[str | Market],
         expiry_days: int = 30,
     ) -> SessionInfo:
         """Create a trading session.
@@ -182,7 +320,7 @@ class O2Client:
         Args:
             owner: A signer for the owner account (Wallet, EvmWallet,
                 ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
-            markets: List of market pair strings (e.g., ["FUEL/USDC"]) or contract IDs
+            markets: List of market pair strings/IDs or Market objects
             expiry_days: Session expiry in days (default 30)
 
         Returns:
@@ -194,7 +332,9 @@ class O2Client:
         markets_resp = await self._get_markets_cached()
         contract_ids: list[str] = []
         for m_name in markets:
-            market = self._resolve_market(markets_resp, m_name)
+            market = (
+                m_name if isinstance(m_name, Market) else self._resolve_market(markets_resp, m_name)
+            )
             if market.contract_id not in contract_ids:
                 contract_ids.append(market.contract_id)
 
@@ -252,7 +392,7 @@ class O2Client:
             resp.trade_account_id,
         )
 
-        return SessionInfo(
+        session = SessionInfo(
             session_id=resp.session_id,
             trade_account_id=resp.trade_account_id,
             contract_ids=resp.contract_ids,
@@ -261,34 +401,40 @@ class O2Client:
             owner_address=owner.b256_address,
             nonce=nonce + 1,
         )
+        self._session = session
+        return session
 
     # -----------------------------------------------------------------------
     # Trading
     # -----------------------------------------------------------------------
+    def actions_for(self, market: str | Market) -> MarketActionsBuilder:
+        """Create a fluent builder for high-level market actions."""
+        return MarketActionsBuilder(market)
 
     async def create_order(
         self,
-        session: SessionInfo,
-        market: str,
+        market: str | Market,
         side: OrderSide,
-        price: float,
-        quantity: float,
+        price: NumericInput,
+        quantity: NumericInput,
         order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT,
         settle_first: bool = True,
         collect_orders: bool = True,
+        session: SessionInfo | None = None,
     ) -> ActionsResponse:
         """Place an order with automatic encoding, signing, and nonce management.
 
         Args:
-            session: Active trading session
-            market: Market pair (e.g., "FUEL/USDC") or market_id
+            market: Market pair, market_id/contract_id, or Market model
             side: OrderSide.BUY or OrderSide.SELL
-            price: Human-readable price (auto-scaled)
-            quantity: Human-readable quantity (auto-scaled)
+            price: Human-readable numeric input (auto-scaled)
+            quantity: Human-readable numeric input (auto-scaled)
             order_type: OrderType.SPOT, OrderType.MARKET, OrderType.FILL_OR_KILL,
                 OrderType.POST_ONLY, LimitOrder(...), or BoundedMarketOrder(...)
             settle_first: If True, prepend SettleBalance action
             collect_orders: If True, return created order details
+            session: Optional explicit session override. Uses active client
+                session if omitted.
 
         Returns:
             ActionsResponse with tx_id and optional orders
@@ -309,8 +455,8 @@ class O2Client:
             quantity,
         )
 
-        markets_resp = await self._get_markets_cached()
-        market_obj = self._resolve_market(markets_resp, market)
+        session = self._require_session(session)
+        market_obj = await self._resolve_market_like_async(market)
 
         # Scale price and quantity
         scaled_price = market_obj.scale_price(price)
@@ -360,44 +506,46 @@ class O2Client:
         )
 
         return await self.batch_actions(
-            session=session,
             actions=[MarketActions(market_id=market_obj.market_id, actions=typed_actions)],
             collect_orders=collect_orders,
+            session=session,
         )
 
     async def cancel_order(
         self,
-        session: SessionInfo,
-        order_id: str,
-        market: str | None = None,
+        order_id: str | Id,
+        market: str | Market | None = None,
         market_id: str | None = None,
+        session: SessionInfo | None = None,
     ) -> ActionsResponse:
         """Cancel an order."""
+        session = self._require_session(session)
         logger.info("Cancelling order %s", order_id)
         if market_id is None:
             if market is None:
                 raise ValueError("Either market or market_id must be provided")
-            markets_resp = await self._get_markets_cached()
-            market_obj = self._resolve_market(markets_resp, market)
+            market_obj = await self._resolve_market_like_async(market)
             market_id = market_obj.market_id
 
         actions = [
             MarketActions(
                 market_id=market_id,
-                actions=[CancelOrderAction(order_id=Id(order_id))],
+                actions=[CancelOrderAction(order_id=Id(str(order_id)))],
             )
         ]
-        return await self.batch_actions(session=session, actions=actions)
+        return await self.batch_actions(actions=actions, session=session)
 
-    async def cancel_all_orders(self, session: SessionInfo, market: str) -> list[ActionsResponse]:
+    async def cancel_all_orders(
+        self, market: str | Market, session: SessionInfo | None = None
+    ) -> list[ActionsResponse]:
         """Cancel all open orders for a market.
 
         Fetches up to 200 open orders and cancels them in batches of 5.
         Returns a list of ActionsResponse (one per batch).
         """
+        session = self._require_session(session)
         logger.info("Cancelling all open orders for market=%s", market)
-        markets_resp = await self._get_markets_cached()
-        market_obj = self._resolve_market(markets_resp, market)
+        market_obj = await self._resolve_market_like_async(market)
 
         orders_resp = await self.api.get_orders(
             market_id=market_obj.market_id,
@@ -417,15 +565,17 @@ class O2Client:
             chunk = orders_resp.orders[i : i + 5]
             cancel_actions: list[Action] = [CancelOrderAction(order_id=o.order_id) for o in chunk]
             actions = [MarketActions(market_id=market_obj.market_id, actions=cancel_actions)]
-            resp = await self.batch_actions(session=session, actions=actions)
+            resp = await self.batch_actions(actions=actions, session=session)
             results.append(resp)
 
         return results
 
-    async def settle_balance(self, session: SessionInfo, market: str) -> ActionsResponse:
+    async def settle_balance(
+        self, market: str | Market, session: SessionInfo | None = None
+    ) -> ActionsResponse:
         """Settle balance for a market."""
-        markets_resp = await self._get_markets_cached()
-        market_obj = self._resolve_market(markets_resp, market)
+        session = self._require_session(session)
+        market_obj = await self._resolve_market_like_async(market)
 
         actions = [
             MarketActions(
@@ -433,21 +583,23 @@ class O2Client:
                 actions=[SettleBalanceAction(to=session.trade_account_id)],
             )
         ]
-        return await self.batch_actions(session=session, actions=actions)
+        return await self.batch_actions(actions=actions, session=session)
 
     async def batch_actions(
         self,
-        session: SessionInfo,
-        actions: list[MarketActions],
+        actions: Sequence[MarketActions | MarketActionGroup],
         collect_orders: bool = False,
+        session: SessionInfo | None = None,
     ) -> ActionsResponse:
         """Submit a batch of actions with automatic signing and nonce management.
 
         Args:
-            session: Active trading session
             actions: List of MarketActions (market-grouped typed actions)
             collect_orders: If True, return created order details
+            session: Optional explicit session override. Uses active client
+                session if omitted.
         """
+        session = self._require_session(session)
         # Check session expiry before submitting on-chain
         if session.session_expiry:
             try:
@@ -461,8 +613,8 @@ class O2Client:
 
         markets_resp = await self._get_markets_cached()
 
-        # Convert typed actions to dicts once
-        actions_dicts = [ma.to_dict() for ma in actions]
+        # Convert typed/high-level actions to wire dicts once
+        actions_dicts = await self._normalize_market_actions(session, actions)
 
         # Get current nonce
         nonce = await self._get_nonce(session.trade_account_id)
@@ -511,6 +663,78 @@ class O2Client:
             await self.refresh_nonce(session)
             raise
 
+    async def _normalize_market_actions(
+        self,
+        session: SessionInfo,
+        actions: Sequence[MarketActions | MarketActionGroup],
+    ) -> list[dict]:
+        normalized: list[dict] = []
+        for group in actions:
+            if isinstance(group, MarketActions):
+                normalized.append(group.to_dict())
+                continue
+
+            market = await self._resolve_market_like_async(group.market)
+            resolved_actions: list[Action] = []
+            for action in group.actions:
+                try:
+                    if isinstance(action, CreateOrderRequestAction):
+                        scaled_price = market.scale_price(action.price)
+                        scaled_quantity = market.scale_quantity(action.quantity)
+                        scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity)
+                        market.validate_order(scaled_price, scaled_quantity)
+
+                        order_type = action.order_type
+                        normalized_ot: OrderType | LimitOrder | BoundedMarketOrder
+                        if isinstance(order_type, LimitOrder):
+                            normalized_ot = LimitOrder(
+                                price=market.scale_price(order_type.price),
+                                timestamp=order_type.timestamp,
+                            )
+                        elif isinstance(order_type, BoundedMarketOrder):
+                            normalized_ot = BoundedMarketOrder(
+                                max_price=market.scale_price(order_type.max_price),
+                                min_price=market.scale_price(order_type.min_price),
+                            )
+                        else:
+                            normalized_ot = order_type
+
+                        resolved_actions.append(
+                            CreateOrderAction(
+                                side=action.side,
+                                price=str(scaled_price),
+                                quantity=str(scaled_quantity),
+                                order_type=normalized_ot,
+                            )
+                        )
+                    elif isinstance(action, CancelOrderRequestAction):
+                        resolved_actions.append(
+                            CancelOrderAction(order_id=Id(str(action.order_id)))
+                        )
+                    elif isinstance(action, SettleBalanceRequestAction):
+                        resolved_actions.append(SettleBalanceAction(to=session.trade_account_id))
+                    else:
+                        raise O2Error(message=f"Unsupported action type: {type(action).__name__}")
+                except ValueError as e:
+                    raise O2Error(message=str(e)) from e
+
+            normalized.append(
+                MarketActions(market_id=market.market_id, actions=resolved_actions).to_dict()
+            )
+        return normalized
+
+    def _require_session(self, session: SessionInfo | None = None) -> SessionInfo:
+        if session is not None:
+            return session
+        if self._session is None:
+            raise O2Error(
+                message=(
+                    "No active session. Call create_session() first, or pass "
+                    "session=... explicitly."
+                )
+            )
+        return self._session
+
     # -----------------------------------------------------------------------
     # Market data
     # -----------------------------------------------------------------------
@@ -525,30 +749,30 @@ class O2Client:
         resp = await self._get_markets_cached()
         return self._resolve_market(resp, symbol_pair)
 
-    async def get_depth(self, market: str, precision: int = 10) -> DepthSnapshot:
+    async def get_depth(self, market: str | Market, precision: int = 10) -> DepthSnapshot:
         """Get order book depth for a market."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_depth(market_obj.market_id, precision)
 
-    async def get_trades(self, market: str, count: int = 50) -> list[Trade]:
+    async def get_trades(self, market: str | Market, count: int = 50) -> list[Trade]:
         """Get recent trades for a market."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_trades(market_obj.market_id, count=count)
 
     async def get_bars(
         self,
-        market: str,
+        market: str | Market,
         resolution: str,
         from_ts: int,
         to_ts: int,
     ) -> list[Bar]:
         """Get OHLCV bars for a market."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_bars(market_obj.market_id, from_ts, to_ts, resolution)
 
-    async def get_ticker(self, market: str) -> dict:
+    async def get_ticker(self, market: str | Market) -> dict:
         """Get real-time ticker for a market."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         resp = await self.api.get_market_ticker(market_obj.market_id)
         return resp.data
 
@@ -587,13 +811,13 @@ class O2Client:
     async def get_orders(
         self,
         account: AccountInfo | str,
-        market: str,
+        market: str | Market,
         is_open: bool | None = None,
         count: int = 20,
     ) -> list[Order]:
         """Get orders for an account on a market."""
         trade_account_id = account if isinstance(account, str) else account.trade_account_id
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         resp = await self.api.get_orders(
             market_id=market_obj.market_id,
             contract=trade_account_id,
@@ -603,9 +827,9 @@ class O2Client:
         )
         return resp.orders
 
-    async def get_order(self, market: str, order_id: str) -> Order:
+    async def get_order(self, market: str | Market, order_id: str) -> Order:
         """Get a specific order."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_order(market_obj.market_id, order_id)
 
     # -----------------------------------------------------------------------
@@ -618,9 +842,11 @@ class O2Client:
             await self._ws.connect()
         return self._ws
 
-    async def stream_depth(self, market: str, precision: int = 10) -> AsyncIterator[DepthUpdate]:
+    async def stream_depth(
+        self, market: str | Market, precision: int = 10
+    ) -> AsyncIterator[DepthUpdate]:
         """Stream order book depth updates."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
         async for update in ws.stream_depth(market_obj.market_id, str(precision)):
             yield update
@@ -633,9 +859,9 @@ class O2Client:
         async for update in ws.stream_orders(identities):
             yield update
 
-    async def stream_trades(self, market: str) -> AsyncIterator[TradeUpdate]:
+    async def stream_trades(self, market: str | Market) -> AsyncIterator[TradeUpdate]:
         """Stream trade updates for a market."""
-        market_obj = await self._resolve_market_async(market)
+        market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
         async for update in ws.stream_trades(market_obj.market_id):
             yield update
@@ -766,6 +992,11 @@ class O2Client:
     async def _resolve_market_async(self, name_or_id: str) -> Market:
         markets_resp = await self._get_markets_cached()
         return self._resolve_market(markets_resp, name_or_id)
+
+    async def _resolve_market_like_async(self, market: str | Market) -> Market:
+        if isinstance(market, Market):
+            return market
+        return await self._resolve_market_async(market)
 
     def _get_market_info_by_id(self, markets_resp: MarketsResponse, market_id: str) -> dict:
         """Get market info dict needed by action_to_call."""

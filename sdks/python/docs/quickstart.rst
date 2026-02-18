@@ -80,6 +80,9 @@ temporary session key. This allows the SDK to sign trade actions without
 needing the owner key for every request. Sessions are scoped to specific
 markets and expire after the specified number of days.
 
+The returned session is stored as the client's active session. Trading
+methods use it automatically unless you pass ``session=...`` explicitly.
+
 .. note::
 
    Session creation uses ``personalSign`` (Fuel prefix + SHA-256 for
@@ -95,7 +98,6 @@ Step 5: Place an order
    from o2_sdk import OrderSide, OrderType
 
    result = await client.create_order(
-       session=session,
        market="fFUEL/fUSDC",
        side=OrderSide.BUY,
        price=0.02,
@@ -108,9 +110,9 @@ Step 5: Place an order
        if result.orders:
            print(f"Order ID: {result.orders[0].order_id}")
 
-Prices and quantities are specified as **human-readable floats**. The SDK
-scales them to on-chain integer representation automatically, honoring the
-market's precision and dust constraints.
+Prices and quantities accept human-readable values (``"0.02"``, ``100.0``)
+or explicit on-chain integers via :class:`~o2_sdk.models.ChainInt`. The SDK
+scales and validates inputs against the market's constraints automatically.
 
 Cleanup
 -------
@@ -151,7 +153,7 @@ Complete example
 
            # Place order
            result = await client.create_order(
-               session, "fFUEL/fUSDC", OrderSide.BUY,
+               "fFUEL/fUSDC", OrderSide.BUY,
                price=0.02, quantity=100.0,
            )
            print(f"tx_id={result.tx_id}")

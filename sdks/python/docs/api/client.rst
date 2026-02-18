@@ -152,9 +152,9 @@ Session management
 
    :param owner: The owner wallet or external signer.
    :type owner: :class:`~o2_sdk.crypto.Signer`
-   :param markets: List of market pair strings (e.g., ``["FUEL/USDC"]``)
-       or contract IDs.
-   :type markets: list[str]
+   :param markets: List of market pairs/IDs or
+       :class:`~o2_sdk.models.Market` objects.
+   :type markets: list[str | Market]
    :param expiry_days: Session expiry in days (default 30).
    :type expiry_days: int
    :returns: Session info with the session key, account ID, and authorized
@@ -171,30 +171,45 @@ Session management
           expiry_days=7,
       )
 
+.. attribute:: O2Client.session
+   :type: :class:`~o2_sdk.models.SessionInfo` | None
+
+   The active session stored on the client.
+
+.. method:: O2Client.set_session(session)
+
+   Set the active session used by trading methods when ``session=`` is
+   not passed explicitly.
+
+.. method:: O2Client.clear_session()
+
+   Clear the currently active session.
+
 
 Trading
 -------
 
-.. method:: O2Client.create_order(session, market, side, price, quantity, order_type=OrderType.SPOT, settle_first=True, collect_orders=True)
+.. method:: O2Client.create_order(market, side, price, quantity, order_type=OrderType.SPOT, settle_first=True, collect_orders=True, session=None)
    :async:
 
    Place an order with automatic encoding, signing, and nonce management.
 
-   Prices and quantities are specified as human-readable floats and are
-   automatically scaled to on-chain integers based on the market's
-   decimal configuration. The SDK also validates orders against on-chain
-   constraints (price precision, fractional price, minimum order size).
+   Prices and quantities accept normalized numeric inputs (``str``, ``int``,
+   ``float``, :class:`~decimal.Decimal`, or :class:`~o2_sdk.models.ChainInt`)
+   and are automatically converted to on-chain integers based on market
+   precision. The SDK validates orders against on-chain constraints.
 
-   :param session: An active trading session.
-   :type session: :class:`~o2_sdk.models.SessionInfo`
-   :param market: Market pair (e.g., ``"FUEL/USDC"``) or ``market_id``.
-   :type market: str
+   :param market: Market pair (e.g., ``"FUEL/USDC"``), ``market_id``,
+       ``contract_id``, or :class:`~o2_sdk.models.Market`.
+   :type market: str | :class:`~o2_sdk.models.Market`
    :param side: The order side.
    :type side: :class:`~o2_sdk.models.OrderSide`
-   :param price: Human-readable price.
-   :type price: float
-   :param quantity: Human-readable quantity.
-   :type quantity: float
+   :param price: Price input in human units, or explicit raw chain integer
+       via :class:`~o2_sdk.models.ChainInt`.
+   :type price: str | int | float | Decimal | :class:`~o2_sdk.models.ChainInt`
+   :param quantity: Quantity input in human units, or explicit raw chain
+       integer via :class:`~o2_sdk.models.ChainInt`.
+   :type quantity: str | int | float | Decimal | :class:`~o2_sdk.models.ChainInt`
    :param order_type: The order type. Use :class:`~o2_sdk.models.OrderType`
        enum for simple types (``SPOT``, ``MARKET``, ``FILL_OR_KILL``,
        ``POST_ONLY``), :class:`~o2_sdk.models.LimitOrder` for limit
@@ -208,6 +223,9 @@ Trading
    :param collect_orders: If ``True`` (default), the response includes
        details of the created order.
    :type collect_orders: bool
+   :param session: Optional explicit session override. If omitted, the
+       client's active session is used.
+   :type session: :class:`~o2_sdk.models.SessionInfo` | None
    :returns: The action result including ``tx_id`` and optional ``orders``.
    :rtype: :class:`~o2_sdk.models.ActionsResponse`
 
@@ -218,28 +236,28 @@ Trading
       from o2_sdk import OrderSide, OrderType, LimitOrder, BoundedMarketOrder
 
       # Spot (default) — rests on the book
-      await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+      await client.create_order("fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
 
       # PostOnly — rejected if it would match immediately
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
           order_type=OrderType.POST_ONLY,
       )
 
       # BoundedMarket — market order with price bounds
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
           order_type=BoundedMarketOrder(max_price=0.03, min_price=0.01),
       )
 
       # Limit — with expiry timestamp
       import time
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
           order_type=LimitOrder(price=0.025, timestamp=int(time.time())),
       )
 
-.. method:: O2Client.cancel_order(session, order_id, market=None, market_id=None)
+.. method:: O2Client.cancel_order(order_id, market=None, market_id=None, session=None)
    :async:
 
    Cancel a specific order.
@@ -247,20 +265,21 @@ Trading
    Either ``market`` (pair string) or ``market_id`` (hex ID) must be
    provided.
 
-   :param session: An active trading session.
-   :type session: :class:`~o2_sdk.models.SessionInfo`
    :param order_id: The ``0x``-prefixed order ID to cancel.
    :type order_id: str
    :param market: Market pair string (e.g., ``"FUEL/USDC"``).
    :type market: str | None
    :param market_id: Market ID (hex string).
    :type market_id: str | None
+   :param session: Optional explicit session override. If omitted, the
+       client's active session is used.
+   :type session: :class:`~o2_sdk.models.SessionInfo` | None
    :returns: The action result.
    :rtype: :class:`~o2_sdk.models.ActionsResponse`
    :raises ValueError: If neither ``market`` nor ``market_id`` is
        provided.
 
-.. method:: O2Client.cancel_all_orders(session, market)
+.. method:: O2Client.cancel_all_orders(market, session=None)
    :async:
 
    Cancel all open orders for a market.
@@ -269,15 +288,16 @@ Trading
    Returns a list of :class:`~o2_sdk.models.ActionsResponse` (one per
    batch), or an empty list if there are no open orders.
 
-   :param session: An active trading session.
-   :type session: :class:`~o2_sdk.models.SessionInfo`
-   :param market: Market pair string.
-   :type market: str
+   :param market: Market pair string or :class:`~o2_sdk.models.Market`.
+   :type market: str | :class:`~o2_sdk.models.Market`
+   :param session: Optional explicit session override. If omitted, the
+       client's active session is used.
+   :type session: :class:`~o2_sdk.models.SessionInfo` | None
    :returns: A list of action results (one per batch of up to 5
        cancellations), or an empty list if there are no open orders.
    :rtype: list[:class:`~o2_sdk.models.ActionsResponse`]
 
-.. method:: O2Client.settle_balance(session, market)
+.. method:: O2Client.settle_balance(market, session=None)
    :async:
 
    Settle filled order proceeds for a market.
@@ -287,30 +307,32 @@ Trading
    The :meth:`create_order` method does this automatically when
    ``settle_first=True`` (the default).
 
-   :param session: An active trading session.
-   :type session: :class:`~o2_sdk.models.SessionInfo`
-   :param market: Market pair string.
-   :type market: str
+   :param market: Market pair string or :class:`~o2_sdk.models.Market`.
+   :type market: str | :class:`~o2_sdk.models.Market`
+   :param session: Optional explicit session override. If omitted, the
+       client's active session is used.
+   :type session: :class:`~o2_sdk.models.SessionInfo` | None
    :returns: The action result.
    :rtype: :class:`~o2_sdk.models.ActionsResponse`
 
-.. method:: O2Client.batch_actions(session, actions, collect_orders=False)
+.. method:: O2Client.batch_actions(actions, collect_orders=False, session=None)
    :async:
 
    Submit a batch of typed actions with automatic signing and nonce
    management.
 
-   Actions are grouped by market using :class:`~o2_sdk.models.MarketActions`
-   and signed as a single transaction. The O2 Exchange supports a maximum
-   of **5 actions** per request.
+   Actions are submitted as typed market groups
+   (:class:`~o2_sdk.models.MarketActions`) or fluent request groups
+   (:class:`~o2_sdk.models.MarketActionGroup`). The O2 Exchange supports a
+   maximum of **5 actions** per request.
 
-   :param session: An active trading session.
-   :type session: :class:`~o2_sdk.models.SessionInfo`
-   :param actions: A list of :class:`~o2_sdk.models.MarketActions`
-       objects, each grouping actions for a specific market.
-   :type actions: list[:class:`~o2_sdk.models.MarketActions`]
+   :param actions: A list of action groups.
+   :type actions: Sequence[:class:`~o2_sdk.models.MarketActions` | :class:`~o2_sdk.models.MarketActionGroup`]
    :param collect_orders: If ``True``, return created order details.
    :type collect_orders: bool
+   :param session: Optional explicit session override. If omitted, the
+       client's active session is used.
+   :type session: :class:`~o2_sdk.models.SessionInfo` | None
    :returns: The action result.
    :rtype: :class:`~o2_sdk.models.ActionsResponse`
    :raises SessionExpired: If the session has expired.
@@ -323,7 +345,6 @@ Trading
       )
 
       result = await client.batch_actions(
-          session,
           actions=[MarketActions(
               market_id=market.market_id,
               actions=[
@@ -339,6 +360,16 @@ Trading
           )],
           collect_orders=True,
       )
+
+.. method:: O2Client.actions_for(market)
+
+   Return a fluent :class:`~o2_sdk.models.MarketActionsBuilder` for
+   high-level action construction.
+
+   :param market: Market pair string, market identifier, or Market object.
+   :type market: str | :class:`~o2_sdk.models.Market`
+   :returns: Builder for chained action creation.
+   :rtype: :class:`~o2_sdk.models.MarketActionsBuilder`
 
 
 Market data
@@ -371,8 +402,8 @@ Market data
 
    Get the current order book depth snapshot for a market.
 
-   :param market: Market pair string or market ID.
-   :type market: str
+   :param market: Market pair string, market ID, or Market object.
+   :type market: str | :class:`~o2_sdk.models.Market`
    :param precision: Price aggregation precision (default 10).
    :type precision: int
    :returns: The depth snapshot with ``buys``, ``sells``, ``best_bid``,
@@ -392,8 +423,8 @@ Market data
 
    Get recent trades for a market.
 
-   :param market: Market pair string or market ID.
-   :type market: str
+   :param market: Market pair string, market ID, or Market object.
+   :type market: str | :class:`~o2_sdk.models.Market`
    :param count: Number of trades to retrieve (default 50).
    :type count: int
    :returns: List of recent trades, most recent first.
@@ -404,8 +435,8 @@ Market data
 
    Get OHLCV candlestick bars for a market.
 
-   :param market: Market pair string or market ID.
-   :type market: str
+   :param market: Market pair string, market ID, or Market object.
+   :type market: str | :class:`~o2_sdk.models.Market`
    :param resolution: Candle resolution (e.g., ``"1m"``, ``"5m"``,
        ``"1h"``, ``"1d"``).
    :type resolution: str

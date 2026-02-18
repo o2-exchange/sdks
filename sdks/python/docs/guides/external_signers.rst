@@ -49,7 +49,7 @@ For Fuel-native accounts:
            owner=signer, markets=["FUEL/USDC"]
        )
        result = await client.create_order(
-           session, "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
+           "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
 
 The SDK will call ``my_kms_sign`` with a Fuel-prefixed SHA-256 digest

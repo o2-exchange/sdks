@@ -6,7 +6,7 @@ pytest := venv / "bin/pytest"
 
 # Setup development environment
 setup:
-    python3 -m venv {{ venv }}
+    if command -v python3.12 >/dev/null 2>&1; then python3.12 -m venv {{ venv }}; else python3 -m venv {{ venv }}; fi
     {{ venv }}/bin/pip install -e "sdks/python[dev]"
     cd sdks/typescript && npm install
 

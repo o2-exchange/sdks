@@ -18,6 +18,7 @@ class NetworkConfig:
     ws_url: str
     fuel_rpc: str
     faucet_url: str | None
+    whitelist_required: bool = False
 
 
 NETWORK_CONFIGS: dict[Network, NetworkConfig] = {
@@ -26,18 +27,21 @@ NETWORK_CONFIGS: dict[Network, NetworkConfig] = {
         ws_url="wss://api.testnet.o2.app/v1/ws",
         fuel_rpc="https://testnet.fuel.network/v1/graphql",
         faucet_url="https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2",
+        whitelist_required=True,
     ),
     Network.DEVNET: NetworkConfig(
         api_base="https://api.devnet.o2.app",
         ws_url="wss://api.devnet.o2.app/v1/ws",
         fuel_rpc="https://devnet.fuel.network/v1/graphql",
         faucet_url="https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2",
+        whitelist_required=False,
     ),
     Network.MAINNET: NetworkConfig(
         api_base="https://api.o2.app",
         ws_url="wss://api.o2.app/v1/ws",
         fuel_rpc="https://mainnet.fuel.network/v1/graphql",
         faucet_url=None,
+        whitelist_required=False,
     ),
 }
 

@@ -8,8 +8,51 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
+
+
+@dataclass(frozen=True)
+class ChainInt:
+    """Explicit raw chain integer value (already scaled)."""
+
+    value: int
+
+    def __post_init__(self) -> None:
+        if self.value < 0:
+            raise ValueError("ChainInt value must be non-negative")
+
+
+# Numeric inputs accepted by high-level helpers.
+# - Decimal/str/float/int: human-readable value that will be scaled
+# - ChainInt: already-scaled raw chain integer (validated, then pass-through)
+NumericInput = str | int | float | Decimal | ChainInt
+
+
+def _parse_human_numeric(value: NumericInput, field: str) -> Decimal:
+    """Parse a human numeric input into a non-negative finite Decimal."""
+    try:
+        if isinstance(value, Decimal):
+            parsed = value
+        elif isinstance(value, int):
+            parsed = Decimal(value)
+        elif isinstance(value, float):
+            # Use string form to avoid binary floating point artifacts.
+            parsed = Decimal(str(value))
+        elif isinstance(value, str):
+            parsed = Decimal(value.strip())
+        else:
+            raise ValueError(f"Unsupported {field} type: {type(value).__name__}")
+    except (InvalidOperation, ValueError) as e:
+        raise ValueError(f"Invalid {field}: {value!r}") from e
+
+    if not parsed.is_finite():
+        raise ValueError(f"{field} must be finite")
+    if parsed < 0:
+        raise ValueError(f"{field} must be non-negative")
+    return parsed
+
 
 # ---------------------------------------------------------------------------
 # Enums for order parameters
@@ -48,7 +91,7 @@ class LimitOrder:
     In ``CreateOrderAction``: *price* should be the pre-scaled chain integer.
     """
 
-    price: int | float
+    price: NumericInput
     timestamp: int | None = None  # unix timestamp; None = current time
 
 
@@ -60,8 +103,8 @@ class BoundedMarketOrder:
     In ``CreateOrderAction``: prices should be pre-scaled chain integers.
     """
 
-    max_price: int | float
-    min_price: int | float
+    max_price: NumericInput
+    min_price: NumericInput
 
 
 # ---------------------------------------------------------------------------
@@ -171,9 +214,14 @@ class Market:
         """Convert chain integer price to human-readable float."""
         return float(chain_value / (10**self.quote.decimals))
 
-    def scale_price(self, human_value: float) -> int:
+    def scale_price(self, human_value: NumericInput) -> int:
         """Convert human-readable price to chain integer, truncated to max_precision."""
-        scaled = int(human_value * (10**self.quote.decimals))
+        if isinstance(human_value, ChainInt):
+            self._validate_raw_price_precision(human_value.value)
+            return human_value.value
+        parsed = _parse_human_numeric(human_value, "price")
+        scale_factor = Decimal(10) ** self.quote.decimals
+        scaled = int((parsed * scale_factor).to_integral_value(rounding=ROUND_DOWN))
         truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)
         return int((scaled // truncate_factor) * truncate_factor)
 
@@ -181,11 +229,30 @@ class Market:
         """Convert chain integer quantity to human-readable float."""
         return float(chain_value / (10**self.base.decimals))
 
-    def scale_quantity(self, human_value: float) -> int:
+    def scale_quantity(self, human_value: NumericInput) -> int:
         """Convert human-readable quantity to chain integer, truncated to max_precision."""
-        scaled = int(human_value * (10**self.base.decimals))
+        if isinstance(human_value, ChainInt):
+            self._validate_raw_quantity_precision(human_value.value)
+            return human_value.value
+        parsed = _parse_human_numeric(human_value, "quantity")
+        scale_factor = Decimal(10) ** self.base.decimals
+        scaled = int((parsed * scale_factor).to_integral_value(rounding=ROUND_DOWN))
         truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
         return int((scaled // truncate_factor) * truncate_factor)
+
+    def _validate_raw_price_precision(self, value: int) -> None:
+        truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)
+        if value % truncate_factor != 0:
+            raise ValueError(
+                f"Invalid raw price precision: {value} must be a multiple of {truncate_factor}"
+            )
+
+    def _validate_raw_quantity_precision(self, value: int) -> None:
+        truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
+        if value % truncate_factor != 0:
+            raise ValueError(
+                f"Invalid raw quantity precision: {value} must be a multiple of {truncate_factor}"
+            )
 
     def validate_order(self, price: int, quantity: int) -> None:
         """Validate price/quantity against on-chain constraints.
@@ -717,13 +784,20 @@ class CreateOrderAction:
         if isinstance(self.order_type, LimitOrder):
             lo = self.order_type
             ts = lo.timestamp if lo.timestamp is not None else int(time.time())
-            ot = {"Limit": [str(int(lo.price)), str(ts)]}
+            limit_price = lo.price.value if isinstance(lo.price, ChainInt) else int(lo.price)
+            ot = {"Limit": [str(limit_price), str(ts)]}
         elif isinstance(self.order_type, BoundedMarketOrder):
             bm = self.order_type
+            max_price = (
+                bm.max_price.value if isinstance(bm.max_price, ChainInt) else int(bm.max_price)
+            )
+            min_price = (
+                bm.min_price.value if isinstance(bm.min_price, ChainInt) else int(bm.min_price)
+            )
             ot = {
                 "BoundedMarket": {
-                    "max_price": str(int(bm.max_price)),
-                    "min_price": str(int(bm.min_price)),
+                    "max_price": str(max_price),
+                    "min_price": str(min_price),
                 }
             }
         else:
@@ -781,6 +855,41 @@ class RegisterRefererAction:
 
 
 Action = CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction
+
+
+@dataclass
+class CreateOrderRequestAction:
+    """High-level create-order action (human values or ChainInt raw values)."""
+
+    side: OrderSide
+    price: NumericInput
+    quantity: NumericInput
+    order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT
+
+
+@dataclass
+class CancelOrderRequestAction:
+    """High-level cancel-order action."""
+
+    order_id: Id | str
+
+
+@dataclass
+class SettleBalanceRequestAction:
+    """High-level settle-balance action (target inferred from active session)."""
+
+    pass
+
+
+UserAction = CreateOrderRequestAction | CancelOrderRequestAction | SettleBalanceRequestAction
+
+
+@dataclass
+class MarketActionGroup:
+    """High-level action group addressed by market symbol/id/model."""
+
+    market: str | Market
+    actions: list[UserAction]
 
 
 @dataclass

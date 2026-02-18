@@ -56,7 +56,7 @@ Basic error handling
 
    try:
        result = await client.create_order(
-           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+           "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except O2Error as e:
        print(f"Error: {e.message} (code={e.code})")
@@ -78,7 +78,7 @@ Catching specific errors
 
    try:
        result = await client.create_order(
-           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+           "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except SessionExpired:
        # The session has expired — create a new one
@@ -86,7 +86,7 @@ Catching specific errors
            owner=owner, markets=["fFUEL/fUSDC"]
        )
        result = await client.create_order(
-           session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
+           "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0
        )
    except InvalidSignature:
        # Signing verification failed — check your key/signer setup
@@ -177,7 +177,7 @@ If you manage nonces manually, always re-fetch after errors:
 .. code-block:: python
 
    try:
-       result = await client.batch_actions(session, actions)
+       result = await client.batch_actions(actions)
    except O2Error:
        # Nonce was already refreshed by the SDK
        # The next call will use the correct nonce
@@ -209,7 +209,7 @@ A production-grade pattern with error recovery:
        while True:
            try:
                result = await client.create_order(
-                   session, "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
+                   "FUEL/USDC", OrderSide.BUY, 0.02, 100.0,
                    order_type=OrderType.POST_ONLY,
                )
                print(f"Order placed: {result.tx_id}")

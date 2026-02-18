@@ -25,7 +25,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
 
    .. code-block:: python
 
-      await client.create_order(session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
+      await client.create_order("fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0)
 
 **PostOnly**
    Guaranteed to be a maker order. Rejected immediately if it would cross
@@ -34,7 +34,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
           order_type=OrderType.POST_ONLY,
       )
 
@@ -45,7 +45,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
           order_type=OrderType.MARKET,
       )
 
@@ -56,7 +56,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.03, 100.0,
           order_type=OrderType.FILL_OR_KILL,
       )
 
@@ -69,7 +69,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
       import time
 
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.02, 100.0,
           order_type=LimitOrder(price=0.025, timestamp=int(time.time())),
       )
 
@@ -81,7 +81,7 @@ the :class:`~o2_sdk.models.OrderType` enum, while ``Limit`` and
    .. code-block:: python
 
       await client.create_order(
-          session, "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
+          "fFUEL/fUSDC", OrderSide.BUY, 0.025, 100.0,
           order_type=BoundedMarketOrder(max_price=0.03, min_price=0.01),
       )
 
@@ -94,47 +94,36 @@ To cancel an existing order and place a new one:
 .. code-block:: python
 
    # Cancel by order ID
-   await client.cancel_order(session, order_id="0xabc...", market="fFUEL/fUSDC")
+   await client.cancel_order(order_id="0xabc...", market="fFUEL/fUSDC")
 
    # Cancel all open orders
-   await client.cancel_all_orders(session, "fFUEL/fUSDC")
+   await client.cancel_all_orders("fFUEL/fUSDC")
 
 To atomically cancel-and-replace in a single transaction, use
-:meth:`~o2_sdk.client.O2Client.batch_actions` with typed action objects:
+:meth:`~o2_sdk.client.O2Client.actions_for` + :meth:`~o2_sdk.client.O2Client.batch_actions`:
 
 .. code-block:: python
 
-   from o2_sdk import (
-       CancelOrderAction, CreateOrderAction, SettleBalanceAction,
-       MarketActions, OrderSide, OrderType,
-   )
+   from o2_sdk import OrderSide, OrderType
 
    result = await client.batch_actions(
-       session,
-       actions=[MarketActions(
-           market_id=market.market_id,
-           actions=[
-               CancelOrderAction(order_id=old_order_id),
-               SettleBalanceAction(to=session.trade_account_id),
-               CreateOrderAction(
-                   side=OrderSide.BUY,
-                   price=str(new_price),
-                   quantity=str(new_qty),
-                   order_type=OrderType.SPOT,
-               ),
-           ],
-       )],
+       actions=[
+           client.actions_for("fFUEL/fUSDC")
+           .cancel_order(old_order_id)
+           .settle_balance()
+           .create_order(OrderSide.BUY, new_price, new_qty, OrderType.SPOT)
+           .build()
+       ],
        collect_orders=True,
    )
 
 .. important::
 
-   When using :meth:`~o2_sdk.client.O2Client.batch_actions`, prices and
-   quantities in :class:`~o2_sdk.models.CreateOrderAction` must be
-   **pre-scaled on-chain integers** (as strings). Use
-   :meth:`~o2_sdk.models.Market.scale_price` and
-   :meth:`~o2_sdk.models.Market.scale_quantity` to convert from
-   human-readable values.
+   ``MarketActionGroup`` inputs from :meth:`~o2_sdk.client.O2Client.actions_for`
+   accept human-readable numerics and are scaled automatically. If you submit
+   low-level :class:`~o2_sdk.models.MarketActions` with
+   :class:`~o2_sdk.models.CreateOrderAction`, ``price`` and ``quantity`` must
+   already be pre-scaled on-chain integers.
 
 
 Settling balances
@@ -148,7 +137,7 @@ when ``settle_first=True`` (the default). You can also settle manually:
 
 .. code-block:: python
 
-   await client.settle_balance(session, "fFUEL/fUSDC")
+   await client.settle_balance("fFUEL/fUSDC")
 
 
 Market maker pattern
@@ -204,7 +193,6 @@ A simple two-sided quoting loop using typed actions:
        ))
 
        result = await client.batch_actions(
-           session,
            [MarketActions(market_id=market.market_id, actions=actions)],
            collect_orders=True,
        )

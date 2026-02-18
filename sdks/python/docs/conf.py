@@ -57,6 +57,10 @@ intersphinx_mapping = {
     "aiohttp": ("https://docs.aiohttp.org/en/stable/", None),
 }
 
+# Allow strict local docs builds in offline/sandboxed environments.
+if os.environ.get("O2_DOCS_DISABLE_INTERSPHINX") == "1":
+    intersphinx_mapping = {}
+
 # -- Options for HTML output --------------------------------------------------
 
 html_theme = "furo"
