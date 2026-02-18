@@ -22,7 +22,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-o2-sdk = { git = "https://github.com/o2-exchange/sdks.git", path = "sdks/rust" }
+o2-sdk = "0.1.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

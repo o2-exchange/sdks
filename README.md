@@ -21,7 +21,7 @@
 |----------|------------|---------------|-----------------|---------|
 | [Python](sdks/python/) | 3.10+ | `asyncio` | `coincurve` | `pip install o2-sdk` |
 | [TypeScript](sdks/typescript/) | Node 18+ | native `async/await` | `@noble/secp256k1` | `npm install @o2exchange/sdk` |
-| [Rust](sdks/rust/) | 1.75+ | `tokio` | `secp256k1` | git dependency |
+| [Rust](sdks/rust/) | 1.75+ | `tokio` | `secp256k1` | `cargo add o2-sdk` |
 
 ## ✨ Features
 
