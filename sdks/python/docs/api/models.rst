@@ -880,7 +880,7 @@ method that serializes to the wire format expected by the API.
               ),
           ],
       )
-      result = await client.batch_actions(session, [batch], collect_orders=True)
+      result = await client.batch_actions([batch], collect_orders=True)
 
 
 WebSocket update models

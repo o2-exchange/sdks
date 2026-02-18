@@ -173,25 +173,15 @@ A common pattern is to settle + cancel + place in one batch:
 
 .. code-block:: python
 
-   from o2_sdk import (
-       CancelOrderAction, CreateOrderAction, SettleBalanceAction,
-       MarketActions, OrderSide, OrderType,
-   )
+   from o2_sdk import OrderSide, OrderType
 
-   actions = [
-       SettleBalanceAction(to=session.trade_account_id),
-       CancelOrderAction(order_id=old_order_id),
-       CreateOrderAction(
-           side=OrderSide.BUY,
-           price=str(scaled_price),
-           quantity=str(scaled_qty),
-           order_type=OrderType.SPOT,
-       ),
-   ]
-   result = await client.batch_actions(
-       session,
-       [MarketActions(market_id=market.market_id, actions=actions)],
-   )
+   result = await client.batch_actions([
+       client.actions_for("fFUEL/fUSDC")
+       .settle_balance()
+       .cancel_order(old_order_id)
+       .create_order(OrderSide.BUY, "0.02", "100", OrderType.SPOT)
+       .build()
+   ])
 
 Signing model
 -------------
