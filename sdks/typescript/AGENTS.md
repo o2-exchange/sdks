@@ -169,8 +169,8 @@ const signer = new ExternalSigner("0x1234...abcd", (digest) => {
 });
 
 await client.setupAccount(signer);
-await client.createSession(signer, ["fFUEL/fUSDC"]);
-const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "100");
+await client.createSession(signer, ["FUEL/USDC"]);
+const response = await client.createOrder("FUEL/USDC", "buy", "0.02", "100");
 ```
 
 For EVM accounts, use `ExternalEvmSigner` with an additional `evmAddress` parameter:

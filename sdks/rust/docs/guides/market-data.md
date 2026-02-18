@@ -97,20 +97,11 @@ Supported resolutions: `"1m"`, `"5m"`, `"15m"`, `"30m"`, `"1h"`, `"4h"`,
 ## Ticker Data
 
 ```rust,ignore
-<<<<<<< HEAD
 let ticker = client.get_ticker("FUEL/USDC").await?;
-println!("Last: {}", ticker.last_price.as_deref().unwrap_or("?"));
-println!("Bid: {} / Ask: {}",
-    ticker.best_bid.as_deref().unwrap_or("?"),
-    ticker.best_ask.as_deref().unwrap_or("?"),
-);
-=======
-let ticker = client.get_ticker("fFUEL/fUSDC").await?;
 if let Some(last) = ticker.last {
     println!("Last: {}", last);
 }
 println!("Bid: {:?} / Ask: {:?}", ticker.bid, ticker.ask);
->>>>>>> main
 ```
 
 ## Price Conversion

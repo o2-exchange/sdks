@@ -56,7 +56,7 @@ asyncio.run(main())
 | `actions_for(market)` | `market: str \| Market` | `MarketActionsBuilder` | Fluent high-level action builder |
 | `batch_actions(actions, collect_orders=False, session=None)` | `Sequence[MarketActions \| MarketActionGroup]` | `ActionsResponse` | Submit low/high-level batch actions |
 | `get_markets()` | - | `list[Market]` | List all markets |
-| `get_market(symbol_pair)` | `"fFUEL/fUSDC"` | `Market` | Get specific market |
+| `get_market(symbol_pair)` | `"FUEL/USDC"` | `Market` | Get specific market |
 | `get_depth(market, precision=10)` | - | `DepthSnapshot` | Order book depth |
 | `get_trades(market, count=50)` | - | `list[Trade]` | Recent trades |
 | `get_bars(market, resolution, from_ts, to_ts)` | - | `list[Bar]` | OHLCV candles |
@@ -240,8 +240,8 @@ signer = ExternalSigner(
 )
 
 await client.setup_account(signer)
-session = await client.create_session(owner=signer, markets=["fFUEL/fUSDC"])
-result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, "0.02", "100")
+session = await client.create_session(owner=signer, markets=["FUEL/USDC"])
+result = await client.create_order("FUEL/USDC", OrderSide.BUY, "0.02", "100")
 ```
 
 For EVM accounts, use `ExternalEvmSigner` (same interface but with `evm_address` param and keccak256 hashing).

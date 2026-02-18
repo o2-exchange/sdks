@@ -1312,7 +1312,7 @@ mod tests {
             dust: 0,
             price_window: 0,
             base: MarketAsset {
-                symbol: "fETH".to_string(),
+                symbol: "ETH".to_string(),
                 asset: "0xbase".into(),
                 decimals: 9,
                 max_precision: 6,
