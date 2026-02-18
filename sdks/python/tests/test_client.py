@@ -189,7 +189,7 @@ async def test_batch_actions_rejects_bad_chain_int_precision():
     )
 
     with pytest.raises(O2Error, match="raw quantity precision"):
-        await client._normalize_market_actions(session, [group], client._markets_cache)
+        await client._normalize_market_actions(session, [group])
 
 
 @pytest.mark.asyncio
