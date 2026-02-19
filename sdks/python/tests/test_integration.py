@@ -292,11 +292,34 @@ def _min_quantity_for_min_order(market, price):
     base_factor = 10**market.base.decimals
     # min_order <= price * quote_factor * quantity
     min_qty = min_order / (price * quote_factor)
-    # Round up to nearest precision step and add margin
+    # Apply margin, then round up to nearest precision step.
+    # Rounding first and multiplying by margin can violate max_precision.
     truncate_factor = 10 ** (market.base.decimals - market.base.max_precision)
     step = truncate_factor / base_factor
-    rounded = math.ceil(min_qty / step) * step
-    return rounded * 1.1
+    rounded = math.ceil((min_qty * 1.1) / step) * step
+    return rounded
+
+
+def test_min_quantity_for_min_order_rounds_after_margin_to_step():
+    class _Asset:
+        def __init__(self, decimals, max_precision):
+            self.decimals = decimals
+            self.max_precision = max_precision
+
+    class _Market:
+        def __init__(self):
+            self.min_order = 950_000
+            self.base = _Asset(decimals=9, max_precision=3)
+            self.quote = _Asset(decimals=9, max_precision=9)
+
+    market = _Market()
+    qty = _min_quantity_for_min_order(market, price=1.0)
+    step = 10 ** (market.base.decimals - market.base.max_precision) / (10**market.base.decimals)
+    min_required_with_margin = (market.min_order / (10**market.quote.decimals)) * 1.1
+
+    assert qty >= min_required_with_margin
+    assert math.isclose(qty / step, round(qty / step), rel_tol=0.0, abs_tol=1e-9)
+    assert qty == pytest.approx(0.002, abs=1e-12)
 
 
 async def _consume_first(stream):
