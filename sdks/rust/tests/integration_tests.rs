@@ -584,8 +584,8 @@ fn min_quantity_for_min_order_rounds_after_margin_to_step() {
     let price = UnsignedDecimal::new(Decimal::ONE).unwrap();
     let quantity = min_quantity_for_min_order(&market, &price);
     let step_units = 10u64.pow(market.base.decimals - market.base.max_precision);
-    let min_required_with_margin = Decimal::from(market.min_order) / Decimal::from(10u64.pow(9))
-        * Decimal::new(11, 1);
+    let min_required_with_margin =
+        Decimal::from(market.min_order) / Decimal::from(10u64.pow(9)) * Decimal::new(11, 1);
 
     assert_eq!(quantity.to_string(), "0.002");
     assert!(market.scale_quantity(&quantity).unwrap() % step_units == 0);
