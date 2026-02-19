@@ -544,14 +544,52 @@ fn min_quantity_for_min_order(market: &o2_sdk::Market, price: &UnsignedDecimal) 
     let truncate_factor =
         Decimal::from(10u64.pow(market.base.decimals - market.base.max_precision));
     let step = truncate_factor / base_factor;
-    let rounded = (min_qty / step).ceil() * step;
-    let with_margin = rounded * Decimal::new(11, 1);
-    UnsignedDecimal::new(with_margin).unwrap()
+    // Apply margin first, then ceil to step. Rounding first and then multiplying by
+    // margin can produce quantities with invalid precision (e.g. 0.001 -> 0.0011).
+    let with_margin = min_qty * Decimal::new(11, 1);
+    let rounded = (with_margin / step).ceil() * step;
+    UnsignedDecimal::new(rounded).unwrap()
 }
 
 fn quote_step(market: &o2_sdk::Market) -> UnsignedDecimal {
     let step = Decimal::ONE / Decimal::from(10u64.pow(market.quote.max_precision));
     UnsignedDecimal::new(step).unwrap()
+}
+
+#[test]
+fn min_quantity_for_min_order_rounds_after_margin_to_step() {
+    let market = o2_sdk::Market {
+        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001".into(),
+        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002".into(),
+        whitelist_id: None,
+        blacklist_id: None,
+        maker_fee: 0,
+        taker_fee: 0,
+        min_order: 950_000,
+        dust: 0,
+        price_window: 0,
+        base: o2_sdk::MarketAsset {
+            symbol: "fETH".to_string(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000003".into(),
+            decimals: 9,
+            max_precision: 3,
+        },
+        quote: o2_sdk::MarketAsset {
+            symbol: "fUSDC".to_string(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000004".into(),
+            decimals: 9,
+            max_precision: 9,
+        },
+    };
+    let price = UnsignedDecimal::new(Decimal::ONE).unwrap();
+    let quantity = min_quantity_for_min_order(&market, &price);
+    let step_units = 10u64.pow(market.base.decimals - market.base.max_precision);
+    let min_required_with_margin = Decimal::from(market.min_order) / Decimal::from(10u64.pow(9))
+        * Decimal::new(11, 1);
+
+    assert_eq!(quantity.to_string(), "0.002");
+    assert!(market.scale_quantity(&quantity).unwrap() % step_units == 0);
+    assert!(*quantity.inner() >= min_required_with_margin);
 }
 
 fn floor_to_step(value: Decimal, step: Decimal) -> Decimal {
