@@ -110,7 +110,8 @@ cfg.faucet_url = None;
 let client = O2Client::with_config(cfg);
 ```
 
-Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+> [!IMPORTANT]
+> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
 
 ## Wallet Security
 

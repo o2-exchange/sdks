@@ -98,7 +98,8 @@ client = O2Client(
 )
 ```
 
-Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+> [!IMPORTANT]
+> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
 
 ## Wallet Security
 

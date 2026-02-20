@@ -40,7 +40,8 @@ All three SDKs share the same capabilities:
 - **Mainnet** — no faucet is available; you must fund externally (for example via bridge/on-chain flows), then trade via SDK.
 - **Withdrawals** — all SDKs expose `withdraw(...)` to move assets from the trading account back to an owner/destination address.
 
-Mainnet note: account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+> [!IMPORTANT]
+> Mainnet note: account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
 
 ## 🔌 Default Network Endpoints
 
