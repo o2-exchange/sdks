@@ -51,6 +51,11 @@ console.log(evmWallet.evmAddress);   // 0x-prefixed, 42-character hex
 console.log(evmWallet.b256Address);  // zero-padded to 32 bytes
 ```
 
+Use Fuel-native wallets for broad interop with other Fuel ecosystem apps.
+Use EVM wallets when you want to reuse existing EVM accounts and simplify
+bridging from EVM chains. O2 owner identity is always B256; for EVM wallets,
+that B256 value is the EVM address zero-left-padded to 32 bytes.
+
 > **Warning:** Never hard-code private keys in source code. Use environment
 > variables or a secrets manager for production deployments.
 
@@ -171,3 +176,4 @@ main().catch(console.error);
 - **Market Data** — Fetching depth, trades, candles, and ticker data
 - **WebSocket Streams** — Real-time data with `for await`
 - **Error Handling** — Error types and recovery patterns
+- **Identifiers** — Fuel vs EVM wallet choice and owner ID mapping

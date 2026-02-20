@@ -118,6 +118,30 @@ Mainnet note: there is no faucet; account setup requires an owner wallet that al
 - For production custody, use external signers (KMS/HSM/hardware wallets) instead of long-lived in-process private keys.
 - See `docs/guides/external-signers.md` for production signer integration.
 
+## Wallet Types and Identifiers
+
+Why choose each wallet type:
+
+- **Fuel-native wallet** — best for interoperability with other apps in the Fuel ecosystem.
+- **EVM wallet** — best if you want to reuse existing EVM accounts across chains and simplify bridging from EVM chains.
+
+O2 owner identity model:
+
+- O2 owner identity is always Fuel B256 (`0x` + 64 hex chars).
+- Fuel-native wallets already expose that directly as B256.
+- EVM wallets expose both EVM and B256 forms.
+- For EVM wallets, B256 is the EVM address zero-left-padded to 32 bytes:
+  - `owner_b256 = 0x000000000000000000000000 + evm_address[2:]`
+
+Identifier usage:
+
+| Context | Identifier |
+|---------|------------|
+| Owner/account/session APIs | owner B256 (`wallet.b256_address`) |
+| Trading account state | `trade_account_id` (contract ID) |
+| Human-visible EVM identity | `evm_address` |
+| Markets | pair (`"fFUEL/fUSDC"`) or `market_id` |
+
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
@@ -159,6 +183,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 | [WebSocket Streams](docs/guides/websocket-streams.md) | Real-time data with `TypedStream` and reconnection handling |
 | [Error Handling](docs/guides/error-handling.md) | Error types, recovery patterns, and robust trading loops |
 | [External Signers](docs/guides/external-signers.md) | Integrating KMS/HSM via the `SignableWallet` trait |
+| [Identifiers and Wallet Types](docs/guides/identifiers.md) | Fuel vs EVM wallet choice, owner ID mapping, and identifier rules |
 
 ## Examples
 

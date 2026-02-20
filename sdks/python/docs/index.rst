@@ -71,6 +71,7 @@ Quick example
    guides/trading
    guides/market_data
    guides/websocket_streams
+   guides/identifiers
    guides/external_signers
    guides/error_handling
 

@@ -106,6 +106,32 @@ Mainnet note: there is no faucet; account setup requires an owner wallet that al
 - For production custody, use external signers (KMS/HSM/hardware wallets) instead of long-lived in-process private keys.
 - See `docs/guides/external_signers.rst` for production signer integration.
 
+## Wallet Types and Identifiers
+
+Why choose each wallet type:
+
+- **Fuel-native wallet** — best for interoperability with other apps in the Fuel ecosystem.
+- **EVM wallet** — best if you want to reuse existing EVM accounts across chains and simplify bridging from EVM chains.
+
+O2 owner identity model:
+
+- O2 `owner_id` is always a Fuel B256 (`0x` + 64 hex chars).
+- Fuel-native wallets already expose that directly as `b256_address`.
+- EVM wallets expose both:
+  - `evm_address` (`0x` + 40 hex chars)
+  - `b256_address` (`0x` + 64 hex chars)
+- For EVM wallets, `b256_address` is the EVM address zero-left-padded to 32 bytes:
+  - `owner_b256 = 0x000000000000000000000000 + evm_address[2:]`
+
+Identifier usage:
+
+| Context | Identifier |
+|---------|------------|
+| Owner/account/session APIs | `owner_id` = wallet `b256_address` |
+| Trading account state | `trade_account_id` (contract ID) |
+| Human-visible EVM identity | `evm_address` |
+| Markets | pair (`"fFUEL/fUSDC"`) or `market_id` |
+
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
@@ -140,6 +166,15 @@ Mainnet note: there is no faucet; account setup requires an owner wallet that al
 | `withdraw(owner, asset, amount)` | Withdraw funds |
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
+
+## Guides
+
+- [`docs/guides/identifiers.rst`](docs/guides/identifiers.rst)
+- [`docs/guides/trading.rst`](docs/guides/trading.rst)
+- [`docs/guides/market_data.rst`](docs/guides/market_data.rst)
+- [`docs/guides/websocket_streams.rst`](docs/guides/websocket_streams.rst)
+- [`docs/guides/error_handling.rst`](docs/guides/error_handling.rst)
+- [`docs/guides/external_signers.rst`](docs/guides/external_signers.rst)
 
 ## Examples
 
