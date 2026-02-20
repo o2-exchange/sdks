@@ -68,7 +68,7 @@ Default network configs:
 | `Network.DEVNET` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
 | `Network.MAINNET` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
 
-API rate limits: <https://docs.o2.app/api-endpoints-reference>.
+API rate limits: <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
 
 Pass a custom deployment config if needed:
 

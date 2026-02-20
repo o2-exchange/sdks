@@ -50,7 +50,7 @@ Mainnet note: account setup requires an owner wallet that already has funds depo
 | Devnet | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
 | Mainnet | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
 
-API rate limits are documented at <https://docs.o2.app/api-endpoints-reference>.
+API rate limits are documented at <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
 
 ## 🔐 Wallet Security
 
