@@ -34,7 +34,7 @@ Recommended first integration path on testnet:
 4. Create session with market permissions
 5. Place orders
 6. Read balances/orders
-7. Settle balances back to your trading account after fills
+7. Settle balances back to your trading account after fills; order funds are moved into the market contract during execution and should be swept after fills or cancellations
 
 ```ts
 import { Network, O2Client } from "@o2exchange/sdk";
@@ -57,6 +57,9 @@ console.log(`settle tx=${settle.txId}`);
 
 client.close();
 ```
+
+`getBalances(tradeAccountId)` is an aggregated view across trading account and
+market contracts, so `settleBalance(...)` does not necessarily change aggregate totals.
 
 ## Network Configuration
 

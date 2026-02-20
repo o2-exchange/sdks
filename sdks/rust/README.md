@@ -38,7 +38,7 @@ Recommended first integration path on testnet:
 4. Create session
 5. Place orders
 6. Read balances/orders
-7. Settle balances back to your trading account after fills
+7. Settle balances back to your trading account after fills; order funds are moved into the market contract during execution and should be swept after fills or cancellations
 
 ```rust
 use o2_sdk::{Network, O2Client, OrderType, Side};
@@ -84,6 +84,9 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
     Ok(())
 }
 ```
+
+`get_balances(trade_account_id)` is an aggregated view across trading account
+and market contracts, so `settle_balance(...)` does not necessarily change aggregate totals.
 
 ## Network Configuration
 
