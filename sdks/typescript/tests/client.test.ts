@@ -245,13 +245,13 @@ describe("O2Client faucet top-up", () => {
       session: null,
     });
     const mintSpy = vi.spyOn(client.api, "mintToContract").mockResolvedValue({
-      success: true,
-      error: undefined,
+      message: "Minted test assets to contract",
     });
 
     const res = await client.topUpFromFaucet(signer);
 
-    expect(res.success).toBe(true);
+    expect(res.error).toBeUndefined();
+    expect(res.message).toBeTruthy();
     expect(mintSpy).toHaveBeenCalledWith(TRADE_ACCOUNT_ID);
   });
 
