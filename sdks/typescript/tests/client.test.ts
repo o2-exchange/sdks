@@ -234,6 +234,43 @@ describe("O2Client nonce sourcing", () => {
   });
 });
 
+describe("O2Client faucet top-up", () => {
+  it("topUpFromFaucet resolves trade account by owner and mints to contract", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const { signer } = makeSigner();
+
+    vi.spyOn(client.api, "getAccount").mockResolvedValue({
+      trade_account_id: TRADE_ACCOUNT_ID,
+      trade_account: null,
+      session: null,
+    });
+    const mintSpy = vi.spyOn(client.api, "mintToContract").mockResolvedValue({
+      success: true,
+      error: undefined,
+    });
+
+    const res = await client.topUpFromFaucet(signer);
+
+    expect(res.success).toBe(true);
+    expect(mintSpy).toHaveBeenCalledWith(TRADE_ACCOUNT_ID);
+  });
+
+  it("topUpFromFaucet throws when no trade account exists for owner", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const { signer } = makeSigner();
+
+    vi.spyOn(client.api, "getAccount").mockResolvedValue({
+      trade_account_id: undefined,
+      trade_account: null,
+      session: null,
+    } as unknown as AccountInfo);
+    const mintSpy = vi.spyOn(client.api, "mintToContract");
+
+    await expect(client.topUpFromFaucet(signer)).rejects.toThrow("Call setupAccount() first");
+    expect(mintSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe("O2Client bigint precision", () => {
   it("createOrder rejects bigint quantity that exceeds market max_precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });

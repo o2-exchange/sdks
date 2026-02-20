@@ -37,6 +37,73 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 console.log(response.txId);
 ```
 
+## End-to-End Testnet Flow
+
+This is the recommended first integration path on testnet:
+
+1. Create/load owner wallet
+2. Call `setupAccount()` (idempotent account setup + faucet mint attempt on testnet/devnet)
+3. (Optional) Call `topUpFromFaucet()` for an explicit testnet/devnet top-up
+4. Create session with market permissions
+5. Place orders
+6. Read balances/orders
+7. Withdraw back to owner/destination
+
+```ts
+import { Network, O2Client } from "@o2exchange/sdk";
+
+const client = new O2Client({ network: Network.TESTNET });
+const wallet = O2Client.generateWallet();
+
+const { tradeAccountId } = await client.setupAccount(wallet);
+await client.topUpFromFaucet(wallet);
+await client.createSession(wallet, ["fFUEL/fUSDC"]);
+
+const order = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+console.log(`order tx=${order.txId}`);
+
+const balances = await client.getBalances(tradeAccountId);
+console.log(`fUSDC balance=${balances.fUSDC?.trading_account_balance ?? 0n}`);
+
+const withdrawal = await client.withdraw(wallet, "fUSDC", "1.0");
+console.log(`withdraw tx=${withdrawal.tx_id}`);
+
+client.close();
+```
+
+## Network Configuration
+
+Default network configs:
+
+| Network | REST API | WebSocket | Fuel RPC | Faucet |
+|---------|----------|-----------|----------|--------|
+| `Network.TESTNET` | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
+| `Network.DEVNET` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| `Network.MAINNET` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+
+API rate limits: <https://docs.o2.app/api-endpoints-reference>.
+
+Pass a custom deployment config if needed:
+
+```ts
+const client = new O2Client({
+  config: {
+    apiBase: "https://my-gateway.example.com",
+    wsUrl: "wss://my-gateway.example.com/v1/ws",
+    fuelRpc: "https://mainnet.fuel.network/v1/graphql",
+    faucetUrl: null,
+  },
+});
+```
+
+Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+
+## Wallet Security
+
+- `O2Client.generateWallet()` / `O2Client.generateEvmWallet()` use cryptographically secure randomness and are suitable for mainnet key generation.
+- For production custody, use external signers (KMS/HSM/hardware wallets) instead of long-lived in-process private keys.
+- See `docs/guides/external-signers.md` for production signer integration.
+
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
@@ -54,6 +121,7 @@ console.log(response.txId);
 | `O2Client.generateWallet()` / `O2Client.loadWallet(hex)` | Create or load a Fuel wallet |
 | `O2Client.generateEvmWallet()` / `O2Client.loadEvmWallet(hex)` | Create or load an EVM wallet |
 | `setupAccount(wallet)` | Idempotent account setup |
+| `topUpFromFaucet(wallet)` | Explicit faucet top-up to the wallet's trading account (testnet/devnet) |
 | `setSession(session)` | Restore a serialized session onto the client |
 | `createSession(wallet, markets, expiryDays?)` | Create and store a trading session |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |

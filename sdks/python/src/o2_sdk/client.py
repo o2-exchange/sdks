@@ -44,6 +44,7 @@ from .models import (
     CreateOrderRequestAction,
     DepthSnapshot,
     DepthUpdate,
+    FaucetResponse,
     Id,
     LimitOrder,
     Market,
@@ -226,6 +227,16 @@ class O2Client:
                 )
 
         return account
+
+    async def top_up_from_faucet(self, owner: Signer) -> FaucetResponse:
+        """Mint test assets to the owner's trading account contract.
+
+        This is useful for explicit testnet/devnet top-ups after account setup.
+        """
+        account = await self.api.get_account(owner=owner.b256_address)
+        if not account.trade_account_id:
+            raise O2Error(message="Account not found. Call setup_account() first.")
+        return await self.api.mint_to_contract(account.trade_account_id)
 
     async def _has_any_balance(self, trade_account_id: str) -> bool:
         try:

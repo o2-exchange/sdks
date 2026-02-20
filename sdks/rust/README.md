@@ -52,6 +52,106 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 }
 ```
 
+## End-to-End Testnet Flow
+
+Recommended first integration path on testnet:
+
+1. Create/load owner wallet
+2. Call `setup_account()` (idempotent setup + faucet mint attempt on testnet/devnet)
+3. (Optional) Call `top_up_from_faucet()` for an explicit testnet/devnet top-up
+4. Create session
+5. Place orders
+6. Read balances/orders
+7. Withdraw back to owner/destination
+
+```rust
+use o2_sdk::{Network, O2Client, OrderType, Side};
+
+#[tokio::main]
+async fn main() -> Result<(), o2_sdk::O2Error> {
+    let mut client = O2Client::new(Network::Testnet);
+    let wallet = client.generate_wallet()?;
+    let account = client.setup_account(&wallet).await?;
+    let _ = client.top_up_from_faucet(&wallet).await?;
+
+    let market_symbol = "fFUEL/fUSDC";
+    let mut session = client
+        .create_session(
+            &wallet,
+            &[market_symbol],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
+
+    let market = client.get_market(market_symbol).await?;
+    let response = client
+        .create_order(
+            &mut session,
+            market_symbol,
+            Side::Buy,
+            market.price("0.02")?,
+            market.quantity("50")?,
+            OrderType::Spot,
+            true,
+            true,
+        )
+        .await?;
+    println!("order tx={}", response.tx_id.unwrap_or_default());
+
+    if let Some(trade_account_id) = account.trade_account_id {
+        let balances = client.get_balances(&trade_account_id).await?;
+        println!("assets={}", balances.len());
+    }
+
+    let withdrawal = client
+        .withdraw(
+            &wallet,
+            &session,
+            &market.quote.asset,
+            "1000000",
+            None,
+        )
+        .await?;
+    println!("withdraw tx={}", withdrawal.tx_id.unwrap_or_default());
+    Ok(())
+}
+```
+
+Withdrawal amount note: Rust `withdraw(..., amount, ...)` currently expects a chain integer string (already scaled).
+
+## Network Configuration
+
+Default network configs:
+
+| Network | REST API | WebSocket | Fuel RPC | Faucet |
+|---------|----------|-----------|----------|--------|
+| `Network::Testnet` | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
+| `Network::Devnet` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| `Network::Mainnet` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+
+API rate limits: <https://docs.o2.app/api-endpoints-reference>.
+
+Use custom config if needed:
+
+```rust
+use o2_sdk::{Network, NetworkConfig, O2Client};
+
+let mut cfg = NetworkConfig::from_network(Network::Mainnet);
+cfg.api_base = "https://my-gateway.example.com".into();
+cfg.ws_url = "wss://my-gateway.example.com/v1/ws".into();
+cfg.faucet_url = None;
+
+let client = O2Client::with_config(cfg);
+```
+
+Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+
+## Wallet Security
+
+- `generate_wallet()` / `generate_evm_wallet()` use cryptographically secure randomness and are suitable for mainnet key generation.
+- For production custody, use external signers (KMS/HSM/hardware wallets) instead of long-lived in-process private keys.
+- See `docs/guides/external-signers.md` for production signer integration.
+
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
@@ -69,6 +169,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `generate_wallet()` / `load_wallet(hex)` | Create or load a Fuel wallet |
 | `generate_evm_wallet()` / `load_evm_wallet(hex)` | Create or load an EVM wallet |
 | `setup_account(&wallet)` | Idempotent account setup |
+| `top_up_from_faucet(&wallet)` | Explicit faucet top-up to the wallet's trading account (testnet/devnet) |
 | `create_session(&wallet, markets, ttl)` | Create a trading session |
 | `create_order(&mut session, market_symbol, side, price, qty, ...)` | Place an order |
 | `cancel_order(&mut session, order_id, market)` | Cancel a specific order |

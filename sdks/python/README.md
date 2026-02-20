@@ -58,6 +58,82 @@ async def main():
 asyncio.run(main())
 ```
 
+## End-to-End Testnet Flow
+
+Recommended first integration path on testnet:
+
+1. Create/load owner wallet
+2. Call `setup_account()` (idempotent setup + faucet mint attempt on testnet/devnet)
+3. (Optional) Call `top_up_from_faucet()` for an explicit testnet/devnet top-up
+4. Create session
+5. Place orders
+6. Read balances/orders
+7. Withdraw back to owner/destination
+
+```python
+import asyncio
+from o2_sdk import Network, O2Client, OrderSide
+
+
+async def main():
+    client = O2Client(network=Network.TESTNET)
+    owner = client.generate_wallet()
+
+    account = await client.setup_account(owner)
+    await client.top_up_from_faucet(owner)
+    await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
+
+    order = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, "0.02", "50")
+    print(f"order tx={order.tx_id}")
+
+    balances = await client.get_balances(account.trade_account_id)
+    fusdc = balances.get("fUSDC")
+    print(f"fUSDC balance={fusdc.trading_account_balance if fusdc else 0}")
+
+    withdrawal = await client.withdraw(owner=owner, asset="fUSDC", amount="1.0")
+    print(f"withdraw tx={withdrawal.tx_id}")
+
+    await client.close()
+
+
+asyncio.run(main())
+```
+
+## Network Configuration
+
+Default network configs:
+
+| Network | REST API | WebSocket | Fuel RPC | Faucet |
+|---------|----------|-----------|----------|--------|
+| `Network.TESTNET` | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
+| `Network.DEVNET` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| `Network.MAINNET` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+
+API rate limits: <https://docs.o2.app/api-endpoints-reference>.
+
+Use a custom deployment config:
+
+```python
+from o2_sdk import NetworkConfig, O2Client
+
+client = O2Client(
+    custom_config=NetworkConfig(
+        api_base="https://my-gateway.example.com",
+        ws_url="wss://my-gateway.example.com/v1/ws",
+        fuel_rpc="https://mainnet.fuel.network/v1/graphql",
+        faucet_url=None,
+    )
+)
+```
+
+Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+
+## Wallet Security
+
+- `generate_wallet()` / `generate_evm_wallet()` use cryptographically secure randomness and are suitable for mainnet key generation.
+- For production custody, use external signers (KMS/HSM/hardware wallets) instead of long-lived in-process private keys.
+- See `docs/guides/external_signers.rst` for production signer integration.
+
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling
@@ -76,6 +152,7 @@ asyncio.run(main())
 | `generate_wallet()` / `load_wallet(pk)` | Create or load a Fuel wallet |
 | `generate_evm_wallet()` / `load_evm_wallet(pk)` | Create or load an EVM wallet |
 | `setup_account(wallet)` | Idempotent account setup (create + fund + whitelist) |
+| `top_up_from_faucet(owner)` | Explicit faucet top-up to the owner's trading account (testnet/devnet) |
 | `create_session(owner, markets)` | Create a trading session |
 | `create_order(market, side, price, qty)` | Place an order (`price/qty` accept human or `ChainInt`) |
 | `cancel_order(order_id, market)` | Cancel a specific order |

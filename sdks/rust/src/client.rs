@@ -519,6 +519,21 @@ impl O2Client {
         self.api.get_account_by_id(trade_account_id.as_str()).await
     }
 
+    /// Mint test assets from faucet directly to the owner's trading account contract.
+    ///
+    /// Useful for explicit testnet/devnet top-ups after account setup.
+    pub async fn top_up_from_faucet<W: SignableWallet>(
+        &self,
+        owner: &W,
+    ) -> Result<FaucetResponse, O2Error> {
+        let owner_hex = to_hex_string(owner.b256_address());
+        let account = self.api.get_account_by_owner(&owner_hex).await?;
+        let trade_account_id = account.trade_account_id.ok_or_else(|| {
+            O2Error::AccountNotFound("No trade account found. Call setup_account() first.".into())
+        })?;
+        self.api.mint_to_contract(trade_account_id.as_str()).await
+    }
+
     // -----------------------------------------------------------------------
     // Session Management
     // -----------------------------------------------------------------------

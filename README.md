@@ -34,6 +34,30 @@ All three SDKs share the same capabilities:
 - **Batch Actions** — Up to 5 actions per request (cancel + settle + create in one call)
 - **Idempotent Setup** — `setup_account()` is safe to call on every startup
 
+## 🌐 Network and Funding Model
+
+- **Testnet/Devnet** — `setup_account()` creates the trading account, applies whitelist rules, and attempts faucet minting.
+- **Mainnet** — no faucet is available; you must fund externally (for example via bridge/on-chain flows), then trade via SDK.
+- **Withdrawals** — all SDKs expose `withdraw(...)` to move assets from the trading account back to an owner/destination address.
+
+Mainnet note: account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+
+## 🔌 Default Network Endpoints
+
+| Network | REST API | WebSocket | Fuel RPC | Faucet |
+|---------|----------|-----------|----------|--------|
+| Testnet | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
+| Devnet | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| Mainnet | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+
+API rate limits are documented at <https://docs.o2.app/api-endpoints-reference>.
+
+## 🔐 Wallet Security
+
+- Built-in wallet generation in all SDKs uses cryptographically secure randomness and is suitable for mainnet key generation.
+- For production custody, prefer external signers (KMS/HSM/hardware wallets) over long-lived in-process private keys.
+- See each SDK's external signer guide for production signing patterns.
+
 ## 🚀 Quick Start
 
 ### Python
@@ -60,11 +84,12 @@ asyncio.run(main())
 import { O2Client, Network } from "@o2exchange/sdk";
 
 const client = new O2Client({ network: Network.TESTNET });
-const wallet = client.generateWallet();
+const wallet = O2Client.generateWallet();
 const { tradeAccountId } = await client.setupAccount(wallet);
-const session = await client.createSession(wallet, tradeAccountId, ["fFUEL/fUSDC"]);
-const { response } = await client.createOrder(session, "fFUEL/fUSDC", "Buy", 0.02, 50.0);
-console.log(response.tx_id);
+await client.createSession(wallet, ["fFUEL/fUSDC"]);
+const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
+console.log(`trade_account_id=${tradeAccountId}, tx_id=${response.txId}`);
+client.close();
 ```
 
 ### Rust
@@ -76,12 +101,19 @@ use o2_sdk::{O2Client, Network, Side, OrderType};
 async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
     let wallet = client.generate_wallet()?;
-    let account = client.setup_account(&wallet).await?;
-    let mut session = client.create_session(&wallet, &["fFUEL/fUSDC"], 30).await?;
+    let _account = client.setup_account(&wallet).await?;
+    let mut session = client
+        .create_session(
+            &wallet,
+            &["fFUEL/fUSDC"],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
     let order = client.create_order(
-        &mut session, "fFUEL/fUSDC", Side::Buy, "0.05".parse()?, "100".parse()?,
+        &mut session, "fFUEL/fUSDC", Side::Buy, "0.05", "100",
         OrderType::Spot, true, true,
     ).await?;
+    println!("tx={}", order.tx_id.unwrap_or_default());
     Ok(())
 }
 ```
