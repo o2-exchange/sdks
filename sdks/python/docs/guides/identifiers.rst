@@ -28,6 +28,13 @@ For EVM wallets:
 
 So ``evm_address`` is not passed directly as O2 ``owner_id``; ``b256_address`` is.
 
+Owner ID vs session ID
+----------------------
+
+- **``owner_id``**: long-lived owner identity (Fuel B256). Used for account lookup/setup, session creation authorization, and withdrawals.
+- **``session_id``**: short-lived delegated signer identity (also Fuel B256). Used for trading actions during the session lifetime.
+- Both are B256 addresses, but they represent different keys and permissions.
+
 Which identifier goes where
 ---------------------------
 
