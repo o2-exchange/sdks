@@ -133,6 +133,12 @@ Identifier usage:
 | Human-visible EVM identity | `evm_address` |
 | Markets | pair (`"fFUEL/fUSDC"`) or `market_id` |
 
+`owner_id` vs `trade_account_id`:
+
+- `owner_id` is wallet identity (`b256_address`) used for ownership/auth and session setup.
+- `trade_account_id` is the trading account contract ID used for balances/orders/account state.
+- `setup_account(wallet)` links these by creating/fetching the trading account for that owner.
+
 ## Features
 
 - **Trading** — Place, cancel, and manage orders with automatic price/quantity scaling

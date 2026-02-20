@@ -25,6 +25,21 @@ owner_b256 = 0x000000000000000000000000 + evmAddress.slice(2)
 
 So `evmAddress` is not passed directly as O2 `ownerId`; `b256Address` is.
 
+## `ownerId` vs `tradeAccountId`
+
+`ownerId` and `tradeAccountId` are intentionally different:
+
+- **`ownerId`**:
+  - Wallet identity (B256) for ownership/authentication.
+  - Stable for a given wallet.
+  - Used by setup/session/owner-scoped APIs.
+- **`tradeAccountId`**:
+  - Trading account contract ID that actually holds exchange balances/positions.
+  - Produced by account setup and stored in the session.
+  - Used by account-state APIs such as balances/orders.
+
+Think of it as: owner identity (`ownerId`) controls an on-exchange account (`tradeAccountId`).
+
 ## Which Identifier Goes Where
 
 - **Account/session owner lookups**: owner `b256Address`

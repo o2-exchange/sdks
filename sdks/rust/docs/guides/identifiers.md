@@ -23,6 +23,21 @@ owner_b256 = 0x000000000000000000000000 + evm_address[2:]
 
 So the EVM address is not passed directly as O2 owner identity; the padded B256 form is.
 
+## `owner_id` vs `trade_account_id`
+
+`owner_id` and `trade_account_id` are intentionally different:
+
+- **`owner_id`**:
+  - Wallet identity (B256) for ownership/authentication.
+  - Stable for a given wallet.
+  - Used by setup/session/owner-scoped APIs.
+- **`trade_account_id`**:
+  - Trading account contract ID that actually holds exchange balances/positions.
+  - Produced by account setup and stored in the session.
+  - Used by account-state APIs such as balances/orders.
+
+Think of it as: owner identity (`owner_id`) controls an on-exchange account (`trade_account_id`).
+
 ## Which Identifier Goes Where
 
 - **Account/session owner lookups**: owner B256
