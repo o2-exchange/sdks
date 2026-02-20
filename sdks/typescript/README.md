@@ -26,20 +26,7 @@ Requires **Node.js 18+**. Ships with dual ESM + CJS output.
 
 ## Quick Start
 
-```ts
-import { O2Client, Network } from "@o2exchange/sdk";
-
-const client = new O2Client({ network: Network.TESTNET });
-const wallet = O2Client.generateWallet();
-await client.setupAccount(wallet);
-await client.createSession(wallet, ["fFUEL/fUSDC"]);
-const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
-console.log(response.txId);
-```
-
-## End-to-End Testnet Flow
-
-This is the recommended first integration path on testnet:
+Recommended first integration path on testnet:
 
 1. Create/load owner wallet
 2. Call `setupAccount()` (idempotent account setup + faucet mint attempt on testnet/devnet)
@@ -47,7 +34,7 @@ This is the recommended first integration path on testnet:
 4. Create session with market permissions
 5. Place orders
 6. Read balances/orders
-7. Withdraw back to owner/destination
+7. Settle balances back to your trading account after fills
 
 ```ts
 import { Network, O2Client } from "@o2exchange/sdk";
@@ -65,8 +52,8 @@ console.log(`order tx=${order.txId}`);
 const balances = await client.getBalances(tradeAccountId);
 console.log(`fUSDC balance=${balances.fUSDC?.trading_account_balance ?? 0n}`);
 
-const withdrawal = await client.withdraw(wallet, "fUSDC", "1.0");
-console.log(`withdraw tx=${withdrawal.tx_id}`);
+const settle = await client.settleBalance("fFUEL/fUSDC");
+console.log(`settle tx=${settle.txId}`);
 
 client.close();
 ```

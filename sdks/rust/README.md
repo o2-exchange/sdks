@@ -30,30 +30,6 @@ tokio = { version = "1", features = ["full"] }
 
 ## Quick Start
 
-```rust
-use o2_sdk::{MetadataPolicy, O2Client, Network, OrderType, Side};
-
-#[tokio::main]
-async fn main() -> Result<(), o2_sdk::O2Error> {
-    let mut client = O2Client::new(Network::Testnet);
-    client.set_metadata_policy(MetadataPolicy::OptimisticTtl(std::time::Duration::from_secs(45)));
-    let wallet = client.generate_wallet()?;
-    let _account = client.setup_account(&wallet).await?;
-    let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
-    let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
-    let market = client.get_market(&market_symbol).await?;
-    let price = market.price("0.05")?;
-    let quantity = market.quantity("100")?;
-    let order = client.create_order(
-        &mut session, &market_symbol, Side::Buy, price, quantity, OrderType::Spot, true, true,
-    ).await?;
-    println!("tx: {}", order.tx_id.unwrap_or_default());
-    Ok(())
-}
-```
-
-## End-to-End Testnet Flow
-
 Recommended first integration path on testnet:
 
 1. Create/load owner wallet
@@ -62,7 +38,7 @@ Recommended first integration path on testnet:
 4. Create session
 5. Place orders
 6. Read balances/orders
-7. Withdraw back to owner/destination
+7. Settle balances back to your trading account after fills
 
 ```rust
 use o2_sdk::{Network, O2Client, OrderType, Side};
@@ -103,21 +79,11 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
         println!("assets={}", balances.len());
     }
 
-    let withdrawal = client
-        .withdraw(
-            &wallet,
-            &session,
-            &market.quote.asset,
-            "1000000",
-            None,
-        )
-        .await?;
-    println!("withdraw tx={}", withdrawal.tx_id.unwrap_or_default());
+    let settle = client.settle_balance(&mut session, market_symbol).await?;
+    println!("settle tx={}", settle.tx_id.unwrap_or_default());
     Ok(())
 }
 ```
-
-Withdrawal amount note: Rust `withdraw(..., amount, ...)` currently expects a chain integer string (already scaled).
 
 ## Network Configuration
 

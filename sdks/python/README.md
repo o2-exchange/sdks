@@ -32,34 +32,6 @@ Requires **Python 3.10+**.
 
 ## Quick Start
 
-```python
-import asyncio
-import logging
-
-from o2_sdk import O2Client, Network, OrderSide, OrderType
-
-async def main():
-    logging.basicConfig(level=logging.DEBUG)
-    client = O2Client(network=Network.TESTNET)
-    owner = client.generate_wallet()
-    account = await client.setup_account(owner)
-    session = await client.create_session(owner=owner, markets=["fFUEL/fUSDC"])
-    result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, price=0.02, quantity=100.0)
-    batch = (
-        client.actions_for("fFUEL/fUSDC")
-        .settle_balance()
-        .create_order(OrderSide.SELL, "0.03", "50", OrderType.POST_ONLY)
-        .build()
-    )
-    batch_result = await client.batch_actions([batch], collect_orders=True)
-    print(f"Created order tx={result.tx_id}, batch tx={batch_result.tx_id}")
-    await client.close()
-
-asyncio.run(main())
-```
-
-## End-to-End Testnet Flow
-
 Recommended first integration path on testnet:
 
 1. Create/load owner wallet
@@ -68,7 +40,7 @@ Recommended first integration path on testnet:
 4. Create session
 5. Place orders
 6. Read balances/orders
-7. Withdraw back to owner/destination
+7. Settle balances back to your trading account after fills
 
 ```python
 import asyncio
@@ -90,8 +62,8 @@ async def main():
     fusdc = balances.get("fUSDC")
     print(f"fUSDC balance={fusdc.trading_account_balance if fusdc else 0}")
 
-    withdrawal = await client.withdraw(owner=owner, asset="fUSDC", amount="1.0")
-    print(f"withdraw tx={withdrawal.tx_id}")
+    settle = await client.settle_balance("fFUEL/fUSDC")
+    print(f"settle tx={settle.tx_id}")
 
     await client.close()
 
