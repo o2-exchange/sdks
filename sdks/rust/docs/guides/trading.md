@@ -3,6 +3,12 @@
 This guide covers common trading patterns using the O2 Rust SDK.
 
 > See also: [`O2Client`](crate::client::O2Client) API reference.
+> Identifier reference: [Identifiers and Wallet Types](identifiers.md)
+
+Fuel-native wallets are best for broad interop with other Fuel ecosystem apps.
+EVM wallets are useful when reusing EVM accounts across chains and simplifying
+bridging from EVM chains. O2 owner identity is always B256; for EVM wallets,
+that B256 value is the EVM address zero-left-padded to 32 bytes.
 
 ## Order Types
 

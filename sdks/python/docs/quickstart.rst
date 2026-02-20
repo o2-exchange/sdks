@@ -43,6 +43,11 @@ The SDK supports both Fuel-native wallets and EVM-compatible wallets:
    print(evm_owner.evm_address)    # 0x-prefixed, 42-character hex
    print(evm_owner.b256_address)   # zero-padded to 32 bytes
 
+Use Fuel-native wallets for broad interop with other Fuel ecosystem apps.
+Use EVM wallets when you want to reuse existing EVM accounts and simplify
+bridging from EVM chains. O2 owner identity is always B256; for EVM wallets,
+that B256 value is the EVM address zero-left-padded to 32 bytes.
+
 .. warning::
 
    Never hard-code private keys in source code. Use environment variables or
@@ -171,4 +176,5 @@ Next steps
 - :doc:`guides/trading` — Order types, batch actions, cancel/replace patterns
 - :doc:`guides/market_data` — Fetching depth, trades, candles, and ticker data
 - :doc:`guides/websocket_streams` — Real-time data with ``async for``
+- :doc:`guides/identifiers` — Fuel vs EVM wallet choice and owner ID mapping
 - :doc:`api/client` — Full API reference for :class:`~o2_sdk.client.O2Client`

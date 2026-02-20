@@ -30,27 +30,127 @@ tokio = { version = "1", features = ["full"] }
 
 ## Quick Start
 
+Recommended first integration path on testnet:
+
+1. Create/load owner wallet
+2. Call `setup_account()` (idempotent setup + faucet mint attempt on testnet/devnet)
+3. (Optional) Call `top_up_from_faucet()` for an explicit testnet/devnet top-up
+4. Create session
+5. Place orders
+6. Read balances/orders
+7. Settle balances back to your trading account after fills; order funds are moved into the market contract during execution and should be swept after fills or cancellations
+
 ```rust
-use o2_sdk::{MetadataPolicy, O2Client, Network, OrderType, Side};
+use o2_sdk::{Network, O2Client, OrderType, Side};
 
 #[tokio::main]
 async fn main() -> Result<(), o2_sdk::O2Error> {
     let mut client = O2Client::new(Network::Testnet);
-    client.set_metadata_policy(MetadataPolicy::OptimisticTtl(std::time::Duration::from_secs(45)));
     let wallet = client.generate_wallet()?;
-    let _account = client.setup_account(&wallet).await?;
-    let market_symbol: o2_sdk::MarketSymbol = "fFUEL/fUSDC".into();
-    let mut session = client.create_session(&wallet, &[&market_symbol], std::time::Duration::from_secs(30 * 24 * 3600)).await?;
-    let market = client.get_market(&market_symbol).await?;
-    let price = market.price("0.05")?;
-    let quantity = market.quantity("100")?;
-    let order = client.create_order(
-        &mut session, &market_symbol, Side::Buy, price, quantity, OrderType::Spot, true, true,
-    ).await?;
-    println!("tx: {}", order.tx_id.unwrap_or_default());
+    let account = client.setup_account(&wallet).await?;
+    let _ = client.top_up_from_faucet(&wallet).await?;
+
+    let market_symbol = "fFUEL/fUSDC";
+    let mut session = client
+        .create_session(
+            &wallet,
+            &[market_symbol],
+            std::time::Duration::from_secs(30 * 24 * 3600),
+        )
+        .await?;
+
+    let market = client.get_market(market_symbol).await?;
+    let response = client
+        .create_order(
+            &mut session,
+            market_symbol,
+            Side::Buy,
+            market.price("0.02")?,
+            market.quantity("50")?,
+            OrderType::Spot,
+            true,
+            true,
+        )
+        .await?;
+    println!("order tx={}", response.tx_id.unwrap_or_default());
+
+    if let Some(trade_account_id) = account.trade_account_id {
+        let balances = client.get_balances(&trade_account_id).await?;
+        println!("assets={}", balances.len());
+    }
+
+    let settle = client.settle_balance(&mut session, market_symbol).await?;
+    println!("settle tx={}", settle.tx_id.unwrap_or_default());
     Ok(())
 }
 ```
+
+`get_balances(trade_account_id)` is an aggregated view across trading account
+and market contracts, so `settle_balance(...)` does not necessarily change aggregate totals.
+
+## Network Configuration
+
+Default network configs:
+
+| Network | REST API | WebSocket | Fuel RPC | Faucet |
+|---------|----------|-----------|----------|--------|
+| `Network::Testnet` | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
+| `Network::Devnet` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| `Network::Mainnet` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+
+API rate limits: <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
+
+Use custom config if needed:
+
+```rust
+use o2_sdk::{Network, NetworkConfig, O2Client};
+
+let mut cfg = NetworkConfig::from_network(Network::Mainnet);
+cfg.api_base = "https://my-gateway.example.com".into();
+cfg.ws_url = "wss://my-gateway.example.com/v1/ws".into();
+cfg.faucet_url = None;
+
+let client = O2Client::with_config(cfg);
+```
+
+> [!IMPORTANT]
+> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+
+## Wallet Security
+
+- `generate_wallet()` / `generate_evm_wallet()` use cryptographically secure randomness and are suitable for mainnet key generation.
+- For production custody, use external signers (KMS/HSM/hardware wallets) instead of long-lived in-process private keys.
+- See `docs/guides/external-signers.md` for production signer integration.
+
+## Wallet Types and Identifiers
+
+Why choose each wallet type:
+
+- **Fuel-native wallet** — best for interoperability with other apps in the Fuel ecosystem.
+- **EVM wallet** — best if you want to reuse existing EVM accounts across chains and simplify bridging from EVM chains.
+
+O2 owner identity model:
+
+- O2 owner identity is always Fuel B256 (`0x` + 64 hex chars).
+- Fuel-native wallets already expose that directly as B256.
+- EVM wallets expose both EVM and B256 forms.
+- For EVM wallets, B256 is the EVM address zero-left-padded to 32 bytes:
+  - `owner_b256 = 0x000000000000000000000000 + evm_address[2:]`
+
+Identifier usage:
+
+| Context | Identifier |
+|---------|------------|
+| Owner/account/session APIs | owner B256 (`wallet.b256_address`) |
+| Trading account state | `trade_account_id` (contract ID) |
+| Human-visible EVM identity | `evm_address` |
+| Markets | pair (`"fFUEL/fUSDC"`) or `market_id` |
+
+`owner_id` vs `trade_account_id`:
+
+- `owner_id` is wallet identity (B256) used for ownership/auth and session setup.
+- `trade_account_id` is the trading account contract ID used for balances/orders/account state.
+- `setup_account(&wallet)` links these by creating/fetching the trading account for that owner.
 
 ## Features
 
@@ -69,6 +169,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `generate_wallet()` / `load_wallet(hex)` | Create or load a Fuel wallet |
 | `generate_evm_wallet()` / `load_evm_wallet(hex)` | Create or load an EVM wallet |
 | `setup_account(&wallet)` | Idempotent account setup |
+| `top_up_from_faucet(&wallet)` | Explicit faucet top-up to the wallet's trading account (testnet/devnet) |
 | `create_session(&wallet, markets, ttl)` | Create a trading session |
 | `create_order(&mut session, market_symbol, side, price, qty, ...)` | Place an order |
 | `cancel_order(&mut session, order_id, market)` | Cancel a specific order |
@@ -92,6 +193,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 | [WebSocket Streams](docs/guides/websocket-streams.md) | Real-time data with `TypedStream` and reconnection handling |
 | [Error Handling](docs/guides/error-handling.md) | Error types, recovery patterns, and robust trading loops |
 | [External Signers](docs/guides/external-signers.md) | Integrating KMS/HSM via the `SignableWallet` trait |
+| [Identifiers and Wallet Types](docs/guides/identifiers.md) | Fuel vs EVM wallet choice, owner ID mapping, and identifier rules |
 
 ## Examples
 

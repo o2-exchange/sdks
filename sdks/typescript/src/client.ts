@@ -59,6 +59,7 @@ import type {
   Bar,
   DepthSnapshot,
   DepthUpdate,
+  FaucetResponse,
   Market,
   MarketActions,
   MarketsResponse,
@@ -360,6 +361,24 @@ export class O2Client {
     const nonce = info.trade_account?.nonce ?? 0n;
 
     return { tradeAccountId, nonce };
+  }
+
+  /**
+   * Mint test assets from faucet directly to the owner's trading account contract.
+   *
+   * This is useful for explicit testnet/devnet top-ups after account setup.
+   *
+   * @param wallet - The owner wallet.
+   * @returns Faucet mint response.
+   * @throws {@link O2Error} if no trade account exists or faucet is unavailable.
+   */
+  async topUpFromFaucet(wallet: Signer): Promise<FaucetResponse> {
+    const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
+    const tradeAccountId = accountInfo.trade_account_id;
+    if (!tradeAccountId) {
+      throw new O2Error("No trade account found for this wallet. Call setupAccount() first.");
+    }
+    return this.api.mintToContract(tradeAccountId);
   }
 
   // ── Session management ──────────────────────────────────────────

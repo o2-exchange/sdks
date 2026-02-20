@@ -474,6 +474,36 @@ async fn test_setup_account_idempotent() {
 }
 
 #[tokio::test]
+#[serial]
+async fn test_top_up_from_faucet() {
+    let shared = get_shared_setup().await;
+    let client = O2Client::new(Network::Testnet);
+
+    match client.top_up_from_faucet(&shared.maker_wallet).await {
+        Ok(resp) => {
+            // Faucet can return cooldown/rate-limit as a structured response.
+            assert!(
+                resp.error.is_none() || resp.message.is_some(),
+                "unexpected faucet response: message={:?} error={:?}",
+                resp.message,
+                resp.error
+            );
+        }
+        Err(e) => {
+            // Tolerate transient faucet/rate-limit transport failures on shared testnet infra.
+            let msg = e.to_string().to_ascii_lowercase();
+            assert!(
+                msg.contains("rate limit")
+                    || msg.contains("cooldown")
+                    || msg.contains("too many")
+                    || msg.contains("faucet"),
+                "unexpected top_up_from_faucet error: {e}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn test_market_resolution_by_pair() {
     let mut client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();

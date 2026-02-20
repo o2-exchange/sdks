@@ -54,5 +54,6 @@ Requires **Node.js 18+**.
 - **Market Data** — Fetching depth, trades, candles, and tickers
 - **WebSocket Streams** — Real-time data with `for await`
 - **Error Handling** — Error types and recovery patterns
+- **Identifiers** — Fuel vs EVM wallet choice and owner ID mapping
 - **External Signers** — KMS/HSM integration for production deployments
 - **API Reference** — Full type and method documentation (auto-generated below)

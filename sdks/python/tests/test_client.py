@@ -344,6 +344,59 @@ async def test_create_session_accepts_market_model(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_top_up_from_faucet_mints_to_owner_trade_account(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    owner = client.generate_wallet()
+    trade_account_id = "0x" + "12" * 32
+
+    account = type(
+        "Account",
+        (),
+        {"exists": True, "trade_account_id": trade_account_id},
+    )()
+
+    async def fake_get_account(**_kwargs):
+        return account
+
+    captured: dict = {}
+
+    async def fake_mint_to_contract(contract_id: str):
+        captured["contract_id"] = contract_id
+        return type("FaucetResponse", (), {"success": True, "error": None})()
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+    monkeypatch.setattr(client.api, "mint_to_contract", fake_mint_to_contract)
+
+    response = await client.top_up_from_faucet(owner)
+    assert response.success is True
+    assert captured["contract_id"] == trade_account_id
+
+
+@pytest.mark.asyncio
+async def test_top_up_from_faucet_requires_existing_account(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    owner = client.generate_wallet()
+
+    account = type(
+        "Account",
+        (),
+        {"exists": False, "trade_account_id": None},
+    )()
+
+    async def fake_get_account(**_kwargs):
+        return account
+
+    async def fake_mint_to_contract(_contract_id: str):
+        raise AssertionError("mint_to_contract should not be called when no account exists")
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+    monkeypatch.setattr(client.api, "mint_to_contract", fake_mint_to_contract)
+
+    with pytest.raises(O2Error, match="Call setup_account\\(\\) first"):
+        await client.top_up_from_faucet(owner)
+
+
+@pytest.mark.asyncio
 async def test_cancel_order_accepts_id(monkeypatch: pytest.MonkeyPatch):
     client = O2Client()
     market = _test_market()
