@@ -25,12 +25,6 @@ owner_b256 = 0x000000000000000000000000 + evmAddress.slice(2)
 
 So `evmAddress` is not passed directly as O2 `ownerId`; `b256Address` is.
 
-## Owner ID vs Session ID
-
-- **`ownerId`**: long-lived owner identity (Fuel B256). Used for account lookup/setup, session creation authorization, and withdrawals.
-- **`sessionId`**: short-lived delegated signer identity (also Fuel B256). Used for trading actions during the session lifetime.
-- Both are B256 addresses, but they represent different keys and permissions.
-
 ## Which Identifier Goes Where
 
 - **Account/session owner lookups**: owner `b256Address`

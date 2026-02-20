@@ -23,12 +23,6 @@ owner_b256 = 0x000000000000000000000000 + evm_address[2:]
 
 So the EVM address is not passed directly as O2 owner identity; the padded B256 form is.
 
-## Owner ID vs Session ID
-
-- **Owner identity**: long-lived owner B256. Used for account lookup/setup, session creation authorization, and withdrawals.
-- **Session identity**: short-lived delegated signer B256. Used for trading actions during the session lifetime.
-- Both are B256 addresses, but they represent different keys and permissions.
-
 ## Which Identifier Goes Where
 
 - **Account/session owner lookups**: owner B256

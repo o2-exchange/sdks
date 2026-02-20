@@ -134,12 +134,6 @@ O2 owner identity model:
 - For EVM wallets, B256 is the EVM address zero-left-padded to 32 bytes:
   - `owner_b256 = 0x000000000000000000000000 + evm_address[2:]`
 
-Owner identity vs session identity:
-
-- **Owner identity** — long-lived account owner B256. Used for account lookup/setup, session creation authorization, and withdrawals.
-- **Session identity** — short-lived delegated signer B256. Used to sign trading actions within the session's market scope and expiry window.
-- Both are B256-formatted addresses, but they represent different keys and permissions.
-
 Identifier usage:
 
 | Context | Identifier |
