@@ -50,7 +50,8 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
-      - run: npm install -g npm@latest
+          node-version: 24 # install later node to support npm publishing
+      - run: sudo npm install -g npm@latest
       - run: npm ci
       - run: npm run build
       - run: npm publish --provenance --access public
