@@ -6,7 +6,8 @@
 npm install @o2exchange/sdk
 ```
 
-Requires Node.js 18+.
+Requires Node.js 22.4+.
+Also works in Bun and modern browsers.
 
 ## Quick Start (5-line working example)
 

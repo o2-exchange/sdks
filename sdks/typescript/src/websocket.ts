@@ -7,14 +7,13 @@
  * Features:
  * - Auto-reconnect with exponential backoff and jitter
  * - `AsyncGenerator` streams for each subscription type
- * - Heartbeat/ping-pong health monitoring
+ * - Heartbeat/liveness monitoring
  * - Automatic re-subscription after reconnect
  * - Proper cleanup on disconnect
  *
  * @module
  */
 
-import WebSocket from "ws";
 import type { NetworkConfig } from "./config.js";
 import type {
   BalanceUpdate,
@@ -44,10 +43,15 @@ export interface O2WebSocketOptions {
   maxReconnectAttempts?: number;
   /** Base delay between reconnects in milliseconds (default: `1000`). */
   reconnectDelayMs?: number;
-  /** Heartbeat ping interval in milliseconds (default: `30000`). */
+  /** Liveness check interval in milliseconds (default: `30000`). */
   pingIntervalMs?: number;
-  /** Pong timeout in milliseconds — triggers reconnect if no pong received (default: `60000`). */
+  /** Inactivity timeout in milliseconds — triggers reconnect if no message is received (default: `60000`). */
   pongTimeoutMs?: number;
+  /**
+   * Optional WebSocket factory for custom runtimes/tests.
+   * Defaults to `globalThis.WebSocket`.
+   */
+  webSocketFactory?: (url: string) => WebSocket;
 }
 
 type MessageHandler = (data: Record<string, unknown>) => void;
@@ -79,13 +83,14 @@ export class O2WebSocket {
   private readonly reconnectDelayMs: number;
   private readonly pingIntervalMs: number;
   private readonly pongTimeoutMs: number;
+  private readonly webSocketFactory?: (url: string) => WebSocket;
   private reconnectAttempts = 0;
   private pingInterval: ReturnType<typeof setInterval> | null = null;
   private handlers = new Map<string, Set<MessageHandler>>();
   private connected = false;
   private closing = false;
   private terminated = false;
-  private lastPong = 0;
+  private lastMessage = 0;
   private pendingSubscriptions: Array<Record<string, unknown>> = [];
 
   constructor(options: O2WebSocketOptions) {
@@ -95,6 +100,7 @@ export class O2WebSocket {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
     this.pongTimeoutMs = options.pongTimeoutMs ?? 60000;
+    this.webSocketFactory = options.webSocketFactory;
   }
 
   /** Connect to the WebSocket server. */
@@ -102,57 +108,52 @@ export class O2WebSocket {
     this.closing = false;
     this.terminated = false;
     return new Promise<void>((resolve, reject) => {
-      this.ws = new WebSocket(this.url);
+      const ws = this.webSocketFactory?.(this.url) ?? createDefaultWebSocket(this.url);
+      this.ws = ws;
+      let settled = false;
 
-      this.ws.on("open", () => {
+      ws.addEventListener("open", () => {
         this.connected = true;
         this.reconnectAttempts = 0;
-        this.lastPong = Date.now();
+        this.lastMessage = Date.now();
         this.startPingInterval();
         // Re-subscribe after reconnect
         for (const sub of this.pendingSubscriptions) {
           this.send(sub);
         }
+        settled = true;
         resolve();
       });
 
-      this.ws.on("message", (data: WebSocket.Data) => {
-        this.lastPong = Date.now();
-        try {
-          const msg = JSON.parse(data.toString()) as Record<string, unknown>;
-          const action = msg.action as string | undefined;
-          if (action) {
-            const actionHandlers = this.handlers.get(action);
-            if (actionHandlers) {
-              for (const handler of actionHandlers) handler(msg);
-            }
-            // Also dispatch to wildcard handlers
-            const wildcardHandlers = this.handlers.get("*");
-            if (wildcardHandlers) {
-              for (const handler of wildcardHandlers) handler(msg);
-            }
-          }
-        } catch (_e: unknown) {
-          // Ignore non-JSON messages (pong, etc.)
-        }
+      ws.addEventListener("message", async (event) => {
+        this.lastMessage = Date.now();
+        const text = await messageEventToText(event);
+        if (!text) return;
+        dispatchParsedMessage(text, this.handlers);
       });
 
-      this.ws.on("close", () => {
+      ws.addEventListener("close", () => {
         this.connected = false;
         this.stopPingInterval();
+        if (!settled) {
+          reject(new Error("WebSocket connection closed before open"));
+          settled = true;
+          return;
+        }
         if (!this.closing && this.reconnect) {
           this.attemptReconnect();
         }
       });
 
-      this.ws.on("error", (err: Error) => {
-        if (!this.connected) {
-          reject(err);
+      ws.addEventListener("error", (event) => {
+        if (!this.connected && !settled) {
+          const error =
+            event instanceof ErrorEvent && event.error instanceof Error
+              ? event.error
+              : new Error("WebSocket connection failed");
+          reject(error);
+          settled = true;
         }
-      });
-
-      this.ws.on("pong", () => {
-        this.lastPong = Date.now();
       });
     });
   }
@@ -278,7 +279,7 @@ export class O2WebSocket {
   // ── Internal ────────────────────────────────────────────────────
 
   private send(data: Record<string, unknown>): void {
-    if (this.ws && this.connected) {
+    if (this.ws && this.connected && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     }
   }
@@ -376,12 +377,10 @@ export class O2WebSocket {
     this.stopPingInterval();
     this.pingInterval = setInterval(() => {
       if (this.ws && this.connected) {
-        // Check pong timeout
-        if (this.lastPong > 0 && Date.now() - this.lastPong > this.pongTimeoutMs) {
+        // Trigger reconnect on stale connection by inactivity timeout.
+        if (this.lastMessage > 0 && Date.now() - this.lastMessage > this.pongTimeoutMs) {
           this.ws.close();
-          return;
         }
-        this.ws.ping();
       }
     }, this.pingIntervalMs);
   }
@@ -422,5 +421,44 @@ export class O2WebSocket {
       if (marketId && s.market_id !== marketId) return true;
       return false;
     });
+  }
+}
+
+function createDefaultWebSocket(url: string): WebSocket {
+  if (typeof globalThis.WebSocket !== "function") {
+    throw new Error(
+      "WebSocket is not available in this runtime. Provide O2WebSocketOptions.webSocketFactory or use Node.js 22.4+.",
+    );
+  }
+  return new globalThis.WebSocket(url);
+}
+
+async function messageEventToText(event: MessageEvent): Promise<string | null> {
+  if (typeof event.data === "string") return event.data;
+  if (event.data instanceof ArrayBuffer) return new TextDecoder().decode(event.data);
+  if (ArrayBuffer.isView(event.data)) return new TextDecoder().decode(event.data);
+  if (typeof Blob !== "undefined" && event.data instanceof Blob) return await event.data.text();
+  return null;
+}
+
+function dispatchParsedMessage(
+  rawMessage: string,
+  handlers: Map<string, Set<MessageHandler>>,
+): void {
+  try {
+    const msg = JSON.parse(rawMessage) as Record<string, unknown>;
+    const action = msg.action as string | undefined;
+    if (action) {
+      const actionHandlers = handlers.get(action);
+      if (actionHandlers) {
+        for (const handler of actionHandlers) handler(msg);
+      }
+      const wildcardHandlers = handlers.get("*");
+      if (wildcardHandlers) {
+        for (const handler of wildcardHandlers) handler(msg);
+      }
+    }
+  } catch {
+    // Ignore non-JSON messages.
   }
 }
