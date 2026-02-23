@@ -17,7 +17,7 @@ import {
   O2Client,
   O2Error,
   scaleQuantityForMarket,
-} from "../src/index.js";
+} from "@o2exchange/sdk";
 
 // ── Configuration ─────────────────────────────────────────────────
 

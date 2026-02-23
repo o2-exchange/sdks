@@ -16,7 +16,7 @@ import {
   type Market,
   Network,
   O2Client,
-} from "../src/index.js";
+} from "@o2exchange/sdk";
 
 // ── Main ──────────────────────────────────────────────────────────
 

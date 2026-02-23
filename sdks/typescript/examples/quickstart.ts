@@ -12,7 +12,7 @@
  * Run: npx tsx examples/quickstart.ts
  */
 
-import { formatPrice, formatQuantity, Network, O2Client } from "../src/index.js";
+import { formatPrice, formatQuantity, Network, O2Client } from "@o2exchange/sdk";
 
 async function main() {
   // Initialize client (default: testnet)

@@ -20,7 +20,7 @@ import {
   O2Error,
   type OrderId,
   settleBalanceAction,
-} from "../src/index.js";
+} from "@o2exchange/sdk";
 
 // ── Configuration ─────────────────────────────────────────────────
 

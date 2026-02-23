@@ -19,7 +19,10 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "docs/**/*.md",
+    "*.md",
+    "examples"
   ],
   "repository": {
     "type": "git",
