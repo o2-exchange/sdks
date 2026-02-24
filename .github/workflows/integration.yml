@@ -63,6 +63,26 @@ jobs:
       - run: npm run build
       - run: npm test
 
+  typescript-playwright-integration:
+    name: TypeScript Playwright Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm install --no-save playwright
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:playwright:integration
+
   rust-integration:
     name: Rust Integration
     runs-on: ubuntu-latest
