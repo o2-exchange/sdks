@@ -760,15 +760,56 @@ class O2Client:
         resp = await self._get_markets_cached()
         return self._resolve_market(resp, symbol_pair)
 
-    async def get_depth(self, market: str | Market, precision: int = 10) -> DepthSnapshot:
-        """Get order book depth for a market."""
-        market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_depth(market_obj.market_id, precision)
+    async def get_depth(
+        self,
+        market: str | Market,
+        precision: int = 10,
+        limit: int | None = None,
+    ) -> DepthSnapshot:
+        """Get order book depth for a market.
 
-    async def get_trades(self, market: str | Market, count: int = 50) -> list[Trade]:
-        """Get recent trades for a market."""
+        Args:
+            market: Market pair string (e.g. ``"fFUEL/fUSDC"``) or :class:`Market` object.
+            precision: Price aggregation precision (default ``10``).
+            limit: Maximum number of price levels per side (buys/sells).
+                ``None`` (default) returns the full order book.
+        """
         market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_trades(market_obj.market_id, count=count)
+        return await self.api.get_depth(market_obj.market_id, precision, limit=limit)
+
+    async def get_trades(
+        self,
+        market: str | Market,
+        count: int = 50,
+        account: AccountInfo | str | None = None,
+        start_timestamp: int | None = None,
+        start_trade_id: str | None = None,
+    ) -> list[Trade]:
+        """Get recent trades for a market.
+
+        Args:
+            market: Market pair string or Market object.
+            count: Number of trades to return (max 50).
+            account: Optional AccountInfo or trade_account_id to filter
+                trades for a specific account.
+            start_timestamp: Cursor for pagination — timestamp of the last
+                trade from the previous page. Must be paired with
+                ``start_trade_id``.
+            start_trade_id: Cursor for pagination — trade ID of the last
+                trade from the previous page. Must be paired with
+                ``start_timestamp``.
+        """
+        market_obj = await self._resolve_market_like_async(market)
+        if account is not None:
+            contract = account if isinstance(account, str) else account.trade_account_id
+            return await self.api.get_trades_by_account(
+                market_obj.market_id, contract=contract, count=count,
+                start_timestamp=start_timestamp, start_trade_id=start_trade_id,
+            )
+        return await self.api.get_trades(
+            market_obj.market_id, count=count,
+            start_timestamp=start_timestamp, start_trade_id=start_trade_id,
+        )
 
     async def get_bars(
         self,
@@ -825,8 +866,23 @@ class O2Client:
         market: str | Market,
         is_open: bool | None = None,
         count: int = 20,
+        start_timestamp: int | None = None,
+        start_order_id: str | None = None,
     ) -> list[Order]:
-        """Get orders for an account on a market."""
+        """Get orders for an account on a market.
+
+        Args:
+            account: AccountInfo or trade_account_id string.
+            market: Market pair string or Market object.
+            is_open: Filter by open/closed status. ``None`` returns all.
+            count: Number of orders to return (max 200).
+            start_timestamp: Cursor for pagination — timestamp of the last
+                order from the previous page. Must be paired with
+                ``start_order_id``.
+            start_order_id: Cursor for pagination — order ID of the last
+                order from the previous page. Must be paired with
+                ``start_timestamp``.
+        """
         trade_account_id = account if isinstance(account, str) else account.trade_account_id
         market_obj = await self._resolve_market_like_async(market)
         resp = await self.api.get_orders(
@@ -835,6 +891,8 @@ class O2Client:
             direction="desc",
             count=count,
             is_open=is_open,
+            start_timestamp=start_timestamp,
+            start_order_id=start_order_id,
         )
         return resp.orders
 

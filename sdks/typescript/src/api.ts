@@ -224,16 +224,27 @@ export class O2Api {
    * Fetch the order book depth snapshot.
    * @param marketId - The market identifier.
    * @param precision - Price aggregation precision (default: 10).
+   * @param limit - Maximum number of price levels per side. `undefined` returns the full book.
    */
-  async getDepth(marketId: MarketId, precision = 10): Promise<DepthSnapshot> {
-    const data = await this.get<Record<string, unknown>>("/v1/depth", {
+  async getDepth(marketId: MarketId, precision = 10, limit?: number): Promise<DepthSnapshot> {
+    const params: Record<string, string | number | boolean | undefined> = {
       market_id: marketId,
       precision,
-    });
+    };
+    if (limit !== undefined) {
+      params.limit = limit;
+    }
+    const data = await this.get<Record<string, unknown>>("/v1/depth", params);
     // API wraps depth in "orders" or "view" field; unwrap it
     const depth = (data.orders ?? data.view ?? data) as Record<string, unknown>;
-    const buys = (depth.buys ?? []) as Record<string, unknown>[];
-    const sells = (depth.sells ?? []) as Record<string, unknown>[];
+    let buys = (depth.buys ?? []) as Record<string, unknown>[];
+    let sells = (depth.sells ?? []) as Record<string, unknown>[];
+    // Client-side truncation: honour the limit even if the backend
+    // doesn't support it yet, so callers always get the expected count.
+    if (limit !== undefined) {
+      buys = buys.slice(0, limit);
+      sells = sells.slice(0, limit);
+    }
     return {
       buys: buys.map(parseDepthLevel),
       sells: sells.map(parseDepthLevel),
@@ -256,6 +267,7 @@ export class O2Api {
     count = 50,
     startTimestamp?: number,
     startTradeId?: string,
+    contract?: string,
   ): Promise<Trade[]> {
     const data = await this.get<unknown>("/v1/trades", {
       market_id: marketId,
@@ -263,6 +275,7 @@ export class O2Api {
       count,
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
+      contract,
     });
     const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
     return (rawArr as Record<string, unknown>[]).map(parseTrade);

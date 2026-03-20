@@ -420,7 +420,7 @@ async fn test_get_depth() {
 
     let depth = client
         .api
-        .get_depth(market.market_id.as_str(), 10)
+        .get_depth(market.market_id.as_str(), 10, None)
         .await
         .unwrap();
 
@@ -656,7 +656,7 @@ async fn conservative_post_only_buy_params(
     // Prefer a price one quote tick below best ask to keep the order post-only while
     // minimizing over-aggressive bids in a live book.
     let mut chosen = default_dec;
-    if let Ok(depth) = client.get_depth(market_pair, 10).await {
+    if let Ok(depth) = client.get_depth(market_pair, 10, None).await {
         if let Some(best_ask) = depth.sells.first() {
             let best_ask_human = market.format_price(best_ask.price);
             let best_ask_dec = *best_ask_human.inner();

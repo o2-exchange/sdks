@@ -173,11 +173,27 @@ class O2Api:
         data = await self._request("GET", "/v1/markets/ticker", params={"market_id": market_id})
         return MarketTicker.from_dict(data)
 
-    async def get_depth(self, market_id: str, precision: int = 10) -> DepthSnapshot:
-        data = await self._request(
-            "GET", "/v1/depth", params={"market_id": market_id, "precision": precision}
-        )
-        return DepthSnapshot.from_dict(data)
+    async def get_depth(
+        self,
+        market_id: str,
+        precision: int = 10,
+        limit: int | None = None,
+    ) -> DepthSnapshot:
+        params: dict[str, Any] = {"market_id": market_id, "precision": precision}
+        if limit is not None:
+            params["limit"] = limit
+        data = await self._request("GET", "/v1/depth", params=params)
+        snapshot = DepthSnapshot.from_dict(data)
+        # Client-side truncation: even if the backend doesn't support the
+        # limit parameter yet, we honour it here so callers always get the
+        # expected number of levels.
+        if limit is not None:
+            snapshot = DepthSnapshot(
+                buys=snapshot.buys[:limit],
+                sells=snapshot.sells[:limit],
+                market_id=snapshot.market_id,
+            )
+        return snapshot
 
     async def get_trades(
         self,
@@ -186,6 +202,7 @@ class O2Api:
         count: int = 50,
         start_timestamp: int | None = None,
         start_trade_id: str | None = None,
+        contract: str | None = None,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -196,6 +213,8 @@ class O2Api:
             params["start_timestamp"] = start_timestamp
         if start_trade_id is not None:
             params["start_trade_id"] = start_trade_id
+        if contract is not None:
+            params["contract"] = contract
         data = await self._request("GET", "/v1/trades", params=params)
         if isinstance(data, list):
             return [Trade.from_dict(t) for t in data]
@@ -207,6 +226,8 @@ class O2Api:
         contract: str,
         direction: str = "desc",
         count: int = 50,
+        start_timestamp: int | None = None,
+        start_trade_id: str | None = None,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -214,6 +235,10 @@ class O2Api:
             "direction": direction,
             "count": count,
         }
+        if start_timestamp is not None:
+            params["start_timestamp"] = start_timestamp
+        if start_trade_id is not None:
+            params["start_trade_id"] = start_trade_id
         data = await self._request("GET", "/v1/trades_by_account", params=params)
         if isinstance(data, list):
             return [Trade.from_dict(t) for t in data]

@@ -145,20 +145,25 @@ impl O2Api {
         &self,
         market_id: &str,
         precision: u64,
+        limit: Option<usize>,
     ) -> Result<DepthSnapshot, O2Error> {
         debug!(
-            "api.get_depth market_id={} precision={}",
-            market_id, precision
+            "api.get_depth market_id={} precision={} limit={:?}",
+            market_id, precision, limit
         );
         let url = format!("{}/v1/depth", self.config.api_base);
         let precision_str = precision.to_string();
+        let mut pairs: Vec<(&str, String)> = vec![
+            ("market_id", market_id.to_string()),
+            ("precision", precision_str),
+        ];
+        if let Some(lim) = limit {
+            pairs.push(("limit", lim.to_string()));
+        }
         let resp = self
             .client
             .get(&url)
-            .query(&[
-                ("market_id", market_id),
-                ("precision", precision_str.as_str()),
-            ])
+            .query(&pairs.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>())
             .send()
             .await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
@@ -167,8 +172,15 @@ impl O2Api {
             .get("orders")
             .or_else(|| val.get("view"))
             .unwrap_or(&val);
-        serde_json::from_value(depth.clone())
-            .map_err(|e| O2Error::JsonError(format!("Failed to parse depth: {e}")))
+        let mut snapshot: DepthSnapshot = serde_json::from_value(depth.clone())
+            .map_err(|e| O2Error::JsonError(format!("Failed to parse depth: {e}")))?;
+        // Client-side truncation: honour the limit even if the backend
+        // doesn't support it yet.
+        if let Some(lim) = limit {
+            snapshot.buys.truncate(lim);
+            snapshot.sells.truncate(lim);
+        }
+        Ok(snapshot)
     }
 
     // -----------------------------------------------------------------------
@@ -183,10 +195,11 @@ impl O2Api {
         count: u32,
         start_timestamp: Option<u64>,
         start_trade_id: Option<&str>,
+        contract: Option<&str>,
     ) -> Result<TradesResponse, O2Error> {
         debug!(
-            "api.get_trades market_id={} direction={} count={} start_timestamp={:?} start_trade_id={:?}",
-            market_id, direction, count, start_timestamp, start_trade_id
+            "api.get_trades market_id={} direction={} count={} contract={:?}",
+            market_id, direction, count, contract
         );
         let url = format!("{}/v1/trades", self.config.api_base);
         let count_str = count.to_string();
@@ -202,6 +215,9 @@ impl O2Api {
         if let Some(tid) = start_trade_id {
             query.push(("start_trade_id", tid));
         }
+        if let Some(c) = contract {
+            query.push(("contract", c));
+        }
         let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
@@ -213,6 +229,8 @@ impl O2Api {
         contract: &str,
         direction: &str,
         count: u32,
+        start_timestamp: Option<u64>,
+        start_trade_id: Option<&str>,
     ) -> Result<TradesResponse, O2Error> {
         debug!(
             "api.get_trades_by_account market_id={} contract={} direction={} count={}",
@@ -220,17 +238,20 @@ impl O2Api {
         );
         let url = format!("{}/v1/trades_by_account", self.config.api_base);
         let count_str = count.to_string();
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[
-                ("market_id", market_id),
-                ("contract", contract),
-                ("direction", direction),
-                ("count", count_str.as_str()),
-            ])
-            .send()
-            .await?;
+        let start_timestamp_str = start_timestamp.map(|ts| ts.to_string());
+        let mut query: Vec<(&str, &str)> = vec![
+            ("market_id", market_id),
+            ("contract", contract),
+            ("direction", direction),
+            ("count", count_str.as_str()),
+        ];
+        if let Some(ts) = start_timestamp_str.as_deref() {
+            query.push(("start_timestamp", ts));
+        }
+        if let Some(tid) = start_trade_id {
+            query.push(("start_trade_id", tid));
+        }
+        let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
 

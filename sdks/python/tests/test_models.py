@@ -260,7 +260,10 @@ class TestBalance:
             "trading_account_balance": "25000000000",
         }
         bal = Balance.from_dict(data)
-        assert bal.available == 25000000000
+        # available == total_unlocked (NOT just trading_account_balance)
+        assert bal.available == 34878720000
+        assert bal.locked == 2000000000
+        assert bal.total == 34878720000 + 2000000000
         assert "0x9ad5" in bal.order_books
         assert bal.order_books["0x9ad5"].locked == "2000000000"
 

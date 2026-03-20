@@ -615,6 +615,30 @@ class OrderBookBalance:
 
 @dataclass
 class Balance:
+    """Balance information for a trading account on a specific asset.
+
+    The balance model tracks funds across three locations:
+
+    - **trading_account_balance**: Funds sitting directly in the trading account
+      contract, ready to be allocated to any market.
+    - **total_unlocked**: The *total* available balance, i.e.
+      ``trading_account_balance`` **plus** unlocked amounts sitting in individual
+      order-book contracts (e.g. proceeds from filled orders not yet settled).
+      This is the correct value to use when computing how much you can trade.
+    - **total_locked**: Funds locked as collateral for currently open orders
+      across all order-book contracts.
+
+    .. warning::
+       ``total_unlocked`` already *includes* ``trading_account_balance``.
+       Do **not** add them together — that double-counts your funds.
+
+    Quick reference::
+
+        available_for_new_orders = total_unlocked   # correct
+        locked_in_open_orders   = total_locked
+        grand_total             = total_unlocked + total_locked
+    """
+
     order_books: dict[str, OrderBookBalance]
     total_locked: str
     total_unlocked: str
@@ -634,8 +658,27 @@ class Balance:
 
     @property
     def available(self) -> int:
-        """Total available balance for trading (trading_account_balance)."""
-        return int(self.trading_account_balance)
+        """Total balance available for placing new orders.
+
+        This equals ``total_unlocked``, which is the sum of:
+        - ``trading_account_balance`` (funds in the trading account), and
+        - unlocked amounts in each order-book contract (e.g. unsettled fills).
+
+        .. warning::
+           Do **not** manually add ``trading_account_balance + total_unlocked``;
+           that double-counts the trading account portion.
+        """
+        return int(self.total_unlocked)
+
+    @property
+    def locked(self) -> int:
+        """Total balance locked as collateral for open orders."""
+        return int(self.total_locked)
+
+    @property
+    def total(self) -> int:
+        """Grand total balance (available + locked in orders)."""
+        return int(self.total_unlocked) + int(self.total_locked)
 
 
 # ---------------------------------------------------------------------------

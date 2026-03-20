@@ -304,7 +304,7 @@ impl O2Client {
     }
 
     async fn should_faucet_account(&mut self, trade_account_id: &str) -> bool {
-        let account_id = TradeAccountId::from(trade_account_id.to_string());
+        let account_id = TradeAccountId::new(trade_account_id);
         match self.get_balances(&account_id).await {
             Ok(balances) => {
                 let has_non_zero_balance = balances.values().any(|balance| {
@@ -954,6 +954,7 @@ impl O2Client {
         &mut self,
         market_name: M,
         precision: u64,
+        limit: Option<usize>,
     ) -> Result<DepthSnapshot, O2Error>
     where
         M: IntoMarketSymbol,
@@ -965,15 +966,20 @@ impl O2Client {
         );
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_depth(market.market_id.as_str(), precision)
+            .get_depth(market.market_id.as_str(), precision, limit)
             .await
     }
 
-    /// Get recent trades.
+    /// Get recent trades for a market.
+    ///
+    /// Use `start_timestamp` + `start_trade_id` for cursor pagination
+    /// (both must be provided together or omitted).
     pub async fn get_trades<M>(
         &mut self,
         market_name: M,
         count: u32,
+        start_timestamp: Option<u64>,
+        start_trade_id: Option<&TradeId>,
     ) -> Result<TradesResponse, O2Error>
     where
         M: IntoMarketSymbol,
@@ -982,7 +988,40 @@ impl O2Client {
         debug!("client.get_trades market={} count={}", market_name, count);
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_trades(market.market_id.as_str(), "desc", count, None, None)
+            .get_trades(
+                market.market_id.as_str(), "desc", count, start_timestamp,
+                start_trade_id.map(|t| t.as_str()), None,
+            )
+            .await
+    }
+
+    /// Get trades for a specific account on a market.
+    ///
+    /// Use `start_timestamp` + `start_trade_id` for cursor pagination
+    /// (both must be provided together or omitted).
+    pub async fn get_account_trades<M>(
+        &mut self,
+        market_name: M,
+        account: impl IntoValidId<TradeAccountId>,
+        count: u32,
+        start_timestamp: Option<u64>,
+        start_trade_id: Option<&TradeId>,
+    ) -> Result<TradesResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let account = account.into_valid()?;
+        let market_name = market_name.into_market_symbol()?;
+        debug!(
+            "client.get_account_trades market={} account={} count={}",
+            market_name, account, count
+        );
+        let market = self.get_market(&market_name).await?;
+        self.api
+            .get_trades_by_account(
+                market.market_id.as_str(), account.as_str(), "desc", count,
+                start_timestamp, start_trade_id.map(|t| t.as_str()),
+            )
             .await
     }
 
@@ -1033,8 +1072,9 @@ impl O2Client {
     /// Get balances for a trading account, keyed by asset symbol.
     pub async fn get_balances(
         &mut self,
-        trade_account_id: &TradeAccountId,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
     ) -> Result<HashMap<String, BalanceResponse>, O2Error> {
+        let trade_account_id = trade_account_id.into_valid()?;
         debug!("client.get_balances trade_account_id={}", trade_account_id);
         let markets = self.get_markets().await?;
         let mut balances = HashMap::new();
@@ -1065,16 +1105,22 @@ impl O2Client {
     }
 
     /// Get orders for a trading account in a market.
+    ///
+    /// Use `start_timestamp` + `start_order_id` for cursor pagination
+    /// (both must be provided together or omitted).
     pub async fn get_orders<M>(
         &mut self,
-        trade_account_id: &TradeAccountId,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
         market_name: M,
         is_open: Option<bool>,
         count: u32,
+        start_timestamp: Option<u64>,
+        start_order_id: Option<&OrderId>,
     ) -> Result<OrdersResponse, O2Error>
     where
         M: IntoMarketSymbol,
     {
+        let trade_account_id = trade_account_id.into_valid()?;
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_orders trade_account_id={} market={} is_open={:?} count={}",
@@ -1088,17 +1134,18 @@ impl O2Client {
                 "desc",
                 count,
                 is_open,
-                None,
-                None,
+                start_timestamp,
+                start_order_id.map(|o| o.as_str()),
             )
             .await
     }
 
     /// Get a single order.
-    pub async fn get_order<M>(&mut self, market_name: M, order_id: &str) -> Result<Order, O2Error>
+    pub async fn get_order<M>(&mut self, market_name: M, order_id: impl IntoValidId<OrderId>) -> Result<Order, O2Error>
     where
         M: IntoMarketSymbol,
     {
+        let order_id = order_id.into_valid()?;
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_order market={} order_id={}",
@@ -1106,7 +1153,7 @@ impl O2Client {
         );
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_order(market.market_id.as_str(), order_id)
+            .get_order(market.market_id.as_str(), order_id.as_str())
             .await
     }
 
@@ -1115,9 +1162,10 @@ impl O2Client {
     // -----------------------------------------------------------------------
 
     /// Get the current nonce for a trading account.
-    pub async fn get_nonce(&self, trade_account_id: &str) -> Result<u64, O2Error> {
+    pub async fn get_nonce(&self, trade_account_id: impl IntoValidId<TradeAccountId>) -> Result<u64, O2Error> {
+        let trade_account_id = trade_account_id.into_valid()?;
         debug!("client.get_nonce trade_account_id={}", trade_account_id);
-        let account = self.api.get_account_by_id(trade_account_id).await?;
+        let account = self.api.get_account_by_id(trade_account_id.as_str()).await?;
         Self::parse_account_nonce(
             account.trade_account.as_ref().map(|ta| ta.nonce),
             "get_nonce account response",
@@ -1210,9 +1258,10 @@ impl O2Client {
     /// Stream depth updates over a shared WebSocket connection.
     pub async fn stream_depth(
         &self,
-        market_id: &str,
+        market_id: impl IntoValidId<MarketId>,
         precision: &str,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
+        let market_id = market_id.into_valid()?;
         debug!(
             "client.stream_depth market_id={} precision={}",
             market_id, precision
@@ -1222,7 +1271,7 @@ impl O2Client {
         guard
             .as_ref()
             .unwrap()
-            .stream_depth(market_id, precision)
+            .stream_depth(market_id.as_str(), precision)
             .await
     }
 
@@ -1240,12 +1289,13 @@ impl O2Client {
     /// Stream trade updates over a shared WebSocket connection.
     pub async fn stream_trades(
         &self,
-        market_id: &str,
+        market_id: impl IntoValidId<MarketId>,
     ) -> Result<TypedStream<TradeUpdate>, O2Error> {
+        let market_id = market_id.into_valid()?;
         debug!("client.stream_trades market_id={}", market_id);
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
-        guard.as_ref().unwrap().stream_trades(market_id).await
+        guard.as_ref().unwrap().stream_trades(market_id.as_str()).await
     }
 
     /// Stream balance updates over a shared WebSocket connection.

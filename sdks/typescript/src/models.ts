@@ -214,6 +214,8 @@ export interface Market {
   contract_id: ContractId;
   /** Unique market identifier (0x-prefixed hex). */
   market_id: MarketId;
+  /** Human-readable pair string (e.g., `"ETH/USDC"`). */
+  pair: string;
   /** Maker fee (chain integer). */
   maker_fee: bigint;
   /** Taker fee (chain integer). */
@@ -635,22 +637,58 @@ export interface OrderBookBalance {
 /**
  * Balance information for a trading account on a specific asset.
  *
+ * The balance model tracks funds across three locations:
+ *
+ * - **trading_account_balance** — funds sitting directly in the trading account
+ *   contract, ready to be allocated to any market.
+ * - **total_unlocked** — the *total* available balance, i.e.
+ *   `trading_account_balance` **plus** unlocked amounts sitting in individual
+ *   order-book contracts (e.g. proceeds from filled orders not yet settled).
+ *   **Use this when computing how much you can trade.**
+ * - **total_locked** — funds locked as collateral for currently open orders
+ *   across all order-book contracts.
+ *
+ * ⚠️ `total_unlocked` already *includes* `trading_account_balance`.
+ * Do **not** add them together — that double-counts your funds.
+ *
+ * ```
+ * available_for_new_orders = total_unlocked       // correct
+ * locked_in_open_orders   = total_locked
+ * grand_total             = total_unlocked + total_locked
+ * ```
+ *
  * @example
  * ```ts
  * const balances = await client.getBalances(tradeAccountId);
  * for (const [symbol, bal] of Object.entries(balances)) {
- *   console.log(`${symbol}: ${bal.trading_account_balance}`);
+ *   // ✅ correct: total_unlocked is already the full available balance
+ *   console.log(`${symbol}: available=${bal.total_unlocked}, locked=${bal.total_locked}`);
+ *   // ❌ wrong: do NOT do trading_account_balance + total_unlocked
  * }
  * ```
  */
 export interface BalanceResponse {
   /** Per-order-book balance breakdown, keyed by order book contract ID. */
   order_books: Record<string, OrderBookBalance>;
-  /** Total locked across all order books (chain integer). */
+  /**
+   * Total balance locked as collateral for open orders across all order-book
+   * contracts (chain integer).
+   */
   total_locked: bigint;
-  /** Total unlocked across all order books (chain integer). */
+  /**
+   * Total available balance for trading (chain integer).
+   *
+   * This is `trading_account_balance` + unlocked amounts in each order-book
+   * contract.  Use this value — not `trading_account_balance` alone — when
+   * deciding how much you can spend on new orders.
+   */
   total_unlocked: bigint;
-  /** Total balance in the trading account (chain integer). */
+  /**
+   * Balance sitting directly in the trading account contract (chain integer).
+   *
+   * This is a *subset* of `total_unlocked`. Do not add these two fields
+   * together.
+   */
   trading_account_balance: bigint;
 }
 
@@ -1396,22 +1434,25 @@ export function parseBalanceResponse(raw: Record<string, unknown>): BalanceRespo
 export function parseMarket(raw: Record<string, unknown>): Market {
   const base = raw.base as Record<string, unknown>;
   const quote = raw.quote as Record<string, unknown>;
+  const baseAsset = {
+    ...(base as unknown as MarketAsset),
+    asset: assetId(base.asset as string),
+  };
+  const quoteAsset = {
+    ...(quote as unknown as MarketAsset),
+    asset: assetId(quote.asset as string),
+  };
   return {
     ...(raw as unknown as Market),
     contract_id: contractId(raw.contract_id as string),
     market_id: marketId(raw.market_id as string),
+    pair: `${baseAsset.symbol}/${quoteAsset.symbol}`,
     maker_fee: parseBigInt(raw.maker_fee),
     taker_fee: parseBigInt(raw.taker_fee),
     min_order: parseBigInt(raw.min_order),
     dust: parseBigInt(raw.dust),
-    base: {
-      ...(base as unknown as MarketAsset),
-      asset: assetId(base.asset as string),
-    },
-    quote: {
-      ...(quote as unknown as MarketAsset),
-      asset: assetId(quote.asset as string),
-    },
+    base: baseAsset,
+    quote: quoteAsset,
   };
 }
 

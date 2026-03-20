@@ -214,7 +214,11 @@ export class O2Client {
   private readonly marketsCacheTtlMs: number;
   private _session: SessionState | null = null;
 
-  constructor(options: O2ClientOptions = {}) {
+  constructor(optionsOrNetwork: O2ClientOptions | Network = {}) {
+    const options: O2ClientOptions =
+      typeof optionsOrNetwork === "string"
+        ? { network: optionsOrNetwork }
+        : optionsOrNetwork;
     this.config = options.config ?? getNetworkConfig(options.network ?? Network.TESTNET);
     this.api = new O2Api({ config: this.config });
     this.marketsCacheTtlMs = options.marketsCacheTtlMs ?? DEFAULT_MARKETS_CACHE_TTL_MS;
@@ -715,24 +719,40 @@ export class O2Client {
    * Fetch the order book depth snapshot.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Number of price levels (default: 10).
+   * @param precision - Price aggregation precision (default: 10).
+   * @param limit - Maximum number of price levels per side (buys/sells).
+   *   `undefined` (default) returns the full order book.
    */
-  async getDepth(market: string | Market, precision = 10): Promise<DepthSnapshot> {
+  async getDepth(market: string | Market, precision = 10, limit?: number): Promise<DepthSnapshot> {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return this.api.getDepth(marketId, precision);
+    return this.api.getDepth(marketId, precision, limit);
   }
 
   /**
    * Fetch recent trades for a market.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param count - Number of trades to return (default: 50).
+   * @param count - Number of trades to return (default: 50, max 50).
+   * @param account - Optional trade account ID to filter trades for a specific account.
+   * @param cursor - Optional pagination cursor. Pass the `timestamp` and `trade_id`
+   *   from the last trade of the previous page.
    */
-  async getTrades(market: string | Market, count = 50) {
+  async getTrades(
+    market: string | Market,
+    count = 50,
+    account?: string,
+    cursor?: { startTimestamp: number; startTradeId: string },
+  ) {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return this.api.getTrades(marketId, "desc", count);
+    if (account) {
+      return this.api.getTradesByAccount(
+        marketId, account as TradeAccountId, "desc", count,
+        cursor?.startTimestamp, cursor?.startTradeId,
+      );
+    }
+    return this.api.getTrades(marketId, "desc", count, cursor?.startTimestamp, cursor?.startTradeId);
   }
 
   /**
@@ -801,13 +821,16 @@ export class O2Client {
    * @param tradeAccountId - The trade account contract ID.
    * @param market - Market pair string or {@link Market} object.
    * @param isOpen - Filter by open/closed status.
-   * @param count - Number of orders (default: 20).
+   * @param count - Number of orders (default: 20, max 200).
+   * @param cursor - Optional pagination cursor. Pass the `timestamp` and `order_id`
+   *   from the last order of the previous page.
    */
   async getOrders(
     tradeAccountId: TradeAccountId,
     market: string | Market,
     isOpen?: boolean,
     count = 20,
+    cursor?: { startTimestamp: number; startOrderId: string },
   ): Promise<Order[]> {
     const resolved = typeof market === "string" ? await this.getMarket(market) : market;
     const resp = await this.api.getOrders(
@@ -816,6 +839,8 @@ export class O2Client {
       "desc",
       count,
       isOpen,
+      cursor?.startTimestamp,
+      cursor?.startOrderId as OrderId | undefined,
     );
     return resp.orders;
   }

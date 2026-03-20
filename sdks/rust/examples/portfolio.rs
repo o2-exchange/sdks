@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for market in &markets {
         let pair = market.symbol_pair();
         let orders_resp = client
-            .get_orders(&trade_account_id, &pair, Some(true), 20)
+            .get_orders(&trade_account_id, &pair, Some(true), 20, None, None)
             .await?;
 
         if !orders_resp.orders.is_empty() {
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Display recent trades
     if let Some(market) = markets.first() {
         let pair = market.symbol_pair();
-        let trades = client.get_trades(&pair, 10).await?;
+        let trades = client.get_trades(&pair, 10, None, None).await?;
         if !trades.trades.is_empty() {
             println!("\n--- Recent Trades ({pair}) ---");
             for trade in &trades.trades {
