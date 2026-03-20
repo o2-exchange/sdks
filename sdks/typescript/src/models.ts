@@ -22,10 +22,19 @@ export type HexId<Brand extends string> = string & {
 
 /**
  * Create a normalized branded hex ID from a raw string.
- * Normalizes to 0x-prefixed lowercase.
+ * Normalizes to 0x-prefixed lowercase. Validates that the input
+ * is a non-empty hex string (with or without `0x` prefix).
+ *
+ * @throws {Error} if the input is empty or contains non-hex characters.
  */
 export function hexId<B extends string>(raw: string): HexId<B> {
   const stripped = raw.startsWith("0x") || raw.startsWith("0X") ? raw.slice(2) : raw;
+  if (!stripped) {
+    throw new Error(`Invalid hex ID: expected non-empty hex string, got ${JSON.stringify(raw)}`);
+  }
+  if (!/^[0-9a-fA-F]+$/.test(stripped)) {
+    throw new Error(`Invalid hex ID: contains non-hex characters: ${JSON.stringify(raw)}`);
+  }
   return `0x${stripped.toLowerCase()}` as HexId<B>;
 }
 
@@ -42,17 +51,26 @@ export type TradeAccountId = HexId<"TradeAccountId">;
 /** Asset identifier. */
 export type AssetId = HexId<"AssetId">;
 
-/** Create a {@link TxId} from a raw hex string. */
+/**
+ * Create a normalized hex ID without validation. For internal/parsing use only.
+ * @internal
+ */
+export function hexIdTrusted<B extends string>(raw: string): HexId<B> {
+  const stripped = raw.startsWith("0x") || raw.startsWith("0X") ? raw.slice(2) : raw;
+  return `0x${stripped.toLowerCase()}` as HexId<B>;
+}
+
+/** Create a {@link TxId} from a raw hex string (validated). */
 export const txId = (raw: string): TxId => hexId<"TxId">(raw);
-/** Create an {@link OrderId} from a raw hex string. */
+/** Create an {@link OrderId} from a raw hex string (validated). */
 export const orderId = (raw: string): OrderId => hexId<"OrderId">(raw);
-/** Create a {@link MarketId} from a raw hex string. */
+/** Create a {@link MarketId} from a raw hex string (validated). */
 export const marketId = (raw: string): MarketId => hexId<"MarketId">(raw);
-/** Create a {@link ContractId} from a raw hex string. */
+/** Create a {@link ContractId} from a raw hex string (validated). */
 export const contractId = (raw: string): ContractId => hexId<"ContractId">(raw);
-/** Create a {@link TradeAccountId} from a raw hex string. */
+/** Create a {@link TradeAccountId} from a raw hex string (validated). */
 export const tradeAccountId = (raw: string): TradeAccountId => hexId<"TradeAccountId">(raw);
-/** Create an {@link AssetId} from a raw hex string. */
+/** Create an {@link AssetId} from a raw hex string (validated). */
 export const assetId = (raw: string): AssetId => hexId<"AssetId">(raw);
 
 // ── Nonce ────────────────────────────────────────────────────────────
@@ -892,7 +910,7 @@ export class SessionActionsResponse {
     data: Record<string, unknown>,
     parseOrderFn: (raw: Record<string, unknown>) => Order,
   ): SessionActionsResponse {
-    const rawTxId = typeof data.tx_id === "string" ? txId(data.tx_id) : null;
+    const rawTxId = typeof data.tx_id === "string" ? hexIdTrusted<"TxId">(data.tx_id) : null;
     const rawOrders = Array.isArray(data.orders)
       ? (data.orders as Record<string, unknown>[]).map(parseOrderFn)
       : null;
@@ -1341,7 +1359,7 @@ export function parseOrder(raw: Record<string, unknown>): Order {
 
   return {
     ...(raw as unknown as Order),
-    order_id: orderId(raw.order_id as string),
+    order_id: hexIdTrusted<"OrderId">(raw.order_id as string),
     side,
     order_type: orderType,
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
@@ -1349,7 +1367,7 @@ export function parseOrder(raw: Record<string, unknown>): Order {
     quantity_fill: raw.quantity_fill != null ? parseBigInt(raw.quantity_fill) : undefined,
     price_fill: raw.price_fill != null ? parseBigInt(raw.price_fill) : undefined,
     desired_quantity: parseDesiredQuantity(raw.desired_quantity),
-    market_id: raw.market_id != null ? marketId(raw.market_id as string) : undefined,
+    market_id: raw.market_id != null ? hexIdTrusted<"MarketId">(raw.market_id as string) : undefined,
   };
 }
 
@@ -1436,16 +1454,16 @@ export function parseMarket(raw: Record<string, unknown>): Market {
   const quote = raw.quote as Record<string, unknown>;
   const baseAsset = {
     ...(base as unknown as MarketAsset),
-    asset: assetId(base.asset as string),
+    asset: hexIdTrusted<"AssetId">(base.asset as string),
   };
   const quoteAsset = {
     ...(quote as unknown as MarketAsset),
-    asset: assetId(quote.asset as string),
+    asset: hexIdTrusted<"AssetId">(quote.asset as string),
   };
   return {
     ...(raw as unknown as Market),
-    contract_id: contractId(raw.contract_id as string),
-    market_id: marketId(raw.market_id as string),
+    contract_id: hexIdTrusted<"ContractId">(raw.contract_id as string),
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
     pair: `${baseAsset.symbol}/${quoteAsset.symbol}`,
     maker_fee: parseBigInt(raw.maker_fee),
     taker_fee: parseBigInt(raw.taker_fee),
@@ -1469,7 +1487,7 @@ export function parseBalanceUpdate(raw: Record<string, unknown>): BalanceUpdate 
       }
       return {
         identity: entry.identity as Identity,
-        asset_id: assetId(entry.asset_id as string),
+        asset_id: hexIdTrusted<"AssetId">(entry.asset_id as string),
         total_locked: parseBigInt(entry.total_locked),
         total_unlocked: parseBigInt(entry.total_unlocked),
         trading_account_balance: parseBigInt(entry.trading_account_balance),
@@ -1483,7 +1501,7 @@ export function parseBalanceUpdate(raw: Record<string, unknown>): BalanceUpdate 
 export function parseNonceUpdate(raw: Record<string, unknown>): NonceUpdate {
   return {
     ...(raw as unknown as NonceUpdate),
-    contract_id: tradeAccountId(raw.contract_id as string),
+    contract_id: hexIdTrusted<"TradeAccountId">(raw.contract_id as string),
     nonce: parseBigInt(raw.nonce),
   };
 }
@@ -1492,7 +1510,7 @@ export function parseNonceUpdate(raw: Record<string, unknown>): NonceUpdate {
 export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
   const result: DepthUpdate = {
     ...(raw as unknown as DepthUpdate),
-    market_id: marketId(raw.market_id as string),
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
   };
 
   if (raw.changes) {
@@ -1529,7 +1547,7 @@ export function parseTradeUpdate(raw: Record<string, unknown>): TradeUpdate {
   const rawTrades = (raw.trades ?? []) as Record<string, unknown>[];
   return {
     ...(raw as unknown as TradeUpdate),
-    market_id: marketId(raw.market_id as string),
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
     trades: rawTrades.map(parseTrade),
   };
 }
@@ -1539,7 +1557,7 @@ export function parseAccountInfo(raw: Record<string, unknown>): AccountInfo {
   const ta = raw.trade_account as Record<string, unknown> | null;
   const rawId = raw.trade_account_id as string | null;
   return {
-    trade_account_id: rawId ? tradeAccountId(rawId) : null,
+    trade_account_id: rawId ? hexIdTrusted<"TradeAccountId">(rawId) : null,
     trade_account: ta
       ? {
           ...(ta as unknown as TradeAccount),

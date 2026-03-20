@@ -75,7 +75,7 @@ import type {
   WalletState,
   WireOrderType,
 } from "./models.js";
-import { assetId as toAssetId } from "./models.js";
+import { assetId as toAssetId, tradeAccountId } from "./models.js";
 import { O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
@@ -741,14 +741,15 @@ export class O2Client {
   async getTrades(
     market: string | Market,
     count = 50,
-    account?: string,
+    account?: string | TradeAccountId,
     cursor?: { startTimestamp: number; startTradeId: string },
   ) {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     if (account) {
+      const validAccount = tradeAccountId(account);
       return this.api.getTradesByAccount(
-        marketId, account as TradeAccountId, "desc", count,
+        marketId, validAccount, "desc", count,
         cursor?.startTimestamp, cursor?.startTradeId,
       );
     }

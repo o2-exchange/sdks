@@ -781,34 +781,41 @@ class O2Client:
         self,
         market: str | Market,
         count: int = 50,
-        account: AccountInfo | str | None = None,
+        account: AccountInfo | str | Id | None = None,
         start_timestamp: int | None = None,
-        start_trade_id: str | None = None,
+        start_trade_id: str | Id | None = None,
     ) -> list[Trade]:
         """Get recent trades for a market.
 
         Args:
             market: Market pair string or Market object.
             count: Number of trades to return (max 50).
-            account: Optional AccountInfo or trade_account_id to filter
-                trades for a specific account.
+            account: Optional AccountInfo, trade_account_id string, or Id
+                to filter trades for a specific account. Strings are
+                validated as hex.
             start_timestamp: Cursor for pagination — timestamp of the last
                 trade from the previous page. Must be paired with
                 ``start_trade_id``.
             start_trade_id: Cursor for pagination — trade ID of the last
                 trade from the previous page. Must be paired with
-                ``start_timestamp``.
+                ``start_timestamp``. Strings are validated as hex.
         """
         market_obj = await self._resolve_market_like_async(market)
+        validated_tid = Id(start_trade_id) if isinstance(start_trade_id, str) and not isinstance(start_trade_id, Id) else start_trade_id
         if account is not None:
-            contract = account if isinstance(account, str) else account.trade_account_id
+            if isinstance(account, str) and not isinstance(account, Id):
+                contract = Id(account)
+            elif isinstance(account, Id):
+                contract = account
+            else:
+                contract = account.trade_account_id
             return await self.api.get_trades_by_account(
                 market_obj.market_id, contract=contract, count=count,
-                start_timestamp=start_timestamp, start_trade_id=start_trade_id,
+                start_timestamp=start_timestamp, start_trade_id=validated_tid,
             )
         return await self.api.get_trades(
             market_obj.market_id, count=count,
-            start_timestamp=start_timestamp, start_trade_id=start_trade_id,
+            start_timestamp=start_timestamp, start_trade_id=validated_tid,
         )
 
     async def get_bars(
@@ -832,13 +839,19 @@ class O2Client:
     # Account data
     # -----------------------------------------------------------------------
 
-    async def get_balances(self, account: AccountInfo | str) -> dict[str, Balance]:
+    async def get_balances(self, account: AccountInfo | str | Id) -> dict[str, Balance]:
         """Get balances keyed by asset symbol.
 
         Args:
-            account: AccountInfo or trade_account_id string
+            account: AccountInfo, trade_account_id string, or Id.
+                Strings are validated as hex.
         """
-        trade_account_id = account if isinstance(account, str) else account.trade_account_id
+        if isinstance(account, str) and not isinstance(account, Id):
+            trade_account_id = Id(account)
+        elif isinstance(account, Id):
+            trade_account_id = account
+        else:
+            trade_account_id = account.trade_account_id
 
         markets_resp = await self._get_markets_cached()
         result: dict[str, Balance] = {}
@@ -862,17 +875,18 @@ class O2Client:
 
     async def get_orders(
         self,
-        account: AccountInfo | str,
+        account: AccountInfo | str | Id,
         market: str | Market,
         is_open: bool | None = None,
         count: int = 20,
         start_timestamp: int | None = None,
-        start_order_id: str | None = None,
+        start_order_id: str | Id | None = None,
     ) -> list[Order]:
         """Get orders for an account on a market.
 
         Args:
-            account: AccountInfo or trade_account_id string.
+            account: AccountInfo, trade_account_id string, or Id.
+                Strings are validated as hex.
             market: Market pair string or Market object.
             is_open: Filter by open/closed status. ``None`` returns all.
             count: Number of orders to return (max 200).
@@ -881,9 +895,15 @@ class O2Client:
                 ``start_order_id``.
             start_order_id: Cursor for pagination — order ID of the last
                 order from the previous page. Must be paired with
-                ``start_timestamp``.
+                ``start_timestamp``. Strings are validated as hex.
         """
-        trade_account_id = account if isinstance(account, str) else account.trade_account_id
+        if isinstance(account, str) and not isinstance(account, Id):
+            trade_account_id = Id(account)
+        elif isinstance(account, Id):
+            trade_account_id = account
+        else:
+            trade_account_id = account.trade_account_id
+        validated_oid = Id(start_order_id) if isinstance(start_order_id, str) and not isinstance(start_order_id, Id) else start_order_id
         market_obj = await self._resolve_market_like_async(market)
         resp = await self.api.get_orders(
             market_id=market_obj.market_id,
@@ -892,12 +912,14 @@ class O2Client:
             count=count,
             is_open=is_open,
             start_timestamp=start_timestamp,
-            start_order_id=start_order_id,
+            start_order_id=validated_oid,
         )
         return resp.orders
 
-    async def get_order(self, market: str | Market, order_id: str) -> Order:
-        """Get a specific order."""
+    async def get_order(self, market: str | Market, order_id: str | Id) -> Order:
+        """Get a specific order. Strings are validated as hex."""
+        if isinstance(order_id, str) and not isinstance(order_id, Id):
+            order_id = Id(order_id)
         market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_order(market_obj.market_id, order_id)
 

@@ -26,6 +26,7 @@ import {
   type CreateAccountResponse,
   contractId,
   type DepthSnapshot,
+  hexIdTrusted,
   type FaucetResponse,
   type Identity,
   type MarketId,
@@ -191,11 +192,11 @@ export class O2Api {
     const raw = await this.get<Record<string, unknown>>("/v1/markets");
     const rawMarkets = raw.markets as Record<string, unknown>[];
     return {
-      books_registry_id: contractId(raw.books_registry_id as string),
-      accounts_registry_id: contractId(raw.accounts_registry_id as string),
-      trade_account_oracle_id: contractId(raw.trade_account_oracle_id as string),
+      books_registry_id: hexIdTrusted<"ContractId">(raw.books_registry_id as string),
+      accounts_registry_id: hexIdTrusted<"ContractId">(raw.accounts_registry_id as string),
+      trade_account_oracle_id: hexIdTrusted<"ContractId">(raw.trade_account_oracle_id as string),
       chain_id: raw.chain_id as string,
-      base_asset_id: assetId(raw.base_asset_id as string),
+      base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
     };
   }
