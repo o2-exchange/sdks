@@ -309,14 +309,30 @@ export class O2Api {
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
 
+  /** Valid bar resolutions accepted by the API. */
+  static readonly VALID_RESOLUTIONS = new Set([
+    "1s", "1m", "2m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "8h", "12h",
+    "1d", "3d", "1w", "1M", "3M",
+  ]);
+
   /**
    * Fetch OHLCV candlestick bars.
    * @param marketId - The market identifier.
-   * @param from - Start time (Unix seconds).
-   * @param to - End time (Unix seconds).
-   * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
+   * @param from - Start time in **milliseconds** (not seconds).
+   * @param to - End time in **milliseconds** (not seconds).
+   * @param resolution - Bar resolution. Valid values:
+   *   `1s`, `1m`, `2m`, `3m`, `5m`, `15m`, `30m`,
+   *   `1h`, `2h`, `4h`, `6h`, `8h`, `12h`,
+   *   `1d`, `3d`, `1w`, `1M`, `3M`.
+   * @throws {Error} If resolution is not valid.
    */
   async getBars(marketId: MarketId, from: number, to: number, resolution: string): Promise<Bar[]> {
+    if (!O2Api.VALID_RESOLUTIONS.has(resolution)) {
+      throw new Error(
+        `Invalid bar resolution "${resolution}". Valid values: ${[...O2Api.VALID_RESOLUTIONS].sort().join(", ")}`,
+      );
+    }
     return this.get<Bar[]>("/v1/bars", {
       market_id: marketId,
       from,

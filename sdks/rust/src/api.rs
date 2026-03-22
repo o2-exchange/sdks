@@ -255,7 +255,18 @@ impl O2Api {
         self.parse_response(resp).await
     }
 
+    /// Valid bar resolutions accepted by the API.
+    const VALID_RESOLUTIONS: &'static [&'static str] = &[
+        "1s", "1m", "2m", "3m", "5m", "15m", "30m",
+        "1h", "2h", "4h", "6h", "8h", "12h",
+        "1d", "3d", "1w", "1M", "3M",
+    ];
+
     /// GET /v1/bars - OHLCV candlestick data.
+    ///
+    /// `from_ts` and `to_ts` are in **milliseconds** (not seconds).
+    /// `resolution` must be one of: `1s`, `1m`, `2m`, `3m`, `5m`, `15m`, `30m`,
+    /// `1h`, `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, `1w`, `1M`, `3M`.
     pub async fn get_bars(
         &self,
         market_id: &str,
@@ -263,6 +274,12 @@ impl O2Api {
         to_ts: u64,
         resolution: &str,
     ) -> Result<Vec<Bar>, O2Error> {
+        if !Self::VALID_RESOLUTIONS.contains(&resolution) {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid bar resolution \"{resolution}\". Valid values: {:?}",
+                Self::VALID_RESOLUTIONS
+            )));
+        }
         debug!(
             "api.get_bars market_id={} from_ts={} to_ts={} resolution={}",
             market_id, from_ts, to_ts, resolution
