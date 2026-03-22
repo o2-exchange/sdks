@@ -134,9 +134,7 @@ class O2Api:
                             error_cls = ERROR_CODE_MAP.get(code, O2Error)
                             raise error_cls(message=message, code=code)
                         if "message" in data and "tx_id" not in data:
-                            reason = data.get("reason", "")
-                            full_msg = f"{message}: {reason}" if reason else message
-                            raise O2Error(message=full_msg)
+                            raise_for_error(data)
                     else:
                         logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)
 
