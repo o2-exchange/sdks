@@ -242,6 +242,12 @@ class O2Api:
             return [Trade.from_dict(t) for t in data]
         return [Trade.from_dict(t) for t in data.get("trades", [])]
 
+    _VALID_RESOLUTIONS = frozenset({
+        "1s", "1m", "2m", "3m", "5m", "15m", "30m",
+        "1h", "2h", "4h", "6h", "8h", "12h",
+        "1d", "3d", "1w", "1M", "3M",
+    })
+
     async def get_bars(
         self,
         market_id: str,
@@ -249,6 +255,25 @@ class O2Api:
         to_ts: int,
         resolution: str = "1h",
     ) -> list[Bar]:
+        """Fetch OHLCV candle bars.
+
+        Args:
+            market_id: Market identifier.
+            from_ts: Start timestamp in **milliseconds** (not seconds).
+            to_ts: End timestamp in **milliseconds** (not seconds).
+            resolution: Bar resolution. Valid values:
+                ``1s``, ``1m``, ``2m``, ``3m``, ``5m``, ``15m``, ``30m``,
+                ``1h``, ``2h``, ``4h``, ``6h``, ``8h``, ``12h``,
+                ``1d``, ``3d``, ``1w``, ``1M``, ``3M``.
+
+        Raises:
+            ValueError: If *resolution* is not one of the valid values.
+        """
+        if resolution not in self._VALID_RESOLUTIONS:
+            raise ValueError(
+                f"Invalid bar resolution {resolution!r}. "
+                f"Valid values: {sorted(self._VALID_RESOLUTIONS)}"
+            )
         params: dict[str, Any] = {
             "market_id": market_id,
             "from": from_ts,
