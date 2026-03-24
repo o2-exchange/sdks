@@ -517,6 +517,13 @@ impl O2WebSocket {
     }
 
     /// Subscribe to order book depth. Returns a stream of `Result<DepthUpdate, O2Error>`.
+    ///
+    /// `precision` is the depth aggregation level as a string (e.g. `"10"`).
+    /// Valid range: `"1"`–`"18"` (powers of 10: 10^1 through 10^18).
+    /// Precision `"0"` is not supported for streaming.
+    ///
+    /// **Note:** Prefer using [`O2Client::stream_depth`] which validates the
+    /// precision before subscribing.
     pub async fn stream_depth(
         &self,
         market_id: &str,

@@ -1722,10 +1722,10 @@ mod tests {
 
     fn sample_market() -> Market {
         Market {
-            contract_id: ContractId::from(
+            contract_id: ContractId::new(
                 "0x1111111111111111111111111111111111111111111111111111111111111111",
             ),
-            market_id: MarketId::from(
+            market_id: MarketId::new(
                 "0x2222222222222222222222222222222222222222222222222222222222222222",
             ),
             whitelist_id: None,
@@ -1737,7 +1737,7 @@ mod tests {
             price_window: 0,
             base: MarketAsset {
                 symbol: "BASE".to_string(),
-                asset: AssetId::from(
+                asset: AssetId::new(
                     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 ),
                 decimals: 9,
@@ -1745,7 +1745,7 @@ mod tests {
             },
             quote: MarketAsset {
                 symbol: "QUOTE".to_string(),
-                asset: AssetId::from(
+                asset: AssetId::new(
                     "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 ),
                 decimals: 9,
@@ -1787,7 +1787,7 @@ mod tests {
         let market_a = sample_market();
         let mut market_b = sample_market();
         market_b.market_id =
-            MarketId::from("0x3333333333333333333333333333333333333333333333333333333333333333");
+            MarketId::new("0x3333333333333333333333333333333333333333333333333333333333333333");
 
         let quantity = market_a
             .quantity("1.234")

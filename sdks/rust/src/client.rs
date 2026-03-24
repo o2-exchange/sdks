@@ -36,6 +36,22 @@ impl Default for MetadataPolicy {
     }
 }
 
+/// Validate that a depth precision value is within the supported range (1–18).
+///
+/// The backend only supports precision values 1–18 (corresponding to powers
+/// of 10: 10^1 through 10^18).  Precision 0 is below the backend's configured
+/// minimum and will receive no delta updates after the initial snapshot.
+fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
+    if !(1..=18).contains(&precision) {
+        return Err(O2Error::InvalidRequest(format!(
+            "Invalid depth precision {}. Valid range: 1-18 (powers of 10). \
+             Precision 0 is not supported — use get_depth() via REST for exact prices.",
+            precision
+        )));
+    }
+    Ok(())
+}
+
 /// The high-level O2 Exchange client.
 pub struct O2Client {
     pub api: O2Api,
@@ -79,10 +95,11 @@ impl MarketActionsBuilder {
     }
 
     /// Add a cancel-order action.
-    pub fn cancel_order(mut self, order_id: impl Into<OrderId>) -> Self {
-        self.actions.push(Action::CancelOrder {
-            order_id: order_id.into(),
-        });
+    pub fn cancel_order(mut self, order_id: impl IntoValidId<OrderId>) -> Self {
+        match order_id.into_valid() {
+            Ok(id) => self.actions.push(Action::CancelOrder { order_id: id }),
+            Err(e) => self.record_error_once(e),
+        }
         self
     }
 
@@ -950,6 +967,15 @@ impl O2Client {
     // -----------------------------------------------------------------------
 
     /// Get order book depth.
+    ///
+    /// # Arguments
+    /// * `market_name` - Market pair string (e.g. `"ETH/USDC"`) or market ID.
+    /// * `precision` - Price aggregation precision as a power of 10.
+    ///   Valid range: **1–18** (i.e. 10^1 through 10^18). Precision 0 is not supported.
+    /// * `limit` - Maximum number of price levels per side.
+    ///
+    /// # Errors
+    /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
     pub async fn get_depth<M>(
         &mut self,
         market_name: M,
@@ -959,6 +985,7 @@ impl O2Client {
     where
         M: IntoMarketSymbol,
     {
+        validate_depth_precision(precision)?;
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_depth market={} precision={}",
@@ -1256,11 +1283,29 @@ impl O2Client {
     }
 
     /// Stream depth updates over a shared WebSocket connection.
+    ///
+    /// # Arguments
+    /// * `market_id` - The market ID (hex string).
+    /// * `precision` - Depth aggregation level as a power of 10 (string).
+    ///   Valid range: **1–18** (i.e. 10^1 through 10^18). Precision 0 is not
+    ///   supported for streaming. Values below 10 may produce no delta updates
+    ///   on high-priced assets (e.g. ETH) — use `"10"` for reliable streaming
+    ///   on all markets.
+    ///
+    /// # Errors
+    /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
     pub async fn stream_depth(
         &self,
         market_id: impl IntoValidId<MarketId>,
         precision: &str,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
+        let p: u64 = precision.parse().map_err(|_| {
+            O2Error::InvalidRequest(format!(
+                "Invalid depth precision '{}'. Must be an integer in range 1-18.",
+                precision
+            ))
+        })?;
+        validate_depth_precision(p)?;
         let market_id = market_id.into_valid()?;
         debug!(
             "client.stream_depth market_id={} precision={}",
@@ -1346,29 +1391,32 @@ mod tests {
 
     use crate::{
         config::{Network, NetworkConfig},
-        models::{Action, Market, MarketAsset, MarketsResponse, OrderId, OrderType, Side},
+        models::{
+            Action, AssetId, ContractId, Market, MarketAsset, MarketId, MarketsResponse, OrderId,
+            OrderType, Side,
+        },
     };
 
     use super::{MarketActionsBuilder, MetadataPolicy, O2Client};
 
     fn dummy_markets_response() -> MarketsResponse {
         MarketsResponse {
-            books_registry_id: "0x1".into(),
+            books_registry_id: ContractId::new("0x1"),
             books_whitelist_id: None,
             books_blacklist_id: None,
-            accounts_registry_id: "0x2".into(),
-            trade_account_oracle_id: "0x3".into(),
+            accounts_registry_id: ContractId::new("0x2"),
+            trade_account_oracle_id: ContractId::new("0x3"),
             fast_bridge_asset_registry_contract_id: None,
             chain_id: "0x0".to_string(),
-            base_asset_id: "0x4".into(),
+            base_asset_id: AssetId::new("0x4"),
             markets: Vec::new(),
         }
     }
 
     fn dummy_market(market_id: &str) -> Market {
         Market {
-            contract_id: "0x01".into(),
-            market_id: market_id.into(),
+            contract_id: ContractId::new("0x01"),
+            market_id: MarketId::new(market_id),
             whitelist_id: None,
             blacklist_id: None,
             maker_fee: 0,
@@ -1378,13 +1426,13 @@ mod tests {
             price_window: 0,
             base: MarketAsset {
                 symbol: "fETH".to_string(),
-                asset: "0xbase".into(),
+                asset: AssetId::new("0xbase"),
                 decimals: 9,
                 max_precision: 6,
             },
             quote: MarketAsset {
                 symbol: "fUSDC".to_string(),
-                asset: "0xquote".into(),
+                asset: AssetId::new("0xquote"),
                 decimals: 9,
                 max_precision: 6,
             },
@@ -1527,7 +1575,7 @@ mod tests {
     #[test]
     fn build_cancel_actions_skips_empty_order_ids() {
         let empty = OrderId::default();
-        let valid = OrderId::from("0xabc123");
+        let valid = OrderId::new("0xabc123");
 
         let actions = O2Client::build_cancel_actions([&empty, &valid]);
         assert_eq!(actions.len(), 1);
@@ -1535,5 +1583,32 @@ mod tests {
             Action::CancelOrder { order_id } => assert_eq!(order_id.as_str(), valid.as_str()),
             _ => panic!("expected cancel action"),
         }
+    }
+
+    #[test]
+    fn validate_depth_precision_rejects_0() {
+        let err = super::validate_depth_precision(0).unwrap_err();
+        assert!(err.to_string().contains("Invalid depth precision 0"));
+    }
+
+    #[test]
+    fn validate_depth_precision_rejects_19() {
+        let err = super::validate_depth_precision(19).unwrap_err();
+        assert!(err.to_string().contains("Invalid depth precision 19"));
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_1() {
+        assert!(super::validate_depth_precision(1).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_18() {
+        assert!(super::validate_depth_precision(18).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_10() {
+        assert!(super::validate_depth_precision(10).is_ok());
     }
 }

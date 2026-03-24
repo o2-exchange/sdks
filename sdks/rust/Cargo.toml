@@ -55,6 +55,3 @@ path = "examples/taker_bot.rs"
 name = "portfolio"
 path = "examples/portfolio.rs"
 
-[[example]]
-name = "competition_bot"
-path = "examples/competition_bot.rs"
