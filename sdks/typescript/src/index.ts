@@ -151,4 +151,9 @@ export {
 } from "./models.js";
 
 // ── WebSocket ─────────────────────────────────────────────────────
-export { O2WebSocket, type O2WebSocketOptions } from "./websocket.js";
+export {
+  O2WebSocket,
+  type O2WebSocketOptions,
+  type ConnectionEvent,
+  type ConnectionState,
+} from "./websocket.js";

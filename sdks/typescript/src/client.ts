@@ -76,7 +76,7 @@ import type {
   WireOrderType,
 } from "./models.js";
 import { assetId as toAssetId, tradeAccountId } from "./models.js";
-import { O2WebSocket } from "./websocket.js";
+import { O2WebSocket, type ConnectionEvent } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
 
@@ -203,6 +203,25 @@ export interface CreateOrderOptions {
  * await client.setupAccount(wallet);
  * ```
  */
+/**
+ * Validate that a depth precision value is within the supported range (1--18).
+ *
+ * The backend only supports precision values 1--18 (corresponding to powers
+ * of 10: 10^1 through 10^18).  Precision 0 is below the backend's configured
+ * minimum and will receive no delta updates after the initial snapshot.
+ *
+ * @throws {Error} If `precision` is outside the valid range.
+ */
+function validateDepthPrecision(precision: number | string): void {
+  const p = typeof precision === "string" ? Number.parseInt(precision, 10) : precision;
+  if (!Number.isFinite(p) || p < 1 || p > 18) {
+    throw new Error(
+      `Invalid depth precision ${precision}. Valid range: 1-18 (powers of 10). ` +
+        "Precision 0 is not supported — use getDepth() via REST for exact prices.",
+    );
+  }
+}
+
 export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
@@ -719,11 +738,14 @@ export class O2Client {
    * Fetch the order book depth snapshot.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Price aggregation precision (default: 10).
+   * @param precision - Price aggregation precision as a power of 10 (default: 10).
+   *   Valid range: **1--18** (i.e. 10^1 through 10^18). Precision 0 is not supported.
    * @param limit - Maximum number of price levels per side (buys/sells).
    *   `undefined` (default) returns the full order book.
+   * @throws {Error} If `precision` is outside the valid range 1--18.
    */
   async getDepth(market: string | Market, precision = 10, limit?: number): Promise<DepthSnapshot> {
+    validateDepthPrecision(precision);
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getDepth(marketId, precision, limit);
@@ -871,13 +893,43 @@ export class O2Client {
   }
 
   /**
+   * Stream WebSocket connection lifecycle events.
+   *
+   * Yields {@link ConnectionEvent} objects whenever the connection state
+   * changes (connected, disconnected, reconnecting, reconnected, closed).
+   *
+   * Use this to detect reconnects and re-sync critical state from the
+   * REST API — messages during the disconnect window are lost.
+   *
+   * @example
+   * ```ts
+   * for await (const event of client.streamLifecycle()) {
+   *   if (event.state === "reconnected") {
+   *     const balances = await client.getBalances(account);
+   *   } else if (event.state === "closed") {
+   *     break;
+   *   }
+   * }
+   * ```
+   */
+  async streamLifecycle(): Promise<AsyncGenerator<ConnectionEvent>> {
+    const ws = await this.ensureWs();
+    return ws.streamLifecycle();
+  }
+
+  /**
    * Stream real-time order book depth updates.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Number of price levels (default: 10).
+   * @param precision - Depth aggregation level as a power of 10 (default: 10).
+   *   Valid range: **1--18** (i.e. 10^1 through 10^18). Precision 0 is not
+   *   supported for streaming. Values below 10 may produce no delta updates on
+   *   high-priced assets (e.g. ETH) — use `10` for reliable streaming on all markets.
    * @returns An async generator yielding {@link DepthUpdate} messages.
+   * @throws {Error} If `precision` is outside the valid range 1--18.
    */
   async streamDepth(market: string | Market, precision = 10): Promise<AsyncGenerator<DepthUpdate>> {
+    validateDepthPrecision(precision);
     const ws = await this.ensureWs();
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
