@@ -730,12 +730,15 @@ impl O2WebSocket {
             let _ = sink.send(WsMsg::Close(None)).await;
         }
 
-        // Close all sender channels
-        guard.close_all_senders();
+        // Emit lifecycle event BEFORE closing data channels, so consumers
+        // see "Disconnected" before their data streams terminate.
         let _ = self.lifecycle_tx.send(WsLifecycleEvent::Disconnected {
             reason: "Explicit disconnect".to_string(),
             final_: true,
         });
+
+        // Close all sender channels
+        guard.close_all_senders();
 
         Ok(())
     }

@@ -312,6 +312,14 @@ export class O2WebSocket {
           });
         }
       }
+      // Drain events queued before done was set. disconnect() emits
+      // the "closed" lifecycle event synchronously before firing close
+      // handlers that set done=true — so the event is in the queue but
+      // the while-loop exits before yielding it. This ensures consumers
+      // always receive the terminal "closed" event.
+      while (queue.length > 0) {
+        yield queue.shift()!;
+      }
     } finally {
       const lh = this.handlers.get("__lifecycle__");
       if (lh) {
@@ -516,6 +524,10 @@ export class O2WebSocket {
             resolve = r;
           });
         }
+      }
+      // Drain data queued before close handler set done=true.
+      while (queue.length > 0) {
+        yield queue.shift()!;
       }
     } finally {
       // Clean up handlers
