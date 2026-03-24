@@ -33,7 +33,7 @@ by hex market ID using [`O2Client::get_market_by_id`](crate::client::O2Client::g
 Fetch a snapshot of the order book:
 
 ```rust,ignore
-let depth = client.get_depth("fFUEL/fUSDC", 10, None).await?;
+let depth = client.get_depth("fFUEL/fUSDC", 1, None).await?;
 
 if let Some(best_bid) = depth.bids.first() {
     println!("Best bid: {} x {}", best_bid.price, best_bid.quantity);
@@ -111,7 +111,7 @@ helper methods to convert to/from human-readable values:
 
 ```rust,ignore
 let market = client.get_market("fFUEL/fUSDC").await?;
-let depth = client.get_depth("fFUEL/fUSDC", 10, None).await?;
+let depth = client.get_depth("fFUEL/fUSDC", 1, None).await?;
 
 if let Some(best_ask) = depth.asks.first() {
     let human_price = market.format_price(best_ask.price);

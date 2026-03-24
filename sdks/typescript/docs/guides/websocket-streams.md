@@ -13,7 +13,7 @@ branded hex IDs, and `Side` normalization are applied before delivery.
 Stream real-time order book updates:
 
 ```ts
-const stream = await client.streamDepth("fFUEL/fUSDC", 10);
+const stream = await client.streamDepth("fFUEL/fUSDC", 1);
 for await (const update of stream) {
   const asks = update.view?.asks ?? update.changes?.asks ?? [];
   const bids = update.view?.bids ?? update.changes?.bids ?? [];

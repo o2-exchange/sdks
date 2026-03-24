@@ -29,7 +29,7 @@ You can also pass a hex `market_id` directly.
 Fetch a snapshot of the current order book:
 
 ```ts
-const depth = await client.getDepth("fFUEL/fUSDC", 10);
+const depth = await client.getDepth("fFUEL/fUSDC", 1);
 
 console.log("Top 3 bids:");
 for (const level of depth.bids.slice(0, 3)) {
@@ -49,7 +49,7 @@ Depth level `price` and `quantity` are `bigint` chain integers. Use
 import { formatPrice, formatQuantity } from "@o2exchange/sdk";
 
 const market = await client.getMarket("fFUEL/fUSDC");
-const depth = await client.getDepth(market, 10);
+const depth = await client.getDepth(market, 1);
 
 for (const level of depth.bids) {
   console.log(`${formatPrice(market, level.price)} — ${formatQuantity(market, level.quantity)}`);
