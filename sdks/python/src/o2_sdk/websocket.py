@@ -451,24 +451,28 @@ class O2WebSocket:
             self._unregister_queue("lifecycle", queue)
 
     async def stream_depth(
-        self, market_id: str, precision: str = "10"
+        self, market_id: str, precision: str = "1"
     ) -> AsyncIterator[DepthUpdate]:
         """Subscribe to order book depth updates.
 
         Args:
             market_id: The market ID (hex string).
-            precision: Depth aggregation level as a string (default ``"10"``).
-                Valid range: ``"1"``--``"18"`` (powers of 10: 10^1 through 10^18).
-                Precision ``"0"`` is not supported for streaming.
+            precision: Depth aggregation level as a precision index (default ``"1"``).
+                Valid range: ``"1"``--``"18"``. The value is treated as an exponent:
+                the wire value sent is ``10^precision``. Precision 1 = finest level
+                (sends 10 on the wire → backend Precision(1) → live delta streaming).
+                Higher values give coarser bucketing. Do NOT pass raw powers of 10
+                (e.g. pass ``"1"``, not ``"10"``).
 
         Note:
-            Prefer using :meth:`O2Client.stream_depth` which validates the
-            precision before subscribing.
+            Prefer :meth:`O2Client.stream_depth` which validates precision
+            and resolves market pairs by name.
         """
+        wire_precision = str(10 ** int(precision))
         sub = {
             "action": "subscribe_depth",
             "market_id": market_id,
-            "precision": precision,
+            "precision": wire_precision,
         }
         self._add_subscription(sub)
         await self._send(sub)

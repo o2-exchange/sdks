@@ -332,16 +332,17 @@ export class O2WebSocket {
    * Subscribe to order book depth updates.
    *
    * @param marketId - The market ID (hex string).
-   * @param precision - Depth aggregation level as a power of 10 (default: `"10"`).
-   *   Valid range: 1--18. Default `"10"` (recommended). Values below 10 may
-   *   produce no delta updates on high-priced assets (e.g. ETH) — use `10`
-   *   for reliable streaming on all markets.
+   * @param precision - Depth aggregation level as a power of 10 (default: `"1"`).
+   *   Valid range: **1--18**. Precision 1–9 gives accurate prices but the backend
+   *   only delivers an initial snapshot (no delta events follow). Precision 10–18
+   *   streams live deltas but with coarse price bucketing (~$10 bins at precision=10
+   *   for wBTC/USDC).
    * @returns An async generator yielding {@link DepthUpdate} messages.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
   async *streamDepth(
     marketId: string,
-    precision: string | number = "10",
+    precision: string | number = "1",
   ): AsyncGenerator<DepthUpdate> {
     const p = typeof precision === "string" ? Number.parseInt(precision, 10) : precision;
     if (!Number.isFinite(p) || p < 1 || p > 18) {
@@ -353,7 +354,7 @@ export class O2WebSocket {
     const sub = {
       action: "subscribe_depth",
       market_id: marketId,
-      precision: String(precision),
+      precision: String(10 ** p), // precision is an index; wire value = 10^precision
     };
     yield* this.subscribe<DepthUpdate>(
       sub,

@@ -110,10 +110,8 @@ class MarketActionsBuilder:
 def _validate_depth_precision(precision: int | str) -> None:
     """Raise :class:`InvalidRequest` if *precision* is outside 1--18.
 
-    The backend only supports depth precision values 1--18 (corresponding to
-    powers of 10: 10^1 through 10^18).  Precision 0 is below the backend's
-    configured minimum and will receive no delta updates after the initial
-    snapshot.
+    Shared validator for both REST ``get_depth`` and WebSocket ``stream_depth``.
+    Valid range: 1--18.
     """
     try:
         p = int(precision)
@@ -128,6 +126,7 @@ def _validate_depth_precision(precision: int | str) -> None:
                 "Precision 0 is not supported — use get_depth() via REST for exact prices."
             ),
         )
+
 
 
 class O2Client:
@@ -985,17 +984,27 @@ class O2Client:
             yield event
 
     async def stream_depth(
-        self, market: str | Market, precision: int = 10
+        self, market: str | Market, precision: int = 1
     ) -> AsyncIterator[DepthUpdate]:
         """Stream order book depth updates.
 
         Args:
             market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
             precision: Depth aggregation level (power of 10). Valid range:
-                **1--18**. Default ``10`` (recommended). Values below 10 may
-                produce no delta updates on high-priced assets (e.g. ETH) —
-                the raw prices are too large for fine bucketing to trigger
-                changes. Use ``10`` for reliable streaming on all markets.
+                **1--18**. Default ``1``.
+
+                .. note::
+                    **precision is a level index, not a raw bucket size.**
+                    The SDK converts it to a wire value of ``10^precision``
+                    before sending, matching the internal backend convention
+                    (``Precision::new(N).pow()``). Precision 1 = finest
+                    streaming level (wire value 10, ~$10^-8 buckets on
+                    wBTC/USDC). Higher values give coarser bucketing.
+
+                    All precision levels 1–18 support live delta streaming.
+                    Do NOT pass raw values like 10 expecting "bucket by 10" —
+                    use :meth:`get_depth` for REST-based depth queries which
+                    take raw bucket-size values.
 
         Raises:
             InvalidRequest: If *precision* is outside the valid range 1--18.

@@ -571,11 +571,21 @@ async def test_stream_depth_rejects_precision_0():
 
 
 @pytest.mark.asyncio
-async def test_get_depth_accepts_valid_precisions():
-    """Precisions 1 and 18 should not raise validation errors."""
+async def test_get_depth_accepts_precision_1():
+    """REST get_depth works correctly at precision=1."""
     from o2_sdk.client import _validate_depth_precision
 
-    # These should not raise
     _validate_depth_precision(1)
+    _validate_depth_precision(10)
+    _validate_depth_precision(18)
+
+
+@pytest.mark.asyncio
+async def test_stream_depth_accepts_valid_precisions():
+    """stream_depth accepts precision 1-18 (shared validator with get_depth)."""
+    from o2_sdk.client import _validate_depth_precision
+
+    _validate_depth_precision(1)
+    _validate_depth_precision(9)
     _validate_depth_precision(10)
     _validate_depth_precision(18)

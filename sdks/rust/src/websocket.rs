@@ -518,22 +518,29 @@ impl O2WebSocket {
 
     /// Subscribe to order book depth. Returns a stream of `Result<DepthUpdate, O2Error>`.
     ///
-    /// `precision` is the depth aggregation level as a string (e.g. `"10"`).
-    /// Valid range: `"1"`–`"18"` (powers of 10: 10^1 through 10^18).
-    /// Precision `"0"` is not supported for streaming.
+    /// `precision` is the depth aggregation level as a string (e.g. `"1"`).
+    /// Valid range: `"1"`–`"18"`. Precision 1–9 gives accurate prices but the
+    /// backend only delivers an initial snapshot (no delta events follow).
+    /// Precision 10–18 streams live deltas but with coarse price bucketing
+    /// (~$10 bins at precision=10 for wBTC/USDC).
     ///
-    /// **Note:** Prefer using [`O2Client::stream_depth`] which validates the
-    /// precision before subscribing.
+    /// **Note:** Prefer [`O2Client::stream_depth`] which validates precision
+    /// and resolves market IDs by name.
     pub async fn stream_depth(
         &self,
         market_id: &str,
         precision: &str,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
         let (tx, rx) = mpsc::unbounded_channel();
+        // precision is a level index; wire value = 10^precision (matches internal Precision::pow())
+        let wire_precision = 10u64
+            .checked_pow(precision.parse::<u32>().unwrap_or(1))
+            .unwrap_or(10)
+            .to_string();
         let sub = json!({
             "action": "subscribe_depth",
             "market_id": market_id,
-            "precision": precision
+            "precision": wire_precision
         });
 
         {

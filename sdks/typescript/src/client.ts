@@ -204,12 +204,7 @@ export interface CreateOrderOptions {
  * ```
  */
 /**
- * Validate that a depth precision value is within the supported range (1--18).
- *
- * The backend only supports precision values 1--18 (corresponding to powers
- * of 10: 10^1 through 10^18).  Precision 0 is below the backend's configured
- * minimum and will receive no delta updates after the initial snapshot.
- *
+ * Validate that a REST depth precision value is within the supported range (1--18).
  * @throws {Error} If `precision` is outside the valid range.
  */
 function validateDepthPrecision(precision: number | string): void {
@@ -221,6 +216,7 @@ function validateDepthPrecision(precision: number | string): void {
     );
   }
 }
+
 
 export class O2Client {
   /** The underlying low-level REST API client. */
@@ -921,14 +917,23 @@ export class O2Client {
    * Stream real-time order book depth updates.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Depth aggregation level as a power of 10 (default: 10).
-   *   Valid range: **1--18** (i.e. 10^1 through 10^18). Precision 0 is not
-   *   supported for streaming. Values below 10 may produce no delta updates on
-   *   high-priced assets (e.g. ETH) — use `10` for reliable streaming on all markets.
+   * @param precision - Depth aggregation level as a power of 10 (default: 1).
+   *   Valid range: **1--18**.
+   *
+   *   **Precision and streaming behaviour are coupled:**
+   *   - **Precision 1--9** (default `1`): Near-accurate prices (bucket size ≈ 10^precision
+   *     native units, e.g. ~$0.00001 for precision=1 on wBTC). However, the backend only
+   *     delivers an *initial snapshot* — no delta events follow. The stream stalls silently.
+   *     Use a REST {@link getDepth} polling loop as a fallback.
+   *   - **Precision 10--18**: The backend streams live delta events but prices are bucketed
+   *     coarsely (e.g. precision=10 gives ~$10 price bins on wBTC/USDC). Too imprecise for
+   *     accurate market-making. Use only if streaming deltas are required and coarse
+   *     bucketing is acceptable.
+   *
    * @returns An async generator yielding {@link DepthUpdate} messages.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
-  async streamDepth(market: string | Market, precision = 10): Promise<AsyncGenerator<DepthUpdate>> {
+  async streamDepth(market: string | Market, precision = 1): Promise<AsyncGenerator<DepthUpdate>> {
     validateDepthPrecision(precision);
     const ws = await this.ensureWs();
     const marketId =

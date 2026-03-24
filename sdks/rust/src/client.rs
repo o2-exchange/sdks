@@ -36,11 +36,7 @@ impl Default for MetadataPolicy {
     }
 }
 
-/// Validate that a depth precision value is within the supported range (1–18).
-///
-/// The backend only supports precision values 1–18 (corresponding to powers
-/// of 10: 10^1 through 10^18).  Precision 0 is below the backend's configured
-/// minimum and will receive no delta updates after the initial snapshot.
+/// Validate that a REST depth precision value is within the supported range (1–18).
 fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
     if !(1..=18).contains(&precision) {
         return Err(O2Error::InvalidRequest(format!(
@@ -51,6 +47,7 @@ fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
     }
     Ok(())
 }
+
 
 /// The high-level O2 Exchange client.
 pub struct O2Client {
@@ -1287,10 +1284,18 @@ impl O2Client {
     /// # Arguments
     /// * `market_id` - The market ID (hex string).
     /// * `precision` - Depth aggregation level as a power of 10 (string).
-    ///   Valid range: **1–18** (i.e. 10^1 through 10^18). Precision 0 is not
-    ///   supported for streaming. Values below 10 may produce no delta updates
-    ///   on high-priced assets (e.g. ETH) — use `"10"` for reliable streaming
-    ///   on all markets.
+    ///   Valid range: **1–18**.
+    ///
+    ///   **Precision and streaming behaviour are coupled:**
+    ///   - **Precision 1–9** (recommended `"1"`): Near-accurate prices (bucket size ≈
+    ///     10^precision native units, e.g. ~$0.00001 for precision=1 on wBTC/USDC).
+    ///     However, the backend only delivers an *initial snapshot* — no delta events
+    ///     follow. The stream stalls silently after the snapshot. Use a REST
+    ///     [`get_depth`][O2Client::get_depth] polling loop as a fallback.
+    ///   - **Precision 10–18**: The backend streams live delta events but prices are
+    ///     bucketed coarsely (e.g. precision=10 gives ~$10 price bins on wBTC/USDC).
+    ///     Too imprecise for accurate market-making. Use only if streaming deltas are
+    ///     required and coarse bucketing is acceptable.
     ///
     /// # Errors
     /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
@@ -1301,7 +1306,7 @@ impl O2Client {
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
         let p: u64 = precision.parse().map_err(|_| {
             O2Error::InvalidRequest(format!(
-                "Invalid depth precision '{}'. Must be an integer in range 1-18.",
+                "Invalid stream depth precision '{}'. Must be an integer in range 1-18.",
                 precision
             ))
         })?;
@@ -1585,6 +1590,7 @@ mod tests {
         }
     }
 
+    // REST depth precision (1-18)
     #[test]
     fn validate_depth_precision_rejects_0() {
         let err = super::validate_depth_precision(0).unwrap_err();
@@ -1607,8 +1613,20 @@ mod tests {
         assert!(super::validate_depth_precision(18).is_ok());
     }
 
+    // stream_depth shares the same 1-18 validator as get_depth; precision 1-9 is valid
+    // (accurate prices, WS stalls after snapshot — REST fallback recommended)
     #[test]
-    fn validate_depth_precision_accepts_10() {
+    fn validate_depth_precision_accepts_1_for_stream() {
+        assert!(super::validate_depth_precision(1).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_9_for_stream() {
+        assert!(super::validate_depth_precision(9).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_10_for_stream() {
         assert!(super::validate_depth_precision(10).is_ok());
     }
 }

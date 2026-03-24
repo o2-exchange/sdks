@@ -259,10 +259,7 @@ def augment_revert_reason(
     if decoded is None:
         return reason
 
-    if not reason:
-        return decoded
-
-    if decoded in reason:
-        return reason
-
-    return f"{reason} [{decoded}]"
+    # Return just the decoded name — the raw reason/receipts dump can be
+    # several KB and makes log lines unreadable. Full receipts are still
+    # accessible via OnChainRevert.receipts for callers that need them.
+    return decoded
