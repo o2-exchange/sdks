@@ -346,12 +346,14 @@ export class O2Api {
         `Invalid bar resolution "${resolution}". Valid values: ${[...O2Api.VALID_RESOLUTIONS].sort().join(", ")}`,
       );
     }
-    return this.get<Bar[]>("/v1/bars", {
+    const data = await this.get<{ bars?: Bar[] } | Bar[]>("/v1/bars", {
       market_id: marketId,
       from,
       to,
       resolution,
     });
+    if (Array.isArray(data)) return data;
+    return (data.bars ?? []) as Bar[];
   }
 
   // ── Account & Balance ───────────────────────────────────────────
