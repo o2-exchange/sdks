@@ -436,7 +436,7 @@ async fn test_get_trades() {
 
     let trades = client
         .api
-        .get_trades(market.market_id.as_str(), "desc", 10, None, None)
+        .get_trades(market.market_id.as_str(), "desc", 10, None, None, None)
         .await
         .unwrap();
 
@@ -589,8 +589,12 @@ fn quote_step(market: &o2_sdk::Market) -> UnsignedDecimal {
 #[test]
 fn min_quantity_for_min_order_rounds_after_margin_to_step() {
     let market = o2_sdk::Market {
-        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001".into(),
-        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002".into(),
+        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001"
+            .into_valid()
+            .unwrap(),
+        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+            .into_valid()
+            .unwrap(),
         whitelist_id: None,
         blacklist_id: None,
         maker_fee: 0,
@@ -600,13 +604,17 @@ fn min_quantity_for_min_order_rounds_after_margin_to_step() {
         price_window: 0,
         base: o2_sdk::MarketAsset {
             symbol: "fETH".to_string(),
-            asset: "0x0000000000000000000000000000000000000000000000000000000000000003".into(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000003"
+                .into_valid()
+                .unwrap(),
             decimals: 9,
             max_precision: 3,
         },
         quote: o2_sdk::MarketAsset {
             symbol: "fUSDC".to_string(),
-            asset: "0x0000000000000000000000000000000000000000000000000000000000000004".into(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000004"
+                .into_valid()
+                .unwrap(),
             decimals: 9,
             max_precision: 9,
         },

@@ -241,7 +241,7 @@ async fn test_ws_trades_stream_receives_messages() {
     assert!(update.is_some(), "Should receive trade update");
     let update = update.unwrap().unwrap();
     assert_eq!(update.action, "subscribe_trades");
-    assert_eq!(update.market_id, MarketId::from("market1"));
+    assert_eq!(update.market_id.as_str(), "market1");
 
     let _ = ws.disconnect().await;
 }
