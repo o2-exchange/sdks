@@ -335,14 +335,23 @@ class O2WebSocket:
     def _signal_all_queues(self, sentinel: object) -> None:
         """Push a sentinel value to every subscriber queue.
 
-        Does NOT drain — the ``_close_event`` handles immediate unblocking,
-        and draining would destroy terminal events (e.g. the CLOSED lifecycle
-        event pushed just before this call).
+        Data-stream generators use ``_wait_for_message`` which races against
+        ``_close_event``, so the sentinel is belt-and-suspenders for them.
+        However ``stream_lifecycle`` uses raw ``queue.get()`` and **depends**
+        on the sentinel to exit.  If the queue is full we must make room —
+        dropping one stale event is acceptable to guarantee the sentinel
+        (and the CLOSED event before it) are delivered.
         """
         for queues in self._subscriber_queues.values():
             for q in queues:
-                with contextlib.suppress(asyncio.QueueFull):
+                try:
                     q.put_nowait(sentinel)
+                except asyncio.QueueFull:
+                    # Drop oldest item to make room for the sentinel.
+                    with contextlib.suppress(asyncio.QueueEmpty):
+                        q.get_nowait()
+                    with contextlib.suppress(asyncio.QueueFull):
+                        q.put_nowait(sentinel)
 
     def _emit_lifecycle(
         self,
