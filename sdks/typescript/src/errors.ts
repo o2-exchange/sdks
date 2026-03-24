@@ -359,13 +359,19 @@ export function parseApiError(body: Record<string, unknown>): O2Error {
   const reason = body.reason as string | undefined;
   const receipts = body.receipts as unknown[] | undefined;
 
-  // Pre-flight validation error: has code
+  // Pre-flight validation error: has code.
+  // The backend sometimes returns code=1000 (InternalError) with revert
+  // info in the message — augment before raising so callers see a clean name.
   if (code !== undefined) {
+    let msg = message;
+    if (message.includes("Revert") || message.includes("revert") || message.includes("Panic")) {
+      msg = augmentRevertReason(message, reason, receipts);
+    }
     const ErrorClass = ERROR_MAP[code];
     if (ErrorClass) {
-      return new ErrorClass(message);
+      return new ErrorClass(msg);
     }
-    return new O2Error(message, code);
+    return new O2Error(msg, code);
   }
 
   // On-chain revert: no code, has message (and possibly reason/receipts).

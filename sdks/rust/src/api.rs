@@ -51,11 +51,27 @@ impl O2Api {
             // Try to parse as API error
             if let Ok(err) = serde_json::from_str::<serde_json::Value>(&text) {
                 if let Some(code) = err.get("code").and_then(|c| c.as_u64()) {
-                    let message = err
+                    let raw_message = err
                         .get("message")
                         .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error")
-                        .to_string();
+                        .unwrap_or("Unknown error");
+                    // Augment revert messages even on code-based errors —
+                    // the backend sometimes returns code=1000 with revert
+                    // info in the message field.
+                    let message = if raw_message.contains("Revert")
+                        || raw_message.contains("revert")
+                        || raw_message.contains("Panic")
+                    {
+                        let reason = err.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+                        let receipts = err.get("receipts").cloned();
+                        crate::onchain_revert::augment_revert_reason(
+                            raw_message,
+                            reason,
+                            receipts.as_ref(),
+                        )
+                    } else {
+                        raw_message.to_string()
+                    };
                     return Err(O2Error::from_code(code as u32, message));
                 }
                 if let Some(message) = err.get("message").and_then(|m| m.as_str()) {

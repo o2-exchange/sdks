@@ -132,6 +132,15 @@ class O2Api:
                             from .errors import ERROR_CODE_MAP
 
                             error_cls = ERROR_CODE_MAP.get(code, O2Error)
+                            # Augment revert messages even on code-based errors —
+                            # the backend sometimes returns code=1000 (InternalError)
+                            # with the revert info buried in the message field.
+                            reason = data.get("reason")
+                            receipts = data.get("receipts")
+                            if "Revert" in message or "revert" in message or "Panic" in message:
+                                from .onchain_revert import augment_revert_reason
+
+                                message = augment_revert_reason(message, reason, receipts)
                             raise error_cls(message=message, code=code)
                         if "message" in data and "tx_id" not in data:
                             raise_for_error(data)
