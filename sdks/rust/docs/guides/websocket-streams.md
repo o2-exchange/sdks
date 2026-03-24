@@ -39,7 +39,7 @@ Stream real-time order book updates:
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_depth(&market.market_id, "10").await?;
+let mut stream = client.stream_depth(&market.market_id, 1).await?;
 
 while let Some(Ok(update)) = stream.next().await {
     // First message is a full snapshot (action = "subscribe_depth")
@@ -174,7 +174,7 @@ use tokio_stream::StreamExt;
 let market = client.get_market("fFUEL/fUSDC").await?;
 let identity = Identity::ContractId(session.trade_account_id.to_string());
 
-let mut depth_stream = client.stream_depth(&market.market_id, "10").await?;
+let mut depth_stream = client.stream_depth(&market.market_id, 1).await?;
 let mut order_stream = client.stream_orders(&[identity.clone()]).await?;
 let mut trade_stream = client.stream_trades(&market.market_id).await?;
 
@@ -225,7 +225,7 @@ use o2_sdk::WsLifecycleEvent;
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_depth(&market.market_id, "10").await?;
+let mut stream = client.stream_depth(&market.market_id, 1).await?;
 let mut lifecycle = client.subscribe_ws_lifecycle().await?;
 
 loop {

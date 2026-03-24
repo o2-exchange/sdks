@@ -1316,15 +1316,9 @@ impl O2Client {
     pub async fn stream_depth(
         &self,
         market_id: impl IntoValidId<MarketId>,
-        precision: &str,
+        precision: u64,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
-        let p: u64 = precision.parse().map_err(|_| {
-            O2Error::InvalidRequest(format!(
-                "Invalid stream depth precision '{}'. Must be an integer in range 1-18.",
-                precision
-            ))
-        })?;
-        let dp = DepthPrecision::new(p)?;
+        let dp = DepthPrecision::new(precision)?;
         let market_id = market_id.into_valid()?;
         debug!(
             "client.stream_depth market_id={} precision={}",

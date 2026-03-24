@@ -938,7 +938,7 @@ async fn test_websocket_depth() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let market = &markets[0];
-    let mut stream = client.stream_depth(&market.market_id, "10").await.unwrap();
+    let mut stream = client.stream_depth(&market.market_id, 1).await.unwrap();
 
     let update = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await;
 

@@ -74,7 +74,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `get_order(market, order_id)` | `impl IntoMarketSymbol, &str` | `Result<Order>` | Single order by ID |
 | `get_nonce(trade_account_id)` | `&str` | `Result<u64>` | Current nonce |
 | `refresh_nonce(session)` | `&mut Session` | `Result<u64>` | Re-sync nonce from API |
-| `stream_depth(market_id, precision)` | `&str, &str` | `Result<TypedStream<DepthUpdate>>` | Stream depth |
+| `stream_depth(market_id, precision)` | `&str, u64` | `Result<TypedStream<DepthUpdate>>` | Stream depth (precision 1-18) |
 | `stream_orders(identities)` | `&[Identity]` | `Result<TypedStream<OrderUpdate>>` | Stream orders |
 | `stream_trades(market_id)` | `&str` | `Result<TypedStream<TradeUpdate>>` | Stream trades |
 | `stream_balances(identities)` | `&[Identity]` | `Result<TypedStream<BalanceUpdate>>` | Stream balances |
@@ -151,7 +151,7 @@ loop {
 ### 3. Real-Time Depth Monitoring
 
 ```rust
-let mut stream = client.stream_depth(&market.market_id, "10").await?;
+let mut stream = client.stream_depth(&market.market_id, 1).await?;
 while let Some(update) = stream.next().await {
     // update.view = initial snapshot, update.changes = incremental
 }

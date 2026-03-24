@@ -15,7 +15,7 @@ use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message as WsMsg;
 
 use o2_sdk::models::*;
-use o2_sdk::websocket::{O2WebSocket, WsConfig, WsLifecycleEvent};
+use o2_sdk::websocket::{DepthPrecision, O2WebSocket, WsConfig, WsLifecycleEvent};
 
 /// Create a mock server that sends specific messages on connection.
 async fn create_messaging_mock_server(messages: Vec<serde_json::Value>) -> String {
@@ -155,7 +155,10 @@ async fn test_ws_depth_stream_receives_messages() {
 
     let url = create_messaging_mock_server(messages).await;
     let ws = O2WebSocket::connect(&url).await.unwrap();
-    let mut stream = ws.stream_depth("market1", "10").await.unwrap();
+    let mut stream = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
 
     // Receive all 3 messages
     let mut received = vec![];
@@ -331,7 +334,10 @@ async fn test_ws_reconnect_on_server_disconnect() {
     let ws = O2WebSocket::connect_with_config(&url, config)
         .await
         .unwrap();
-    let mut stream = ws.stream_depth("market1", "10").await.unwrap();
+    let mut stream = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
     let mut lifecycle = ws.subscribe_lifecycle();
 
     // Receive first message
@@ -440,7 +446,10 @@ async fn test_ws_reconnect_resubscribes() {
     let ws = O2WebSocket::connect_with_config(&url, config)
         .await
         .unwrap();
-    let _stream1 = ws.stream_depth("market1", "10").await.unwrap();
+    let _stream1 = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
     let _stream2 = ws.stream_trades("market1").await.unwrap();
 
     // Wait for initial subscriptions and reconnection
@@ -492,7 +501,10 @@ async fn test_ws_disconnect_closes_streams() {
 
     let url = create_messaging_mock_server(messages).await;
     let ws = O2WebSocket::connect(&url).await.unwrap();
-    let mut stream = ws.stream_depth("market1", "10").await.unwrap();
+    let mut stream = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
 
     assert!(ws.is_connected(), "Should be connected");
 
@@ -524,8 +536,14 @@ async fn test_ws_multiple_subscribers_same_type() {
     let ws = O2WebSocket::connect(&url).await.unwrap();
 
     // Create two streams for the same subscription type
-    let mut stream1 = ws.stream_depth("market1", "10").await.unwrap();
-    let mut stream2 = ws.stream_depth("market1", "10").await.unwrap();
+    let mut stream1 = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
+    let mut stream2 = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
 
     // Both streams should receive the message
     let update1 = tokio::time::timeout(Duration::from_secs(2), stream1.next())
@@ -607,7 +625,10 @@ async fn test_ws_unsubscribe_removes_tracking() {
     let ws = O2WebSocket::connect_with_config(&url, config)
         .await
         .unwrap();
-    let _stream = ws.stream_depth("market1", "10").await.unwrap();
+    let _stream = ws
+        .stream_depth("market1", &DepthPrecision::new(1).unwrap())
+        .await
+        .unwrap();
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 

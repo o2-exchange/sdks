@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Session created");
 
     // Connect to WebSocket for real-time depth
-    let mut depth_stream = client.stream_depth(market.market_id.as_str(), "10").await?;
+    let mut depth_stream = client.stream_depth(market.market_id.as_str(), 1).await?;
 
     println!("Listening for depth updates (buy when ask <= {buy_below_price})...");
 
