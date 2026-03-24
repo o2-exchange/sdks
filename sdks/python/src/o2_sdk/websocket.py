@@ -105,6 +105,7 @@ class O2WebSocket:
         self._pong_timeout = pong_timeout
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_attempts = 0
+        self._close_event = asyncio.Event()
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -113,6 +114,7 @@ class O2WebSocket:
     async def connect(self) -> O2WebSocket:
         """Connect to the WebSocket endpoint."""
         self._should_run = True
+        self._close_event.clear()
         self._reconnect_attempts = 0
         await self._do_connect()
         self._emit_lifecycle(ConnectionState.CONNECTED, message="Initial connection")
@@ -196,6 +198,7 @@ class O2WebSocket:
                     self._max_reconnect_attempts,
                 )
                 self._should_run = False
+                self._close_event.set()
                 self._emit_lifecycle(
                     ConnectionState.CLOSED,
                     message=f"Max reconnect attempts ({self._max_reconnect_attempts}) exhausted",
@@ -255,8 +258,12 @@ class O2WebSocket:
         self._should_run = False
         self._connected = False
 
-        # Signal consumers FIRST so they can exit while we clean up.
+        # Emit the terminal CLOSED event BEFORE setting _close_event, so
+        # stream_lifecycle() consumers see it before _wait_for_message()
+        # short-circuits them.  The close event + sentinel then unblock all
+        # generators (including lifecycle after it yields the CLOSED event).
         self._emit_lifecycle(ConnectionState.CLOSED, message="Disconnected by client")
+        self._close_event.set()
         self._signal_all_queues(None)
 
         # Cancel internal tasks with a bounded wait.  If _reconnect() is
@@ -288,20 +295,56 @@ class O2WebSocket:
     # Internal message routing
     # ------------------------------------------------------------------
 
+    async def _wait_for_message(self, queue: asyncio.Queue) -> object | None:
+        """Wait for the next queue message OR the close event, whichever first.
+
+        Returns the message, or ``None`` if the close event fired (shutdown)
+        AND no message was already queued.  When both are ready (e.g. the
+        lifecycle CLOSED event was pushed just before the close event was set),
+        the queued message wins so consumers don't miss terminal events.
+        """
+        # Fast path: drain any already-queued message before checking close.
+        if not queue.empty():
+            return queue.get_nowait()
+        if self._close_event.is_set():
+            return None
+
+        get_task = asyncio.ensure_future(queue.get())
+        close_task = asyncio.ensure_future(self._close_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                [get_task, close_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await p
+            # Prefer queued messages over close signal — ensures terminal
+            # events (like CLOSED) are delivered before the generator exits.
+            if get_task in done:
+                return get_task.result()
+            return None
+        except asyncio.CancelledError:
+            get_task.cancel()
+            close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await get_task
+            with contextlib.suppress(asyncio.CancelledError):
+                await close_task
+            raise
+
     def _signal_all_queues(self, sentinel: object) -> None:
         """Push a sentinel value to every subscriber queue.
 
-        Drains each queue first so the sentinel is never lost due to a full
-        queue — buffered data is worthless once shutdown is signalled.
+        Does NOT drain — the ``_close_event`` handles immediate unblocking,
+        and draining would destroy terminal events (e.g. the CLOSED lifecycle
+        event pushed just before this call).
         """
         for queues in self._subscriber_queues.values():
             for q in queues:
-                while not q.empty():
-                    try:
-                        q.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                q.put_nowait(sentinel)
+                with contextlib.suppress(asyncio.QueueFull):
+                    q.put_nowait(sentinel)
 
     def _emit_lifecycle(
         self,
@@ -443,6 +486,11 @@ class O2WebSocket:
         queue = self._register_queue("lifecycle")
         try:
             while self._should_run:
+                # Lifecycle uses raw queue.get() (not _wait_for_message)
+                # because it must receive the terminal CLOSED event before
+                # exiting.  The CLOSED event is pushed to the queue before
+                # _close_event is set, and _signal_all_queues(None) follows
+                # as the final sentinel.
                 msg = await queue.get()
                 if msg is None:
                     return
@@ -479,7 +527,7 @@ class O2WebSocket:
         queue = self._register_queue("depth")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 if msg.get("market_id") == market_id:
@@ -495,7 +543,7 @@ class O2WebSocket:
         queue = self._register_queue("orders")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield OrderUpdate.from_dict(msg)
@@ -510,7 +558,7 @@ class O2WebSocket:
         queue = self._register_queue("trades")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 if msg.get("market_id") == market_id:
@@ -526,7 +574,7 @@ class O2WebSocket:
         queue = self._register_queue("balances")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield BalanceUpdate.from_dict(msg)
@@ -541,7 +589,7 @@ class O2WebSocket:
         queue = self._register_queue("nonce")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield NonceUpdate.from_dict(msg)
