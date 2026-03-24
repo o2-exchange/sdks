@@ -276,7 +276,7 @@ class O2WebSocket:
             if task and not task.done():
                 task.cancel()
                 try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+                    await asyncio.wait_for(task, timeout=5.0)
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     logger.warning("WS %s task did not exit cleanly", task_name)
 
