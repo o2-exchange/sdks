@@ -18,6 +18,7 @@ import json
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import Any
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -37,6 +38,7 @@ logger = logging.getLogger("o2_sdk.websocket")
 # ---------------------------------------------------------------------------
 # Lifecycle events
 # ---------------------------------------------------------------------------
+
 
 class ConnectionState(enum.Enum):
     """WebSocket connection lifecycle states."""
@@ -94,7 +96,7 @@ class O2WebSocket:
         self._subscriptions: list[dict] = []
         # Per-subscriber fan-out: each stream_*() call registers its own queue.
         # Key = action queue key (e.g. "depth", "orders"), value = list of queues.
-        self._subscriber_queues: dict[str, list[asyncio.Queue]] = {}
+        self._subscriber_queues: dict[str, list[asyncio.Queue[Any]]] = {}
         self._listener_task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
         self._connected = False
@@ -220,9 +222,7 @@ class O2WebSocket:
             )
             # CancelledError can interrupt this sleep — that's intentional.
             await asyncio.sleep(self._reconnect_delay)
-            self._reconnect_delay = min(
-                self._reconnect_delay * 2, self._max_reconnect_delay
-            )
+            self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
             try:
                 await self._do_connect()
                 # Restart ping task (listener is the caller, so it's still alive)
@@ -276,9 +276,7 @@ class O2WebSocket:
             if task and not task.done():
                 task.cancel()
                 try:
-                    await asyncio.wait_for(
-                        asyncio.shield(task), timeout=5.0
-                    )
+                    await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
                 except (asyncio.CancelledError, asyncio.TimeoutError):
                     logger.warning("WS %s task did not exit cleanly", task_name)
 
@@ -295,7 +293,7 @@ class O2WebSocket:
     # Internal message routing
     # ------------------------------------------------------------------
 
-    async def _wait_for_message(self, queue: asyncio.Queue) -> object | None:
+    async def _wait_for_message(self, queue: asyncio.Queue[Any]) -> Any | None:
         """Wait for the next queue message OR the close event, whichever first.
 
         Returns the message, or ``None`` if the close event fired (shutdown)
@@ -441,9 +439,9 @@ class O2WebSocket:
             return "nonce"
         return None
 
-    def _register_queue(self, key: str) -> asyncio.Queue:
+    def _register_queue(self, key: str) -> asyncio.Queue[Any]:
         """Create and register a new subscriber queue for the given action key."""
-        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        q: asyncio.Queue[Any] = asyncio.Queue(maxsize=1000)
         if key not in self._subscriber_queues:
             self._subscriber_queues[key] = []
         self._subscriber_queues[key].append(q)

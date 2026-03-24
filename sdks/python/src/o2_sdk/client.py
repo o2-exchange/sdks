@@ -128,7 +128,6 @@ def _validate_depth_precision(precision: int | str) -> None:
         )
 
 
-
 class O2Client:
     """High-level client for the O2 Exchange.
 
@@ -832,21 +831,33 @@ class O2Client:
                 ``start_timestamp``. Strings are validated as hex.
         """
         market_obj = await self._resolve_market_like_async(market)
-        validated_tid = Id(start_trade_id) if isinstance(start_trade_id, str) and not isinstance(start_trade_id, Id) else start_trade_id
+        validated_tid = (
+            Id(start_trade_id)
+            if isinstance(start_trade_id, str) and not isinstance(start_trade_id, Id)
+            else start_trade_id
+        )
         if account is not None:
             if isinstance(account, str) and not isinstance(account, Id):
                 contract = Id(account)
             elif isinstance(account, Id):
                 contract = account
             else:
+                if account.trade_account_id is None:
+                    msg = "AccountInfo has no trade_account_id"
+                    raise ValueError(msg)
                 contract = account.trade_account_id
             return await self.api.get_trades_by_account(
-                market_obj.market_id, contract=contract, count=count,
-                start_timestamp=start_timestamp, start_trade_id=validated_tid,
+                market_obj.market_id,
+                contract=contract,
+                count=count,
+                start_timestamp=start_timestamp,
+                start_trade_id=validated_tid,
             )
         return await self.api.get_trades(
-            market_obj.market_id, count=count,
-            start_timestamp=start_timestamp, start_trade_id=validated_tid,
+            market_obj.market_id,
+            count=count,
+            start_timestamp=start_timestamp,
+            start_trade_id=validated_tid,
         )
 
     async def get_bars(
@@ -889,6 +900,9 @@ class O2Client:
         elif isinstance(account, Id):
             trade_account_id = account
         else:
+            if account.trade_account_id is None:
+                msg = "AccountInfo has no trade_account_id"
+                raise ValueError(msg)
             trade_account_id = account.trade_account_id
 
         markets_resp = await self._get_markets_cached()
@@ -940,8 +954,15 @@ class O2Client:
         elif isinstance(account, Id):
             trade_account_id = account
         else:
+            if account.trade_account_id is None:
+                msg = "AccountInfo has no trade_account_id"
+                raise ValueError(msg)
             trade_account_id = account.trade_account_id
-        validated_oid = Id(start_order_id) if isinstance(start_order_id, str) and not isinstance(start_order_id, Id) else start_order_id
+        validated_oid = (
+            Id(start_order_id)
+            if isinstance(start_order_id, str) and not isinstance(start_order_id, Id)
+            else start_order_id
+        )
         market_obj = await self._resolve_market_like_async(market)
         resp = await self.api.get_orders(
             market_id=market_obj.market_id,
