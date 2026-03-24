@@ -1147,8 +1147,8 @@ impl O2Client {
     /// (both must be provided together or omitted).
     pub async fn get_orders<M>(
         &mut self,
-        trade_account_id: impl IntoValidId<TradeAccountId>,
         market_name: M,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
         is_open: Option<bool>,
         count: u32,
         start_timestamp: Option<u64>,

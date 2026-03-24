@@ -97,6 +97,7 @@ export type {
   Market,
   MarketAsset,
   MarketId,
+  MarketRef,
   MarketSummary,
   MarketsResponse,
   MarketTicker,

@@ -62,6 +62,7 @@ import type {
   FaucetResponse,
   Market,
   MarketActions,
+  MarketRef,
   MarketsResponse,
   NonceUpdate,
   Order,
@@ -410,7 +411,7 @@ export class O2Client {
    */
   async createSession(
     wallet: Signer,
-    markets: string[] | Market[],
+    markets: MarketRef[],
     expiryDays = 30,
   ): Promise<SessionState> {
     // Resolve trade account
@@ -497,7 +498,7 @@ export class O2Client {
    * @param options - Optional order parameters.
    */
   async createOrder(
-    market: string | Market,
+    market: MarketRef,
     side: "buy" | "sell",
     price: Numeric,
     quantity: Numeric,
@@ -584,7 +585,7 @@ export class O2Client {
   }
 
   /** Cancel an order. The session nonce is updated in-place. */
-  async cancelOrder(orderId: OrderId, market: string | Market): Promise<SessionActionsResponse> {
+  async cancelOrder(orderId: OrderId, market: MarketRef): Promise<SessionActionsResponse> {
     this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
@@ -600,7 +601,7 @@ export class O2Client {
   /**
    * Cancel all open orders for a market. Returns one result per chunk, or null if no orders.
    */
-  async cancelAllOrders(market: string | Market): Promise<SessionActionsResponse[] | null> {
+  async cancelAllOrders(market: MarketRef): Promise<SessionActionsResponse[] | null> {
     const session = this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
@@ -634,7 +635,7 @@ export class O2Client {
   }
 
   /** Settle balance for a market. The session nonce is updated in-place. */
-  async settleBalance(market: string | Market): Promise<SessionActionsResponse> {
+  async settleBalance(market: MarketRef): Promise<SessionActionsResponse> {
     const session = this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
@@ -740,7 +741,7 @@ export class O2Client {
    *   `undefined` (default) returns the full order book.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
-  async getDepth(market: string | Market, precision = 1, limit?: number): Promise<DepthSnapshot> {
+  async getDepth(market: MarketRef, precision = 1, limit?: number): Promise<DepthSnapshot> {
     validateDepthPrecision(precision);
     const wirePrecision = 10 ** precision;
     const marketId =
@@ -758,7 +759,7 @@ export class O2Client {
    *   from the last trade of the previous page.
    */
   async getTrades(
-    market: string | Market,
+    market: MarketRef,
     count = 50,
     account?: string | TradeAccountId,
     cursor?: { startTimestamp: number; startTradeId: string },
@@ -793,12 +794,7 @@ export class O2Client {
    * @param from - Start time in **milliseconds** (not seconds).
    * @param to - End time in **milliseconds** (not seconds).
    */
-  async getBars(
-    market: string | Market,
-    resolution: string,
-    from: number,
-    to: number,
-  ): Promise<Bar[]> {
+  async getBars(market: MarketRef, resolution: string, from: number, to: number): Promise<Bar[]> {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getBars(marketId, from, to, resolution);
@@ -809,7 +805,7 @@ export class O2Client {
    *
    * @param market - Market pair string or {@link Market} object.
    */
-  async getTicker(market: string | Market) {
+  async getTicker(market: MarketRef) {
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
     return this.api.getMarketTicker(marketId);
@@ -848,16 +844,16 @@ export class O2Client {
   /**
    * Fetch orders for an account on a market.
    *
-   * @param tradeAccountId - The trade account contract ID.
    * @param market - Market pair string or {@link Market} object.
+   * @param tradeAccountId - The trade account contract ID.
    * @param isOpen - Filter by open/closed status.
    * @param count - Number of orders (default: 20, max 200).
    * @param cursor - Optional pagination cursor. Pass the `timestamp` and `order_id`
    *   from the last order of the previous page.
    */
   async getOrders(
+    market: MarketRef,
     tradeAccountId: TradeAccountId,
-    market: string | Market,
     isOpen?: boolean,
     count = 20,
     cursor?: { startTimestamp: number; startOrderId: string },
@@ -881,7 +877,7 @@ export class O2Client {
    * @param market - Market pair string or {@link Market} object.
    * @param orderId - The order identifier.
    */
-  async getOrder(market: string | Market, orderId: OrderId): Promise<Order> {
+  async getOrder(market: MarketRef, orderId: OrderId): Promise<Order> {
     const resolved = typeof market === "string" ? await this.getMarket(market) : market;
     return this.api.getOrder(resolved.market_id, orderId);
   }
@@ -935,7 +931,7 @@ export class O2Client {
    * @returns An async generator yielding {@link DepthUpdate} messages.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
-  async streamDepth(market: string | Market, precision = 1): Promise<AsyncGenerator<DepthUpdate>> {
+  async streamDepth(market: MarketRef, precision = 1): Promise<AsyncGenerator<DepthUpdate>> {
     validateDepthPrecision(precision);
     const ws = await this.ensureWs();
     const marketId =
@@ -960,7 +956,7 @@ export class O2Client {
    * @param market - Market pair string or {@link Market} object.
    * @returns An async generator yielding {@link TradeUpdate} messages.
    */
-  async streamTrades(market: string | Market): Promise<AsyncGenerator<TradeUpdate>> {
+  async streamTrades(market: MarketRef): Promise<AsyncGenerator<TradeUpdate>> {
     const ws = await this.ensureWs();
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;

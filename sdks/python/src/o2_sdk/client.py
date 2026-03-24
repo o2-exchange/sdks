@@ -927,8 +927,8 @@ class O2Client:
 
     async def get_orders(
         self,
-        account: AccountInfo | str | Id,
         market: str | Market,
+        account: AccountInfo | str | Id,
         is_open: bool | None = None,
         count: int = 20,
         start_timestamp: int | None = None,
@@ -937,9 +937,9 @@ class O2Client:
         """Get orders for an account on a market.
 
         Args:
+            market: Market pair string or Market object.
             account: AccountInfo, trade_account_id string, or Id.
                 Strings are validated as hex.
-            market: Market pair string or Market object.
             is_open: Filter by open/closed status. ``None`` returns all.
             count: Number of orders to return (max 200).
             start_timestamp: Cursor for pagination — timestamp of the last

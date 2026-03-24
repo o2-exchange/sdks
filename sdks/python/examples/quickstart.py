@@ -69,7 +69,7 @@ async def main():
             print(f"Order ID: {order.order_id}")
 
             # 7. Check order status
-            orders = await client.get_orders(account.trade_account_id, market.pair, is_open=True)
+            orders = await client.get_orders(market.pair, account.trade_account_id, is_open=True)
             print(f"Open orders: {len(orders)}")
 
             # 8. Build and submit a typed batch with the fluent builder

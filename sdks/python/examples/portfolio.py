@@ -47,7 +47,7 @@ async def main():
 
     # Check open orders
     market = await client.get_market(MARKET_PAIR)
-    orders = await client.get_orders(trade_id, market.pair, is_open=True)
+    orders = await client.get_orders(market.pair, trade_id, is_open=True)
     logger.info("=== Open Orders ===")
     for order in orders:
         logger.info(

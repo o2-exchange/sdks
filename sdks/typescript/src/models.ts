@@ -251,6 +251,16 @@ export interface Market {
 }
 
 /**
+ * A reference to a market: a symbol pair string (e.g. `"ETH/USDC"`),
+ * a hex {@link MarketId}, or a full {@link Market} object.
+ *
+ * All client methods that accept a market parameter use this type.
+ * Runtime validation happens in `resolveMarket()` which matches the
+ * input against the cached market list.
+ */
+export type MarketRef = string | MarketId | Market;
+
+/**
  * Response from the `GET /v1/markets` endpoint.
  *
  * Contains global registry IDs and the list of all available markets.
@@ -545,7 +555,7 @@ export type DesiredQuantity =
  *
  * @example
  * ```ts
- * const orders = await client.getOrders(tradeAccountId, "fFUEL/fUSDC", true);
+ * const orders = await client.getOrders("fFUEL/fUSDC", tradeAccountId, true);
  * for (const order of orders) {
  *   console.log(`${order.side} ${order.quantity} @ ${order.price}`);
  * }

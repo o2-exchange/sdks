@@ -476,7 +476,7 @@ class O2WebSocket:
             async for event in ws.stream_lifecycle():
                 if event.state == ConnectionState.RECONNECTED:
                     balances = await client.get_balances(account)
-                    orders = await client.get_orders(account)
+                    orders = await client.get_orders(market, account)
                     # ... rebuild local state ...
                 elif event.state == ConnectionState.CLOSED:
                     break  # terminal, no more events

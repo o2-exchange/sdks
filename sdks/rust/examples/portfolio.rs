@@ -44,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     for market in &markets {
         let pair = market.symbol_pair();
         let orders_resp = client
-            .get_orders(&trade_account_id, &pair, Some(true), 20, None, None)
+            .get_orders(&pair, &trade_account_id, Some(true), 20, None, None)
             .await?;
 
         if !orders_resp.orders.is_empty() {
