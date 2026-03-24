@@ -207,9 +207,19 @@ class SessionExpired(O2Error):
 
 # On-chain revert error (no code, has message + reason)
 class OnChainRevert(O2Error):
-    """On-chain transaction revert (no error code)."""
+    """On-chain transaction revert (no error code).
 
-    pass
+    The ``str()`` representation is kept concise — it shows the decoded
+    revert reason rather than dumping multi-KB receipts.  Full receipts
+    are still accessible via the ``.receipts`` attribute.
+    """
+
+    def __str__(self) -> str:  # noqa: D105
+        # Prefer the decoded reason (set by raise_for_error); fall back to
+        # the raw message only when no reason is available.
+        if self.reason:
+            return f"On-chain revert: {self.reason}"
+        return f"On-chain revert: {self.message}"
 
 
 ERROR_CODE_MAP: dict[int, type[O2Error]] = {
@@ -265,4 +275,9 @@ def raise_for_error(data: dict[str, Any]) -> None:
         raise error_cls(message=message, code=code, reason=reason, receipts=receipts)
 
     if "message" in data:
-        raise OnChainRevert(message=message, reason=reason, receipts=receipts)
+        from .onchain_revert import augment_revert_reason
+
+        augmented_reason = augment_revert_reason(message, reason, receipts)
+        raise OnChainRevert(
+            message=message, reason=augmented_reason, receipts=receipts
+        )

@@ -6,6 +6,7 @@ DEX on the Fuel Network.
 
 from .client import MarketActionsBuilder, O2Client
 from .config import Network, NetworkConfig, get_config
+from .websocket import ConnectionEvent, ConnectionState
 from .crypto import (
     EvmWallet,
     ExternalEvmSigner,

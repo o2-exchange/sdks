@@ -29,7 +29,7 @@ from .encoding import (
     build_session_signing_bytes,
     build_withdraw_signing_bytes,
 )
-from .errors import O2Error, SessionExpired
+from .errors import InvalidRequest, O2Error, SessionExpired
 from .models import (
     AccountInfo,
     Action,
@@ -64,7 +64,7 @@ from .models import (
     TradeUpdate,
     WithdrawResponse,
 )
-from .websocket import O2WebSocket
+from .websocket import ConnectionEvent, ConnectionState, O2WebSocket
 
 logger = logging.getLogger("o2_sdk.client")
 
@@ -105,6 +105,29 @@ class MarketActionsBuilder:
 
     def build(self) -> MarketActionGroup:
         return MarketActionGroup(market=self._market, actions=list(self._actions))
+
+
+def _validate_depth_precision(precision: int | str) -> None:
+    """Raise :class:`InvalidRequest` if *precision* is outside 1--18.
+
+    The backend only supports depth precision values 1--18 (corresponding to
+    powers of 10: 10^1 through 10^18).  Precision 0 is below the backend's
+    configured minimum and will receive no delta updates after the initial
+    snapshot.
+    """
+    try:
+        p = int(precision)
+    except (TypeError, ValueError):
+        raise InvalidRequest(
+            message=f"Invalid depth precision {precision!r}. Must be an integer in range 1-18."
+        )
+    if p < 1 or p > 18:
+        raise InvalidRequest(
+            message=(
+                f"Invalid depth precision {p}. Valid range: 1-18 (powers of 10). "
+                "Precision 0 is not supported — use get_depth() via REST for exact prices."
+            ),
+        )
 
 
 class O2Client:
@@ -770,10 +793,16 @@ class O2Client:
 
         Args:
             market: Market pair string (e.g. ``"fFUEL/fUSDC"``) or :class:`Market` object.
-            precision: Price aggregation precision (default ``10``).
+            precision: Price aggregation precision as a power of 10.
+                Valid range: **1--18**. Default ``10`` (recommended).
+                Lower values give finer granularity but return more levels.
             limit: Maximum number of price levels per side (buys/sells).
                 ``None`` (default) returns the full order book.
+
+        Raises:
+            InvalidRequest: If *precision* is outside the valid range 1--18.
         """
+        _validate_depth_precision(precision)
         market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_depth(market_obj.market_id, precision, limit=limit)
 
@@ -933,10 +962,45 @@ class O2Client:
             await self._ws.connect()
         return self._ws
 
+    async def stream_lifecycle(self) -> AsyncIterator[ConnectionEvent]:
+        """Stream WebSocket connection lifecycle events.
+
+        Yields :class:`ConnectionEvent` objects whenever the connection state
+        changes (connected, disconnected, reconnecting, reconnected, closed).
+
+        Use this to detect reconnects and re-sync critical state from the
+        REST API — messages received during the disconnect window are lost.
+
+        Example::
+
+            async for event in client.stream_lifecycle():
+                if event.state == ConnectionState.RECONNECTED:
+                    # Re-sync balances, open orders, etc.
+                    balances = await client.get_balances(account)
+                elif event.state == ConnectionState.CLOSED:
+                    break
+        """
+        ws = await self._ensure_ws()
+        async for event in ws.stream_lifecycle():
+            yield event
+
     async def stream_depth(
         self, market: str | Market, precision: int = 10
     ) -> AsyncIterator[DepthUpdate]:
-        """Stream order book depth updates."""
+        """Stream order book depth updates.
+
+        Args:
+            market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
+            precision: Depth aggregation level (power of 10). Valid range:
+                **1--18**. Default ``10`` (recommended). Values below 10 may
+                produce no delta updates on high-priced assets (e.g. ETH) —
+                the raw prices are too large for fine bucketing to trigger
+                changes. Use ``10`` for reliable streaming on all markets.
+
+        Raises:
+            InvalidRequest: If *precision* is outside the valid range 1--18.
+        """
+        _validate_depth_precision(precision)
         market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
         async for update in ws.stream_depth(market_obj.market_id, str(precision)):
