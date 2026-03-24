@@ -581,7 +581,7 @@ class Trade:
         trader_side: The querying account's role: ``"maker"``, ``"taker"``,
             or ``"both"`` (self-trade).  Only present on trades returned by
             account-scoped endpoints (e.g. ``get_trades(account=...)``).
-        timestamp: Trade execution timestamp (microseconds since epoch).
+        timestamp: Trade execution timestamp (milliseconds since epoch).
     """
 
     trade_id: str

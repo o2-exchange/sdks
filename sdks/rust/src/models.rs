@@ -1217,7 +1217,7 @@ pub struct Trade {
     pub quantity: u64,
     #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub price: u64,
-    /// Trade execution timestamp (microseconds since epoch).
+    /// Trade execution timestamp (milliseconds since epoch).
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub timestamp: u128,
     /// The querying account's role. Only present on account-scoped trade queries.

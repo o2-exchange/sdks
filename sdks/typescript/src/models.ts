@@ -636,7 +636,7 @@ export interface Trade {
   quantity: bigint;
   /** Trade price (chain integer). */
   price: bigint;
-  /** Trade execution timestamp (microseconds since epoch). */
+  /** Trade execution timestamp (milliseconds since epoch). */
   timestamp: number;
   /**
    * The querying account's role: `"maker"`, `"taker"`, or `"both"` (self-trade).
