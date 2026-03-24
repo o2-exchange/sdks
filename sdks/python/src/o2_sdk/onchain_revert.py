@@ -131,10 +131,6 @@ ABI_ERROR_ENUMS: list[tuple[str, list[str]]] = [
 ]
 
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
-# Matches Rust Debug format: Revert { id: ..., ra: 18446744073709486086, ... }
-_REVERT_RA_RE = re.compile(r"Revert\s*\{[^}]*\bra:\s*(\d+)")
-# Matches Panic receipts: PanicInstruction { reason: NotEnoughBalance, ... }
-_PANIC_REASON_RE = re.compile(r"PanicInstruction\s*\{[^}]*\breason:\s*(\w+)")
 
 _FUEL_MASK = 0xFFFF_FFFF_FFFF_0000
 _FUEL_TAG = 0xFFFF_FFFF_FFFF_0000
@@ -185,9 +181,27 @@ def _extract_revert_codes(text: str) -> list[int]:
     Matches both ``Revert(DIGITS)`` (from structured receipts) and
     ``Revert { ... ra: DIGITS ... }`` (Rust Debug format embedded in
     reason strings when the backend doesn't send structured receipts).
+    Uses string search for embedded receipts to avoid ReDoS.
     """
     codes = [int(m.group(1)) for m in _REVERT_RE.finditer(text)]
-    codes.extend(int(m.group(1)) for m in _REVERT_RA_RE.finditer(text))
+    # Revert { ... ra: DIGITS ... } — string search, no regex
+    search_from = 0
+    while True:
+        idx = text.find("Revert {", search_from)
+        if idx == -1:
+            break
+        ra_idx = text.find("ra:", idx)
+        brace_end = text.find("}", idx)
+        if ra_idx != -1 and (brace_end == -1 or ra_idx < brace_end):
+            start = ra_idx + 3
+            while start < len(text) and text[start] == " ":
+                start += 1
+            end = start
+            while end < len(text) and text[end].isdigit():
+                end += 1
+            if end > start:
+                codes.append(int(text[start:end]))
+        search_from = idx + 8
     return codes
 
 
@@ -195,10 +209,23 @@ def _extract_panic_reason(text: str) -> str | None:
     """Extract a Fuel VM panic reason from embedded receipt text.
 
     Matches ``PanicInstruction { reason: NotEnoughBalance, ... }`` from
-    Rust Debug formatted receipts embedded in the reason string.
+    Rust Debug formatted receipts. Uses string search to avoid ReDoS.
     """
-    m = _PANIC_REASON_RE.search(text)
-    return m.group(1) if m else None
+    marker = "PanicInstruction {"
+    idx = text.find(marker)
+    if idx == -1:
+        return None
+    reason_idx = text.find("reason:", idx + len(marker))
+    if reason_idx == -1:
+        return None
+    start = reason_idx + len("reason:")
+    while start < len(text) and text[start] == " ":
+        start += 1
+    end = start
+    while end < len(text) and (text[end].isalnum() or text[end] == "_"):
+        end += 1
+    name = text[start:end]
+    return name or None
 
 
 def _decode_revert_code(raw: int, context: str) -> str | None:

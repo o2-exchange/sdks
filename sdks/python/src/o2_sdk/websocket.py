@@ -327,9 +327,9 @@ class O2WebSocket:
             get_task.cancel()
             close_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await get_task
+                _ = await get_task  # ensure task is finalized
             with contextlib.suppress(asyncio.CancelledError):
-                await close_task
+                _ = await close_task  # ensure task is finalized
             raise
 
     def _signal_all_queues(self, sentinel: object) -> None:

@@ -41,7 +41,6 @@
     "docs:watch": "typedoc --watch"
   },
   "dependencies": {
-    "@biomejs/cli-linux-arm64": "^2.4.8",
     "@noble/hashes": "^2.0.0",
     "@noble/secp256k1": "^3.0.0",
     "ws": "^8.18.0"

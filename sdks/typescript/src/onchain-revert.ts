@@ -90,10 +90,6 @@ const ABI_ERROR_ENUMS: readonly [string, readonly string[]][] = [
 ];
 
 const REVERT_RE = /Revert\((\d+)\)/g;
-// Matches Rust Debug format: Revert { id: ..., ra: 18446744073709486086, ... }
-const REVERT_RA_RE = /Revert\s*\{[^}]*\bra:\s*(\d+)/g;
-// Matches Panic receipts: PanicInstruction { reason: NotEnoughBalance, ... }
-const PANIC_REASON_RE = /PanicInstruction\s*\{[^}]*\breason:\s*(\w+)/;
 
 // Fuel VM uses the top 48 bits as a tag for ABI error codes.
 const FUEL_MASK = 0xffff_ffff_ffff_0000n;
@@ -140,17 +136,41 @@ function extractRevertCodes(text: string): bigint[] {
   for (let match = REVERT_RE.exec(text); match !== null; match = REVERT_RE.exec(text)) {
     codes.push(BigInt(match[1]));
   }
-  // Revert { ... ra: DIGITS ... } — Rust Debug format embedded in reason strings
-  REVERT_RA_RE.lastIndex = 0;
-  for (let match = REVERT_RA_RE.exec(text); match !== null; match = REVERT_RA_RE.exec(text)) {
-    codes.push(BigInt(match[1]));
+  // Revert { ... ra: DIGITS ... } — Rust Debug format embedded in reason strings.
+  // Uses string search instead of regex to avoid ReDoS on [^}]* patterns.
+  let searchFrom = 0;
+  while (true) {
+    const idx = text.indexOf("Revert {", searchFrom);
+    if (idx === -1) break;
+    const raIdx = text.indexOf("ra:", idx);
+    const braceEnd = text.indexOf("}", idx);
+    if (raIdx !== -1 && (braceEnd === -1 || raIdx < braceEnd)) {
+      let start = raIdx + 3;
+      while (start < text.length && text[start] === " ") start++;
+      let end = start;
+      while (end < text.length && text[end] >= "0" && text[end] <= "9") end++;
+      if (end > start) {
+        codes.push(BigInt(text.slice(start, end)));
+      }
+    }
+    searchFrom = idx + 8;
   }
   return codes;
 }
 
+/** Extract Fuel VM panic reason from embedded receipt text (string search, no regex). */
 function extractPanicReason(text: string): string | undefined {
-  const match = PANIC_REASON_RE.exec(text);
-  return match ? match[1] : undefined;
+  const marker = "PanicInstruction {";
+  const idx = text.indexOf(marker);
+  if (idx === -1) return undefined;
+  const reasonIdx = text.indexOf("reason:", idx + marker.length);
+  if (reasonIdx === -1) return undefined;
+  let start = reasonIdx + 7;
+  while (start < text.length && text[start] === " ") start++;
+  let end = start;
+  while (end < text.length && /\w/.test(text[end])) end++;
+  const name = text.slice(start, end);
+  return name || undefined;
 }
 
 function hexPad16(n: bigint): string {
