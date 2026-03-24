@@ -1189,10 +1189,27 @@ pub struct OrdersResponse {
 // Trades
 // ---------------------------------------------------------------------------
 
+/// The querying account's role in a trade.
+///
+/// Only present on trades returned by account-scoped endpoints
+/// (e.g. `get_trades` with an `account` parameter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TraderSide {
+    Maker,
+    Taker,
+    Both,
+}
+
 /// A trade from the API.
+///
+/// The `side` field is the **maker's** order side — both maker and taker see
+/// the same value.  To determine your own direction, combine `side` with
+/// `trader_side`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub trade_id: TradeId,
+    /// The maker's order side (`Buy` or `Sell`).
     pub side: Side,
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub total: u128,
@@ -1200,8 +1217,12 @@ pub struct Trade {
     pub quantity: u64,
     #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub price: u64,
+    /// Trade execution timestamp (microseconds since epoch).
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub timestamp: u128,
+    /// The querying account's role. Only present on account-scoped trade queries.
+    #[serde(default)]
+    pub trader_side: Option<TraderSide>,
     #[serde(default)]
     pub maker: Option<Identity>,
     #[serde(default)]
@@ -1313,10 +1334,12 @@ pub struct DepthLevel {
 /// Depth snapshot from GET /v1/depth or WebSocket subscribe_depth.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthSnapshot {
-    #[serde(default)]
-    pub buys: Vec<DepthLevel>,
-    #[serde(default)]
-    pub sells: Vec<DepthLevel>,
+    /// Bid side of the order book, sorted by price descending.
+    #[serde(default, rename = "buys")]
+    pub bids: Vec<DepthLevel>,
+    /// Ask side of the order book, sorted by price ascending.
+    #[serde(default, rename = "sells")]
+    pub asks: Vec<DepthLevel>,
 }
 
 /// Depth update from WebSocket subscribe_depth_update.

@@ -6,7 +6,6 @@ DEX on the Fuel Network.
 
 from .client import MarketActionsBuilder, O2Client
 from .config import Network, NetworkConfig, get_config
-from .websocket import ConnectionEvent, ConnectionState
 from .crypto import (
     EvmWallet,
     ExternalEvmSigner,
@@ -124,6 +123,7 @@ from .models import (
     WhitelistResponse,
     WithdrawResponse,
 )
+from .websocket import ConnectionEvent, ConnectionState
 
 __all__ = [
     "GAS_MAX",
@@ -143,6 +143,8 @@ __all__ = [
     "CancelOrderAction",
     "CancelOrderRequestAction",
     "ChainInt",
+    "ConnectionEvent",
+    "ConnectionState",
     "ContractIdentity",
     "CreateOrderAction",
     "CreateOrderRequestAction",

@@ -1050,6 +1050,8 @@ impl O2Client {
     }
 
     /// Get OHLCV bars.
+    ///
+    /// `from_ts` and `to_ts` are in **milliseconds** (not seconds).
     pub async fn get_bars<M>(
         &mut self,
         market_name: M,
@@ -1283,19 +1285,15 @@ impl O2Client {
     ///
     /// # Arguments
     /// * `market_id` - The market ID (hex string).
-    /// * `precision` - Depth aggregation level as a power of 10 (string).
-    ///   Valid range: **1–18**.
+    /// * `precision` - Depth aggregation level (string). Valid range: **1–18**.
+    ///   Default `"1"` (finest level).
     ///
-    ///   **Precision and streaming behaviour are coupled:**
-    ///   - **Precision 1–9** (recommended `"1"`): Near-accurate prices (bucket size ≈
-    ///     10^precision native units, e.g. ~$0.00001 for precision=1 on wBTC/USDC).
-    ///     However, the backend only delivers an *initial snapshot* — no delta events
-    ///     follow. The stream stalls silently after the snapshot. Use a REST
-    ///     [`get_depth`][O2Client::get_depth] polling loop as a fallback.
-    ///   - **Precision 10–18**: The backend streams live delta events but prices are
-    ///     bucketed coarsely (e.g. precision=10 gives ~$10 price bins on wBTC/USDC).
-    ///     Too imprecise for accurate market-making. Use only if streaming deltas are
-    ///     required and coarse bucketing is acceptable.
+    ///   **Precision is a level index, not a raw bucket size.** The SDK converts
+    ///   it to a wire value of `10^precision` before sending, matching the internal
+    ///   backend convention (`Precision::new(N).pow()`). Precision 1 = finest
+    ///   streaming level. Higher values give coarser bucketing.
+    ///
+    ///   All precision levels 1–18 support live delta streaming.
     ///
     /// # Errors
     /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.

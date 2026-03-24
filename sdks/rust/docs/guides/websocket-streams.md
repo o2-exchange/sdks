@@ -48,13 +48,13 @@ while let Some(Ok(update)) = stream.next().await {
 
     if is_snapshot {
         if let Some(ref view) = update.view {
-            println!("Snapshot: {} bids, {} asks", view.buys.len(), view.sells.len());
+            println!("Snapshot: {} bids, {} asks", view.bids.len(), view.asks.len());
         }
     } else if let Some(ref changes) = update.changes {
-        if let Some(bid) = changes.buys.first() {
+        if let Some(bid) = changes.bids.first() {
             println!("Best bid: {}", bid.price);
         }
-        if let Some(ask) = changes.sells.first() {
+        if let Some(ask) = changes.asks.first() {
             println!("Best ask: {}", ask.price);
         }
     }
@@ -181,7 +181,7 @@ let mut trade_stream = client.stream_trades(&market.market_id).await?;
 let depth_task = tokio::spawn(async move {
     while let Some(Ok(update)) = depth_stream.next().await {
         if let Some(ref changes) = update.changes {
-            if let Some(bid) = changes.buys.first() {
+            if let Some(bid) = changes.bids.first() {
                 println!("Best bid: {}", bid.price);
             }
         }

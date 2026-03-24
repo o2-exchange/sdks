@@ -177,8 +177,8 @@ impl O2Api {
         // Client-side truncation: honour the limit even if the backend
         // doesn't support it yet.
         if let Some(lim) = limit {
-            snapshot.buys.truncate(lim);
-            snapshot.sells.truncate(lim);
+            snapshot.bids.truncate(lim);
+            snapshot.asks.truncate(lim);
         }
         Ok(snapshot)
     }

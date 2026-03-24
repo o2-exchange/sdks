@@ -424,8 +424,8 @@ async fn test_get_depth() {
         .await
         .unwrap();
 
-    assert!(depth.buys.is_empty() || !depth.buys.is_empty());
-    assert!(depth.sells.is_empty() || !depth.sells.is_empty());
+    assert!(depth.bids.is_empty() || !depth.bids.is_empty());
+    assert!(depth.asks.is_empty() || !depth.asks.is_empty());
 }
 
 #[tokio::test]
@@ -657,14 +657,14 @@ async fn conservative_post_only_buy_params(
     // minimizing over-aggressive bids in a live book.
     let mut chosen = default_dec;
     if let Ok(depth) = client.get_depth(market_pair, 10, None).await {
-        if let Some(best_ask) = depth.sells.first() {
+        if let Some(best_ask) = depth.asks.first() {
             let best_ask_human = market.format_price(best_ask.price);
             let best_ask_dec = *best_ask_human.inner();
             let just_below_ask = floor_to_step(best_ask_dec - step_dec, step_dec);
             if just_below_ask > Decimal::ZERO {
                 chosen = just_below_ask;
             }
-        } else if let Some(best_bid) = depth.buys.first() {
+        } else if let Some(best_bid) = depth.bids.first() {
             let best_bid_human = market.format_price(best_bid.price);
             let best_bid_dec = *best_bid_human.inner();
             let bid_floor = floor_to_step(best_bid_dec, step_dec);

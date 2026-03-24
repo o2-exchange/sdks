@@ -326,15 +326,15 @@ export interface DepthLevel {
  * @example
  * ```ts
  * const depth = await client.getDepth("fFUEL/fUSDC");
- * console.log(`Best bid: ${depth.buys[0]?.price}`);
- * console.log(`Best ask: ${depth.sells[0]?.price}`);
+ * console.log(`Best bid: ${depth.bids[0]?.price}`);
+ * console.log(`Best ask: ${depth.asks[0]?.price}`);
  * ```
  */
 export interface DepthSnapshot {
-  /** Buy (bid) side of the order book, sorted by price descending. */
-  buys: DepthLevel[];
-  /** Sell (ask) side of the order book, sorted by price ascending. */
-  sells: DepthLevel[];
+  /** Bid side of the order book, sorted by price descending. */
+  bids: DepthLevel[];
+  /** Ask side of the order book, sorted by price ascending. */
+  asks: DepthLevel[];
 }
 
 /**
@@ -347,9 +347,9 @@ export interface DepthUpdate {
   /** The action type (`"subscribe_depth"` or `"subscribe_depth_update"`). */
   action: string;
   /** Incremental changes (present on updates). */
-  changes?: { buys: DepthLevel[]; sells: DepthLevel[] };
+  changes?: { bids: DepthLevel[]; asks: DepthLevel[] };
   /** Full order book view (present on snapshots). */
-  view?: { precision?: number; buys: DepthLevel[]; sells: DepthLevel[] };
+  view?: { precision?: number; bids: DepthLevel[]; asks: DepthLevel[] };
   /** Market identifier. */
   market_id: MarketId;
   /** On-chain timestamp. */
@@ -622,7 +622,13 @@ export interface OrdersResponse {
 export interface Trade {
   /** Unique trade identifier. */
   trade_id: string;
-  /** Taker side of the trade. */
+  /**
+   * The **maker's** order side (`"buy"` or `"sell"`).
+   *
+   * This is an objective property of the trade — both maker and taker see the
+   * same value. To determine your own direction when you may be either maker
+   * or taker, combine `side` with `trader_side`.
+   */
   side: Side;
   /** Total trade value in quote asset (chain integer). */
   total: bigint;
@@ -630,8 +636,14 @@ export interface Trade {
   quantity: bigint;
   /** Trade price (chain integer). */
   price: bigint;
-  /** Trade execution timestamp. */
-  timestamp: string;
+  /** Trade execution timestamp (microseconds since epoch). */
+  timestamp: number;
+  /**
+   * The querying account's role: `"maker"`, `"taker"`, or `"both"` (self-trade).
+   * Only present on trades returned by account-scoped endpoints
+   * (e.g. `getTrades({ account: ... })`).
+   */
+  trader_side?: "maker" | "taker" | "both";
   /** Maker account identity. */
   maker?: Identity;
   /** Taker account identity. */
@@ -1367,7 +1379,8 @@ export function parseOrder(raw: Record<string, unknown>): Order {
     quantity_fill: raw.quantity_fill != null ? parseBigInt(raw.quantity_fill) : undefined,
     price_fill: raw.price_fill != null ? parseBigInt(raw.price_fill) : undefined,
     desired_quantity: parseDesiredQuantity(raw.desired_quantity),
-    market_id: raw.market_id != null ? hexIdTrusted<"MarketId">(raw.market_id as string) : undefined,
+    market_id:
+      raw.market_id != null ? hexIdTrusted<"MarketId">(raw.market_id as string) : undefined,
   };
 }
 
@@ -1381,12 +1394,18 @@ export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
 
 /** Parse a raw trade into a typed {@link Trade}. */
 export function parseTrade(raw: Record<string, unknown>): Trade {
+  const traderSide = raw.trader_side as string | undefined;
   return {
     ...(raw as unknown as Trade),
     side: parseRequiredSide(raw.side),
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
     quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
     total: raw.total != null ? parseBigInt(raw.total) : 0n,
+    timestamp: Number(raw.timestamp ?? 0),
+    trader_side:
+      traderSide === "maker" || traderSide === "taker" || traderSide === "both"
+        ? traderSide
+        : undefined,
   };
 }
 
@@ -1420,7 +1439,7 @@ export function parseAggregatedTrade(raw: Record<string, unknown>): Trade {
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
     quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
     total: raw.total != null ? parseBigInt(raw.total) : 0n,
-    timestamp: raw.timestamp != null ? String(raw.timestamp) : "0",
+    timestamp: Number(raw.timestamp ?? 0),
   };
 }
 
@@ -1516,8 +1535,9 @@ export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
   if (raw.changes) {
     const changes = raw.changes as Record<string, unknown>;
     result.changes = {
-      buys: ((changes.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
-      sells: ((changes.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      // Wire format uses "buys"/"sells"; we map to bids/asks
+      bids: ((changes.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      asks: ((changes.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
     };
   }
 
@@ -1525,8 +1545,8 @@ export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
     const view = raw.view as Record<string, unknown>;
     result.view = {
       precision: typeof view.precision === "number" ? view.precision : undefined,
-      buys: ((view.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
-      sells: ((view.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      bids: ((view.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      asks: ((view.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
     };
   }
 

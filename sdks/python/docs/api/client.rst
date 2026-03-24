@@ -440,9 +440,9 @@ Market data
    :param resolution: Candle resolution (e.g., ``"1m"``, ``"5m"``,
        ``"1h"``, ``"1d"``).
    :type resolution: str
-   :param from_ts: Start timestamp (Unix seconds).
+   :param from_ts: Start timestamp in **milliseconds** (not seconds).
    :type from_ts: int
-   :param to_ts: End timestamp (Unix seconds).
+   :param to_ts: End timestamp in **milliseconds** (not seconds).
    :type to_ts: int
    :returns: List of OHLCV bars.
    :rtype: list[:class:`~o2_sdk.models.Bar`]
@@ -450,11 +450,12 @@ Market data
    .. code-block:: python
 
       import time
+      now_ms = int(time.time() * 1000)
       bars = await client.get_bars(
           "fFUEL/fUSDC",
           resolution="1h",
-          from_ts=int(time.time()) - 86400,
-          to_ts=int(time.time()),
+          from_ts=now_ms - 86_400_000,  # last 24 hours
+          to_ts=now_ms,
       )
       for bar in bars:
           print(f"{bar.time}: O={bar.open} H={bar.high} L={bar.low} C={bar.close} V={bar.volume}")
@@ -549,7 +550,7 @@ supports automatic reconnection with exponential backoff.
 
       async for update in client.stream_depth("fFUEL/fUSDC"):
           if update.is_snapshot:
-              print(f"Snapshot: {len(update.changes.buys)} bids, {len(update.changes.sells)} asks")
+              print(f"Snapshot: {len(update.changes.bids)} bids, {len(update.changes.asks)} asks")
           else:
               print(f"Update: best_bid={update.changes.best_bid}")
 

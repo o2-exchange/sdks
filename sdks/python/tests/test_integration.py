@@ -215,8 +215,8 @@ class TestMarketData:
 
     async def test_get_depth(self, market_snapshot):
         depth = market_snapshot["depth"]
-        assert isinstance(depth.buys, list)
-        assert isinstance(depth.sells, list)
+        assert isinstance(depth.bids, list)
+        assert isinstance(depth.asks, list)
 
     async def test_get_trades(self, market_snapshot):
         trades = market_snapshot["trades"]

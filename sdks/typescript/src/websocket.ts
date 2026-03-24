@@ -332,11 +332,9 @@ export class O2WebSocket {
    * Subscribe to order book depth updates.
    *
    * @param marketId - The market ID (hex string).
-   * @param precision - Depth aggregation level as a power of 10 (default: `"1"`).
-   *   Valid range: **1--18**. Precision 1–9 gives accurate prices but the backend
-   *   only delivers an initial snapshot (no delta events follow). Precision 10–18
-   *   streams live deltas but with coarse price bucketing (~$10 bins at precision=10
-   *   for wBTC/USDC).
+   * @param precision - Depth aggregation level index (default: `"1"` = finest).
+   *   Valid range: **1--18**. The SDK sends `10^precision` on the wire, matching
+   *   the internal backend convention. All levels support live delta streaming.
    * @returns An async generator yielding {@link DepthUpdate} messages.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */

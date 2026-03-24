@@ -141,11 +141,11 @@ async function conservativePostOnlyBuyPriceStr(client: O2Client, market: Market)
 
   try {
     const depth = await client.getDepth(market, 10);
-    if (depth.sells.length > 0) {
-      const bestAsk = Number(depth.sells[0].price) / 10 ** market.quote.decimals;
+    if (depth.asks.length > 0) {
+      const bestAsk = Number(depth.asks[0].price) / 10 ** market.quote.decimals;
       chosen = Math.max(step, floorToStep(bestAsk - step, step));
-    } else if (depth.buys.length > 0) {
-      const bestBid = Number(depth.buys[0].price) / 10 ** market.quote.decimals;
+    } else if (depth.bids.length > 0) {
+      const bestBid = Number(depth.bids[0].price) / 10 ** market.quote.decimals;
       chosen = Math.max(step, floorToStep(bestBid, step));
     }
   } catch (error) {
@@ -448,10 +448,10 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     const markets = await client.getMarkets();
     const market = markets[0];
     const depth = await client.getDepth(market, 10);
-    expect(depth).toHaveProperty("buys");
-    expect(depth).toHaveProperty("sells");
-    expect(Array.isArray(depth.buys)).toBe(true);
-    expect(Array.isArray(depth.sells)).toBe(true);
+    expect(depth).toHaveProperty("bids");
+    expect(depth).toHaveProperty("asks");
+    expect(Array.isArray(depth.bids)).toBe(true);
+    expect(Array.isArray(depth.asks)).toBe(true);
   });
 
   it("integration: fetches trades", async () => {

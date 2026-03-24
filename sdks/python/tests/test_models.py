@@ -300,7 +300,7 @@ class TestDepthUpdate:
         }
         update = DepthUpdate.from_dict(data)
         assert update.is_snapshot
-        assert len(update.changes.buys) == 1
+        assert len(update.changes.bids) == 1
 
     def test_incremental(self):
         data = {
@@ -313,7 +313,7 @@ class TestDepthUpdate:
         }
         update = DepthUpdate.from_dict(data)
         assert not update.is_snapshot
-        assert len(update.changes.sells) == 1
+        assert len(update.changes.asks) == 1
 
 
 class TestId:
@@ -474,6 +474,36 @@ class TestTrade:
         assert isinstance(trade.trade_id, str)
         assert trade.trade_id == "12345"
         assert trade.side == "Buy"
+        assert isinstance(trade.timestamp, int)
+        assert trade.timestamp == 1734876543
+        assert trade.trader_side is None
+
+    def test_from_dict_with_trader_side(self):
+        data = {
+            "trade_id": "12345",
+            "side": "Sell",
+            "total": "500000000000",
+            "quantity": "5000000000",
+            "price": "100000000",
+            "timestamp": 1734876543,
+            "trader_side": "maker",
+        }
+        trade = Trade.from_dict(data)
+        assert trade.trader_side == "maker"
+        assert trade.side == "Sell"
+
+    def test_from_dict_taker_side(self):
+        data = {
+            "trade_id": "67890",
+            "side": "Buy",
+            "total": "100000000",
+            "quantity": "1000000000",
+            "price": "100000000",
+            "timestamp": 1734876543,
+            "trader_side": "taker",
+        }
+        trade = Trade.from_dict(data)
+        assert trade.trader_side == "taker"
 
 
 class TestWhitelistResponse:

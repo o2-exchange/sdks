@@ -31,7 +31,7 @@ Stream real-time order book updates:
    async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
        if update.is_snapshot:
            # First message is a full snapshot
-           print(f"Snapshot: {len(update.changes.buys)} bids, {len(update.changes.sells)} asks")
+           print(f"Snapshot: {len(update.changes.bids)} bids, {len(update.changes.asks)} asks")
        else:
            # Subsequent messages are incremental updates
            if update.changes.best_bid:

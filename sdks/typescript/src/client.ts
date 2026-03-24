@@ -76,7 +76,7 @@ import type {
   WireOrderType,
 } from "./models.js";
 import { assetId as toAssetId, tradeAccountId } from "./models.js";
-import { O2WebSocket, type ConnectionEvent } from "./websocket.js";
+import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
 
@@ -217,7 +217,6 @@ function validateDepthPrecision(precision: number | string): void {
   }
 }
 
-
 export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
@@ -231,9 +230,7 @@ export class O2Client {
 
   constructor(optionsOrNetwork: O2ClientOptions | Network = {}) {
     const options: O2ClientOptions =
-      typeof optionsOrNetwork === "string"
-        ? { network: optionsOrNetwork }
-        : optionsOrNetwork;
+      typeof optionsOrNetwork === "string" ? { network: optionsOrNetwork } : optionsOrNetwork;
     this.config = options.config ?? getNetworkConfig(options.network ?? Network.TESTNET);
     this.api = new O2Api({ config: this.config });
     this.marketsCacheTtlMs = options.marketsCacheTtlMs ?? DEFAULT_MARKETS_CACHE_TTL_MS;
@@ -767,11 +764,21 @@ export class O2Client {
     if (account) {
       const validAccount = tradeAccountId(account);
       return this.api.getTradesByAccount(
-        marketId, validAccount, "desc", count,
-        cursor?.startTimestamp, cursor?.startTradeId,
+        marketId,
+        validAccount,
+        "desc",
+        count,
+        cursor?.startTimestamp,
+        cursor?.startTradeId,
       );
     }
-    return this.api.getTrades(marketId, "desc", count, cursor?.startTimestamp, cursor?.startTradeId);
+    return this.api.getTrades(
+      marketId,
+      "desc",
+      count,
+      cursor?.startTimestamp,
+      cursor?.startTradeId,
+    );
   }
 
   /**
@@ -779,8 +786,8 @@ export class O2Client {
    *
    * @param market - Market pair string or {@link Market} object.
    * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
-   * @param from - Start time (Unix seconds).
-   * @param to - End time (Unix seconds).
+   * @param from - Start time in **milliseconds** (not seconds).
+   * @param to - End time in **milliseconds** (not seconds).
    */
   async getBars(
     market: string | Market,
@@ -917,18 +924,15 @@ export class O2Client {
    * Stream real-time order book depth updates.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Depth aggregation level as a power of 10 (default: 1).
+   * @param precision - Depth aggregation level index (default: 1 = finest).
    *   Valid range: **1--18**.
    *
-   *   **Precision and streaming behaviour are coupled:**
-   *   - **Precision 1--9** (default `1`): Near-accurate prices (bucket size ≈ 10^precision
-   *     native units, e.g. ~$0.00001 for precision=1 on wBTC). However, the backend only
-   *     delivers an *initial snapshot* — no delta events follow. The stream stalls silently.
-   *     Use a REST {@link getDepth} polling loop as a fallback.
-   *   - **Precision 10--18**: The backend streams live delta events but prices are bucketed
-   *     coarsely (e.g. precision=10 gives ~$10 price bins on wBTC/USDC). Too imprecise for
-   *     accurate market-making. Use only if streaming deltas are required and coarse
-   *     bucketing is acceptable.
+   *   **Precision is a level index, not a raw bucket size.** The SDK converts
+   *   it to a wire value of `10^precision` before sending, matching the internal
+   *   backend convention. Precision 1 = finest streaming level (wire value 10).
+   *   Higher values give coarser bucketing.
+   *
+   *   All precision levels 1--18 support live delta streaming.
    *
    * @returns An async generator yielding {@link DepthUpdate} messages.
    * @throws {Error} If `precision` is outside the valid range 1--18.

@@ -35,18 +35,18 @@ Fetch a snapshot of the order book:
 ```rust,ignore
 let depth = client.get_depth("fFUEL/fUSDC", 10, None).await?;
 
-if let Some(best_bid) = depth.buys.first() {
+if let Some(best_bid) = depth.bids.first() {
     println!("Best bid: {} x {}", best_bid.price, best_bid.quantity);
 }
-if let Some(best_ask) = depth.sells.first() {
+if let Some(best_ask) = depth.asks.first() {
     println!("Best ask: {} x {}", best_ask.price, best_ask.quantity);
 }
 
 // Iterate price levels
-for level in depth.buys.iter().take(5) {
+for level in depth.bids.iter().take(5) {
     println!("  BID {} x {}", level.price, level.quantity);
 }
-for level in depth.sells.iter().take(5) {
+for level in depth.asks.iter().take(5) {
     println!("  ASK {} x {}", level.price, level.quantity);
 }
 ```
@@ -74,8 +74,8 @@ for trade in &trades_resp.trades {
 ```rust,ignore
 use std::time::{SystemTime, UNIX_EPOCH};
 
-let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-let bars = client.get_bars("fFUEL/fUSDC", "1h", now - 86400, now).await?;
+let now_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
+let bars = client.get_bars("fFUEL/fUSDC", "1h", now_ms - 86_400_000, now_ms).await?;
 
 for bar in &bars {
     println!(
@@ -113,7 +113,7 @@ helper methods to convert to/from human-readable values:
 let market = client.get_market("fFUEL/fUSDC").await?;
 let depth = client.get_depth("fFUEL/fUSDC", 10, None).await?;
 
-if let Some(best_ask) = depth.sells.first() {
+if let Some(best_ask) = depth.asks.first() {
     let human_price = market.format_price(best_ask.price);
     println!("Best ask: {}", human_price);
 }

@@ -38,9 +38,9 @@ Fetch a snapshot of the order book:
    print(f"Best ask: {depth.best_ask.price if depth.best_ask else 'empty'}")
 
    # Iterate price levels
-   for level in depth.buys[:5]:
+   for level in depth.bids[:5]:
        print(f"  BID {level.price} x {level.quantity}")
-   for level in depth.sells[:5]:
+   for level in depth.asks[:5]:
        print(f"  ASK {level.price} x {level.quantity}")
 
 The ``precision`` parameter controls price aggregation — lower values
@@ -64,12 +64,12 @@ OHLCV candles
 
    import time
 
-   now = int(time.time())
+   now_ms = int(time.time() * 1000)
    bars = await client.get_bars(
        "fFUEL/fUSDC",
        resolution="1h",
-       from_ts=now - 86400,  # last 24 hours
-       to_ts=now,
+       from_ts=now_ms - 86_400_000,  # last 24 hours
+       to_ts=now_ms,
    )
 
    for bar in bars:

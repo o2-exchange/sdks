@@ -571,12 +571,26 @@ class OrdersResponse:
 
 @dataclass
 class Trade:
+    """A single trade execution.
+
+    Attributes:
+        side: The **maker's** order side (``"buy"`` or ``"sell"``).
+            This is an objective property of the trade — both maker and taker
+            see the same value.  To determine your own direction when you may
+            be either maker or taker, combine ``side`` with ``trader_side``.
+        trader_side: The querying account's role: ``"maker"``, ``"taker"``,
+            or ``"both"`` (self-trade).  Only present on trades returned by
+            account-scoped endpoints (e.g. ``get_trades(account=...)``).
+        timestamp: Trade execution timestamp (microseconds since epoch).
+    """
+
     trade_id: str
     side: str
     total: str
     quantity: str
     price: str
-    timestamp: str
+    timestamp: int
+    trader_side: str | None = None
     maker: Identity | None = None
     taker: Identity | None = None
     market_id: Id | None = None
@@ -591,7 +605,8 @@ class Trade:
             total=str(d.get("total", "0")),
             quantity=str(d.get("quantity", "0")),
             price=str(d.get("price", "0")),
-            timestamp=str(d.get("timestamp", "0")),
+            timestamp=int(d.get("timestamp", 0)),
+            trader_side=d.get("trader_side"),
             maker=maker,
             taker=taker,
             market_id=_parse_id(d.get("market_id")),
@@ -698,26 +713,33 @@ class DepthLevel:
 
 @dataclass
 class DepthSnapshot:
-    buys: list[DepthLevel]
-    sells: list[DepthLevel]
+    """Order book depth snapshot.
+
+    Attributes:
+        bids: Buy (bid) side levels, sorted by price descending.
+        asks: Sell (ask) side levels, sorted by price ascending.
+    """
+
+    bids: list[DepthLevel]
+    asks: list[DepthLevel]
     market_id: Id | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> DepthSnapshot:
         view = d.get("orders", d.get("view", d))
         return cls(
-            buys=[DepthLevel.from_dict(x) for x in view.get("buys", [])],
-            sells=[DepthLevel.from_dict(x) for x in view.get("sells", [])],
+            bids=[DepthLevel.from_dict(x) for x in view.get("buys", [])],
+            asks=[DepthLevel.from_dict(x) for x in view.get("sells", [])],
             market_id=_parse_id(d.get("market_id")),
         )
 
     @property
     def best_bid(self) -> DepthLevel | None:
-        return self.buys[0] if self.buys else None
+        return self.bids[0] if self.bids else None
 
     @property
     def best_ask(self) -> DepthLevel | None:
-        return self.sells[0] if self.sells else None
+        return self.asks[0] if self.asks else None
 
 
 @dataclass
@@ -737,8 +759,8 @@ class DepthUpdate:
         else:
             changes_data = d.get("changes", {})
             changes = DepthSnapshot(
-                buys=[DepthLevel.from_dict(x) for x in changes_data.get("buys", [])],
-                sells=[DepthLevel.from_dict(x) for x in changes_data.get("sells", [])],
+                bids=[DepthLevel.from_dict(x) for x in changes_data.get("buys", [])],
+                asks=[DepthLevel.from_dict(x) for x in changes_data.get("sells", [])],
             )
         return cls(
             changes=changes,

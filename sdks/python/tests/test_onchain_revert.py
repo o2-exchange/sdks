@@ -8,9 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from o2_sdk.onchain_revert import augment_revert_reason
 from o2_sdk.errors import OnChainRevert, raise_for_error
-
+from o2_sdk.onchain_revert import augment_revert_reason
 
 # ---------------------------------------------------------------------------
 # augment_revert_reason — direct unit tests (ported from Rust)
@@ -120,14 +119,14 @@ def test_ordinal_zero_ignored():
     assert decoded == "reason"
 
 
-def test_existing_decoded_not_duplicated():
-    """If the reason already contains the decoded string, don't append it."""
+def test_existing_decoded_returns_clean():
+    """When reason already contains the decoded tag, still return clean decoded."""
     tag = "contract_schema::order_book::OrderCreationError::InvalidHeapPrices (ordinal=6, raw=0xffffffffffff0006)"
     reason = f"tx reverted [{tag}]"
-    message = f"CreateOrder ... Revert(18446744073709486086)"
+    message = "CreateOrder ... Revert(18446744073709486086)"
     decoded = augment_revert_reason(message, reason, None)
-    # Should NOT double-append
-    assert decoded == reason
+    # augment_revert_reason now returns just the decoded name (not the original reason)
+    assert decoded == tag
 
 
 # ---------------------------------------------------------------------------
@@ -167,7 +166,7 @@ def test_raise_for_error_no_revert_code_keeps_original_reason():
 
     err = exc_info.value
     assert err.reason == "out of gas"
-    assert "On-chain revert: out of gas" == str(err)
+    assert str(err) == "On-chain revert: out of gas"
 
 
 def test_on_chain_revert_str_without_reason():

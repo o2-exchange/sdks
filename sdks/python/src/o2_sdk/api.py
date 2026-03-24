@@ -187,8 +187,8 @@ class O2Api:
         # expected number of levels.
         if limit is not None:
             snapshot = DepthSnapshot(
-                buys=snapshot.buys[:limit],
-                sells=snapshot.sells[:limit],
+                bids=snapshot.bids[:limit],
+                asks=snapshot.asks[:limit],
                 market_id=snapshot.market_id,
             )
         return snapshot

@@ -32,12 +32,12 @@ Fetch a snapshot of the current order book:
 const depth = await client.getDepth("fFUEL/fUSDC", 10);
 
 console.log("Top 3 bids:");
-for (const level of depth.buys.slice(0, 3)) {
+for (const level of depth.bids.slice(0, 3)) {
   console.log(`  ${level.price} — ${level.quantity}`);  // bigint values
 }
 
 console.log("Top 3 asks:");
-for (const level of depth.sells.slice(0, 3)) {
+for (const level of depth.asks.slice(0, 3)) {
   console.log(`  ${level.price} — ${level.quantity}`);
 }
 ```
@@ -51,7 +51,7 @@ import { formatPrice, formatQuantity } from "@o2exchange/sdk";
 const market = await client.getMarket("fFUEL/fUSDC");
 const depth = await client.getDepth(market, 10);
 
-for (const level of depth.buys) {
+for (const level of depth.bids) {
   console.log(`${formatPrice(market, level.price)} — ${formatQuantity(market, level.quantity)}`);
 }
 ```
@@ -71,8 +71,8 @@ for (const trade of trades) {
 Fetch candlestick data for charting:
 
 ```ts
-const now = Math.floor(Date.now() / 1000);
-const oneDayAgo = now - 86400;
+const now = Date.now(); // milliseconds
+const oneDayAgo = now - 86_400_000; // 24h in ms
 
 const bars = await client.getBars("fFUEL/fUSDC", "1h", oneDayAgo, now);
 for (const bar of bars) {

@@ -214,7 +214,7 @@ class OnChainRevert(O2Error):
     are still accessible via the ``.receipts`` attribute.
     """
 
-    def __str__(self) -> str:  # noqa: D105
+    def __str__(self) -> str:
         # Prefer the decoded reason (set by raise_for_error); fall back to
         # the raw message only when no reason is available.
         if self.reason:

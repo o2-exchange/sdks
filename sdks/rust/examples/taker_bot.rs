@@ -48,8 +48,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sells = update
             .view
             .as_ref()
-            .map(|v| &v.sells)
-            .or_else(|| update.changes.as_ref().map(|c| &c.sells));
+            .map(|v| &v.asks)
+            .or_else(|| update.changes.as_ref().map(|c| &c.asks));
 
         if let Some(sell_levels) = sells {
             if let Some(best_ask) = sell_levels.first() {

@@ -15,8 +15,8 @@ Stream real-time order book updates:
 ```ts
 const stream = await client.streamDepth("fFUEL/fUSDC", 10);
 for await (const update of stream) {
-  const asks = update.view?.sells ?? update.changes?.sells ?? [];
-  const bids = update.view?.buys ?? update.changes?.buys ?? [];
+  const asks = update.view?.asks ?? update.changes?.asks ?? [];
+  const bids = update.view?.bids ?? update.changes?.bids ?? [];
 
   // price and quantity are bigint
   if (bids.length > 0) console.log(`Best bid: ${bids[0].price}`);

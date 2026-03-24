@@ -20,14 +20,12 @@ import {
   type AggregatedAsset,
   type AggregatedOrderbook,
   type AssetId,
-  assetId,
   type BalanceResponse,
   type Bar,
   type CreateAccountResponse,
-  contractId,
   type DepthSnapshot,
-  hexIdTrusted,
   type FaucetResponse,
+  hexIdTrusted,
   type Identity,
   type MarketId,
   type MarketSummary,
@@ -247,8 +245,8 @@ export class O2Api {
       sells = sells.slice(0, limit);
     }
     return {
-      buys: buys.map(parseDepthLevel),
-      sells: sells.map(parseDepthLevel),
+      bids: buys.map(parseDepthLevel),
+      asks: sells.map(parseDepthLevel),
     };
   }
 
@@ -311,9 +309,24 @@ export class O2Api {
 
   /** Valid bar resolutions accepted by the API. */
   static readonly VALID_RESOLUTIONS = new Set([
-    "1s", "1m", "2m", "3m", "5m", "15m", "30m",
-    "1h", "2h", "4h", "6h", "8h", "12h",
-    "1d", "3d", "1w", "1M", "3M",
+    "1s",
+    "1m",
+    "2m",
+    "3m",
+    "5m",
+    "15m",
+    "30m",
+    "1h",
+    "2h",
+    "4h",
+    "6h",
+    "8h",
+    "12h",
+    "1d",
+    "3d",
+    "1w",
+    "1M",
+    "3M",
   ]);
 
   /**

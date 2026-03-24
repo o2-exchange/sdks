@@ -421,32 +421,24 @@ describe("O2Client depth precision validation", () => {
   it("getDepth rejects precision 0", async () => {
     const client = new O2Client();
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    await expect(client.getDepth("fFUEL/fUSDC", 0)).rejects.toThrow(
-      "Invalid depth precision 0",
-    );
+    await expect(client.getDepth("fFUEL/fUSDC", 0)).rejects.toThrow("Invalid depth precision 0");
   });
 
   it("getDepth rejects precision 19", async () => {
     const client = new O2Client();
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    await expect(client.getDepth("fFUEL/fUSDC", 19)).rejects.toThrow(
-      "Invalid depth precision 19",
-    );
+    await expect(client.getDepth("fFUEL/fUSDC", 19)).rejects.toThrow("Invalid depth precision 19");
   });
 
   it("getDepth rejects negative precision", async () => {
     const client = new O2Client();
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    await expect(client.getDepth("fFUEL/fUSDC", -1)).rejects.toThrow(
-      "Invalid depth precision -1",
-    );
+    await expect(client.getDepth("fFUEL/fUSDC", -1)).rejects.toThrow("Invalid depth precision -1");
   });
 
   it("streamDepth rejects precision 0", async () => {
     const client = new O2Client();
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    await expect(client.streamDepth("fFUEL/fUSDC", 0)).rejects.toThrow(
-      "Invalid depth precision 0",
-    );
+    await expect(client.streamDepth("fFUEL/fUSDC", 0)).rejects.toThrow("Invalid depth precision 0");
   });
 });

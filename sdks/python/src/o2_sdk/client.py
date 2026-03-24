@@ -64,7 +64,7 @@ from .models import (
     TradeUpdate,
     WithdrawResponse,
 )
-from .websocket import ConnectionEvent, ConnectionState, O2WebSocket
+from .websocket import ConnectionEvent, O2WebSocket
 
 logger = logging.getLogger("o2_sdk.client")
 
@@ -115,10 +115,10 @@ def _validate_depth_precision(precision: int | str) -> None:
     """
     try:
         p = int(precision)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as err:
         raise InvalidRequest(
             message=f"Invalid depth precision {precision!r}. Must be an integer in range 1-18."
-        )
+        ) from err
     if p < 1 or p > 18:
         raise InvalidRequest(
             message=(
@@ -853,7 +853,14 @@ class O2Client:
         from_ts: int,
         to_ts: int,
     ) -> list[Bar]:
-        """Get OHLCV bars for a market."""
+        """Get OHLCV bars for a market.
+
+        Args:
+            market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
+            resolution: Bar resolution (e.g. ``"1m"``, ``"1h"``, ``"1d"``).
+            from_ts: Start timestamp in **milliseconds** (not seconds).
+            to_ts: End timestamp in **milliseconds** (not seconds).
+        """
         market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_bars(market_obj.market_id, from_ts, to_ts, resolution)
 
@@ -1001,7 +1008,7 @@ class O2Client:
                     streaming level (wire value 10, ~$10^-8 buckets on
                     wBTC/USDC). Higher values give coarser bucketing.
 
-                    All precision levels 1–18 support live delta streaming.
+                    All precision levels 1-18 support live delta streaming.
                     Do NOT pass raw values like 10 expecting "bucket by 10" —
                     use :meth:`get_depth` for REST-based depth queries which
                     take raw bucket-size values.
