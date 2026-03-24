@@ -785,23 +785,26 @@ class O2Client:
     async def get_depth(
         self,
         market: str | Market,
-        precision: int = 10,
+        precision: int = 1,
         limit: int | None = None,
     ) -> DepthSnapshot:
         """Get order book depth for a market.
 
         Args:
             market: Market pair string (e.g. ``"fFUEL/fUSDC"``) or :class:`Market` object.
-            precision: Price aggregation precision as a power of 10.
-                Valid range: **1--18**. Default ``10`` (recommended).
-                Lower values give finer granularity but return more levels.
-            limit: Maximum number of price levels per side (buys/sells).
+            precision: Price grouping level, from ``1`` (most precise) to ``18``
+                (most grouped). Default ``1``.  At level 1, prices are at or
+                near their exact values.  Higher levels round prices into larger
+                buckets — useful for a visual depth chart but too coarse for
+                trading.  Same scale as :meth:`stream_depth`.
+            limit: Maximum number of price levels per side (bids/asks).
                 ``None`` (default) returns the full order book.
 
         Raises:
             InvalidRequest: If *precision* is outside the valid range 1--18.
         """
         _validate_depth_precision(precision)
+        precision = 10 ** int(precision)
         market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_depth(market_obj.market_id, precision, limit=limit)
 
@@ -997,21 +1000,10 @@ class O2Client:
 
         Args:
             market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
-            precision: Depth aggregation level (power of 10). Valid range:
-                **1--18**. Default ``1``.
-
-                .. note::
-                    **precision is a level index, not a raw bucket size.**
-                    The SDK converts it to a wire value of ``10^precision``
-                    before sending, matching the internal backend convention
-                    (``Precision::new(N).pow()``). Precision 1 = finest
-                    streaming level (wire value 10, ~$10^-8 buckets on
-                    wBTC/USDC). Higher values give coarser bucketing.
-
-                    All precision levels 1-18 support live delta streaming.
-                    Do NOT pass raw values like 10 expecting "bucket by 10" —
-                    use :meth:`get_depth` for REST-based depth queries which
-                    take raw bucket-size values.
+            precision: Price grouping level, from ``1`` (most precise) to ``18``
+                (most grouped). Default ``1``.  At level 1, prices are at or
+                near their exact values.  Higher levels round prices into larger
+                buckets.  Same scale as :meth:`get_depth`.
 
         Raises:
             InvalidRequest: If *precision* is outside the valid range 1--18.

@@ -967,8 +967,11 @@ impl O2Client {
     ///
     /// # Arguments
     /// * `market_name` - Market pair string (e.g. `"ETH/USDC"`) or market ID.
-    /// * `precision` - Price aggregation precision as a power of 10.
-    ///   Valid range: **1–18** (i.e. 10^1 through 10^18). Precision 0 is not supported.
+    /// * `precision` - Price grouping level, from `1` (most precise) to `18`
+    ///   (most grouped). At level 1, prices are at or near their exact values.
+    ///   Higher levels round prices into larger buckets — useful for a visual
+    ///   depth chart but too coarse for trading. Same scale as
+    ///   [`stream_depth`][O2Client::stream_depth].
     /// * `limit` - Maximum number of price levels per side.
     ///
     /// # Errors
@@ -983,14 +986,15 @@ impl O2Client {
         M: IntoMarketSymbol,
     {
         validate_depth_precision(precision)?;
+        let wire_precision = 10u64.pow(precision as u32);
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_depth market={} precision={}",
-            market_name, precision
+            market_name, wire_precision
         );
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_depth(market.market_id.as_str(), precision, limit)
+            .get_depth(market.market_id.as_str(), wire_precision, limit)
             .await
     }
 
@@ -1285,15 +1289,10 @@ impl O2Client {
     ///
     /// # Arguments
     /// * `market_id` - The market ID (hex string).
-    /// * `precision` - Depth aggregation level (string). Valid range: **1–18**.
-    ///   Default `"1"` (finest level).
-    ///
-    ///   **Precision is a level index, not a raw bucket size.** The SDK converts
-    ///   it to a wire value of `10^precision` before sending, matching the internal
-    ///   backend convention (`Precision::new(N).pow()`). Precision 1 = finest
-    ///   streaming level. Higher values give coarser bucketing.
-    ///
-    ///   All precision levels 1–18 support live delta streaming.
+    /// * `precision` - Price grouping level, from `"1"` (most precise) to `"18"`
+    ///   (most grouped). Default `"1"`. At level 1, prices are at or near their
+    ///   exact values. Higher levels round prices into larger buckets. Same
+    ///   scale as [`get_depth`][O2Client::get_depth].
     ///
     /// # Errors
     /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
@@ -1611,8 +1610,7 @@ mod tests {
         assert!(super::validate_depth_precision(18).is_ok());
     }
 
-    // stream_depth shares the same 1-18 validator as get_depth; precision 1-9 is valid
-    // (accurate prices, WS stalls after snapshot — REST fallback recommended)
+    // stream_depth shares the same 1-18 validator as get_depth
     #[test]
     fn validate_depth_precision_accepts_1_for_stream() {
         assert!(super::validate_depth_precision(1).is_ok());

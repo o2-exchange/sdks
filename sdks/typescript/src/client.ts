@@ -731,17 +731,21 @@ export class O2Client {
    * Fetch the order book depth snapshot.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Price aggregation precision as a power of 10 (default: 10).
-   *   Valid range: **1--18** (i.e. 10^1 through 10^18). Precision 0 is not supported.
-   * @param limit - Maximum number of price levels per side (buys/sells).
+   * @param precision - Price grouping level, from `1` (most precise) to `18`
+   *   (most grouped). Default `1`. At level 1, prices are at or near their
+   *   exact values. Higher levels round prices into larger buckets — useful
+   *   for a visual depth chart but too coarse for trading. Same scale as
+   *   {@link streamDepth}.
+   * @param limit - Maximum number of price levels per side (bids/asks).
    *   `undefined` (default) returns the full order book.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
-  async getDepth(market: string | Market, precision = 10, limit?: number): Promise<DepthSnapshot> {
+  async getDepth(market: string | Market, precision = 1, limit?: number): Promise<DepthSnapshot> {
     validateDepthPrecision(precision);
+    const wirePrecision = 10 ** precision;
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return this.api.getDepth(marketId, precision, limit);
+    return this.api.getDepth(marketId, wirePrecision, limit);
   }
 
   /**
@@ -924,16 +928,10 @@ export class O2Client {
    * Stream real-time order book depth updates.
    *
    * @param market - Market pair string or {@link Market} object.
-   * @param precision - Depth aggregation level index (default: 1 = finest).
-   *   Valid range: **1--18**.
-   *
-   *   **Precision is a level index, not a raw bucket size.** The SDK converts
-   *   it to a wire value of `10^precision` before sending, matching the internal
-   *   backend convention. Precision 1 = finest streaming level (wire value 10).
-   *   Higher values give coarser bucketing.
-   *
-   *   All precision levels 1--18 support live delta streaming.
-   *
+   * @param precision - Price grouping level, from `1` (most precise) to `18`
+   *   (most grouped). Default `1`. At level 1, prices are at or near their
+   *   exact values. Higher levels round prices into larger buckets. Same
+   *   scale as {@link getDepth}.
    * @returns An async generator yielding {@link DepthUpdate} messages.
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
