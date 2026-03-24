@@ -75,7 +75,6 @@ export {
   TradeNotFound,
   WhitelistNotConfigured,
 } from "./errors.js";
-
 // ── Models ────────────────────────────────────────────────────────
 export type {
   AccountInfo,
@@ -149,6 +148,8 @@ export {
   tradeAccountId,
   txId,
 } from "./models.js";
+// ── On-chain revert decoding ──────────────────────────────────────
+export { augmentRevertReason } from "./onchain-revert.js";
 
 // ── WebSocket ─────────────────────────────────────────────────────
 export {

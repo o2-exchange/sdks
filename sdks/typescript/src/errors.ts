@@ -14,6 +14,8 @@
  * @module
  */
 
+import { augmentRevertReason } from "./onchain-revert.js";
+
 /**
  * Base error class for all O2 Exchange errors.
  *
@@ -299,13 +301,19 @@ export class SessionExpired extends O2Error {
 /**
  * Error raised when an on-chain transaction reverts.
  *
- * Has no `code` field. Check `reason` for the revert name (e.g.,
- * `"NotEnoughBalance"`, `"TraderNotWhiteListed"`, `"PricePrecision"`).
+ * Has no `code` field. Check `reason` for the decoded revert name (e.g.,
+ * `"OrderCreationError::InvalidHeapPrices"`, `"WithdrawError::NotEnoughBalance"`).
+ * Full transaction receipts are available via the `receipts` property.
  */
 export class OnChainRevertError extends O2Error {
   constructor(message: string, reason?: string, receipts?: unknown[]) {
     super(message, undefined, reason, receipts);
     this.name = "OnChainRevertError";
+  }
+
+  override toString(): string {
+    if (this.reason) return `On-chain revert: ${this.reason}`;
+    return `On-chain revert: ${this.message}`;
   }
 }
 
@@ -360,8 +368,10 @@ export function parseApiError(body: Record<string, unknown>): O2Error {
     return new O2Error(message, code);
   }
 
-  // On-chain revert: no code, has message (and possibly reason/receipts)
-  return new OnChainRevertError(message, reason, receipts);
+  // On-chain revert: no code, has message (and possibly reason/receipts).
+  // Decode Fuel VM revert codes into human-readable error names.
+  const decoded = augmentRevertReason(message, reason, receipts);
+  return new OnChainRevertError(message, decoded || undefined, receipts);
 }
 
 /**

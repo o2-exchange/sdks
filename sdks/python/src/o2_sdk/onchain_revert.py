@@ -20,6 +20,9 @@ from typing import Any
 
 # ---------------------------------------------------------------------------
 # ABI error enum mapping (1-based ordinals)
+#
+# Source of truth: abi/mainnet/*.json (metadataTypes → enum components).
+# See CLAUDE.md "Maintaining On-Chain Revert Decoding" for update procedure.
 # ---------------------------------------------------------------------------
 
 ABI_ERROR_ENUMS: list[tuple[str, list[str]]] = [
@@ -256,10 +259,14 @@ def augment_revert_reason(
         if decoded is not None:
             break
 
-    if decoded is None:
-        return reason
+    if decoded is not None:
+        # Return just the decoded name — the raw reason/receipts dump can be
+        # several KB and makes log lines unreadable. Full receipts are still
+        # accessible via OnChainRevert.receipts for callers that need them.
+        return decoded
 
-    # Return just the decoded name — the raw reason/receipts dump can be
-    # several KB and makes log lines unreadable. Full receipts are still
-    # accessible via OnChainRevert.receipts for callers that need them.
-    return decoded
+    # No decodable revert code found. Cap the raw reason to avoid dumping
+    # multi-KB receipt blobs into log lines and error messages.
+    if len(reason) > 200:
+        return f"{reason[:200]}... (truncated, full receipts on .receipts)"
+    return reason

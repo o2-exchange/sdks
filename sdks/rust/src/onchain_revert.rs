@@ -1,5 +1,8 @@
 use serde_json::Value;
 
+// ABI error enum mapping (1-based ordinals).
+// Source of truth: abi/mainnet/*.json (metadataTypes → enum components).
+// See CLAUDE.md "Maintaining On-Chain Revert Decoding" for update procedure.
 const ABI_ERROR_ENUMS: &[(&str, &[&str])] = &[
     (
         "contract_schema::blacklist::BlacklistError",
@@ -227,17 +230,22 @@ pub(crate) fn augment_revert_reason(
         }
     }
 
-    match (reason.is_empty(), decoded) {
-        (_, None) => reason.to_string(),
-        (true, Some(mapped)) => mapped,
-        (false, Some(mapped)) => {
-            if reason.contains(&mapped) {
-                reason.to_string()
-            } else {
-                format!("{reason} [{mapped}]")
-            }
-        }
+    if let Some(mapped) = decoded {
+        // Return just the decoded name — the raw reason/receipts dump can be
+        // several KB and makes log lines unreadable. Full receipts are still
+        // accessible via OnChainRevert.receipts for callers that need them.
+        return mapped;
     }
+
+    // No decodable revert code found. Cap the raw reason to avoid dumping
+    // multi-KB receipt blobs into log lines and error messages.
+    if reason.len() > 200 {
+        return format!(
+            "{}... (truncated, full receipts on .receipts)",
+            &reason[..200]
+        );
+    }
+    reason.to_string()
 }
 
 #[cfg(test)]
@@ -266,5 +274,25 @@ mod tests {
         let reason = "some reason";
         let decoded = augment_revert_reason(message, reason, None);
         assert_eq!(decoded, reason);
+    }
+
+    #[test]
+    fn truncates_long_reason_without_revert_code() {
+        let message = "error";
+        let reason = "x".repeat(500);
+        let decoded = augment_revert_reason(message, &reason, None);
+        assert!(decoded.len() < 300);
+        assert!(decoded.contains("truncated"));
+    }
+
+    #[test]
+    fn returns_clean_decoded_not_appended() {
+        let message =
+            "Failed payload ... CreateOrder { side: Buy } ... Revert(18446744073709486086)";
+        let reason = "transaction reverted";
+        let decoded = augment_revert_reason(message, reason, None);
+        // Should NOT contain the original reason prefix
+        assert!(!decoded.starts_with("transaction reverted"));
+        assert!(decoded.contains("OrderCreationError::InvalidHeapPrices"));
     }
 }

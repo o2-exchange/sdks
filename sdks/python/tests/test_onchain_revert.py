@@ -119,6 +119,14 @@ def test_ordinal_zero_ignored():
     assert decoded == "reason"
 
 
+def test_truncates_long_reason_without_revert_code():
+    """Long raw reasons are truncated to avoid multi-KB log lines."""
+    reason = "x" * 500
+    decoded = augment_revert_reason("error", reason, None)
+    assert len(decoded) < 300
+    assert "truncated" in decoded
+
+
 def test_existing_decoded_returns_clean():
     """When reason already contains the decoded tag, still return clean decoded."""
     tag = "contract_schema::order_book::OrderCreationError::InvalidHeapPrices (ordinal=6, raw=0xffffffffffff0006)"

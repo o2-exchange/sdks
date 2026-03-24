@@ -75,6 +75,61 @@ cd sdks/rust && cargo test --features integration --test integration_tests -- --
 - **Two funded accounts**: Maker + taker needed for cross-account tests to avoid self-trade cancellation
 - **Faucet cooldown**: 60-second cooldown; use retry loops with 65s sleep
 
+## Maintaining On-Chain Revert Decoding
+
+All three SDKs decode Fuel VM revert codes into human-readable error names.
+Fuel's `require()` reverts with `0xffffffffffff0000 | ordinal_1_based`, and
+the SDKs map the ordinal to a named enum variant (e.g.,
+`OrderCreationError::InvalidHeapPrices`).
+
+### Source of truth
+
+The error enums are defined in the contract ABIs bundled in this repo under
+`abi/mainnet/` (and `abi/testnet/`, which is identical). Each ABI JSON has a
+`metadataTypes` array — entries with `"type": "enum some::path::SomeError"`
+contain a `components` array listing the variant names in ordinal order.
+
+| ABI file | Error enums |
+|----------|-------------|
+| `order-book-abi.json` | OrderCreationError, OrderCancelError, FeeError, OrderBookInitializationError |
+| `trade-account-abi.json` | NonceError, SignerError, CallerError, SessionError, WithdrawError |
+| `order-book-blacklist-abi.json` | BlacklistError |
+| `order-book-whitelist-abi.json` | WhitelistError |
+| `trade-account-registry-abi.json` | TradeAccountRegistryError |
+| `order-book-registry-abi.json` | OrderBookRegistryError |
+| `order-book-proxy-abi.json` | SetProxyOwnerError |
+
+Standard library enums (PauseError, AccessError, InitializationError,
+SignatureError) appear in multiple ABIs and rarely change.
+
+### Files to keep in sync
+
+All three must have identical enum lists:
+
+- `sdks/python/src/o2_sdk/onchain_revert.py` → `ABI_ERROR_ENUMS`
+- `sdks/typescript/src/onchain-revert.ts` → `ABI_ERROR_ENUMS`
+- `sdks/rust/src/onchain_revert.rs` → `ABI_ERROR_ENUMS`
+
+### How ordinals work
+
+Variants are **1-based** in declaration order. New variants appended at the
+end get the next ordinal. Reordering or removing existing variants changes
+all subsequent ordinals — this is a breaking change on the contract side.
+
+### How to update after a contract upgrade
+
+1. Get the new ABI JSON (from the contract build or the backend team)
+2. Copy it to `abi/mainnet/` and `abi/testnet/`
+3. Find the changed enum in `metadataTypes` — the `components` array has the variant names in order
+4. Append new variants to the SDK's `ABI_ERROR_ENUMS` list in all three files
+5. Run tests: `just test` or per-SDK test commands
+
+### Fallback behavior
+
+- **Unknown ordinal** (new variant not yet in SDK): `"unknown ABI error ordinal=N (raw=0x...)"`
+- **No `Revert(DIGITS)` pattern found**: Raw reason truncated to 200 chars
+- **Full receipts**: Always accessible via `.receipts` property on the error object
+
 ## Current Status (as of 2026-02-11)
 
 ### All tests passing across all three SDKs
