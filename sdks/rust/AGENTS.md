@@ -70,7 +70,7 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `get_bars(market, res, from, to)` | `impl IntoMarketSymbol, &str, u64, u64` | `Result<Vec<Bar>>` | OHLCV data |
 | `get_ticker(market)` | `impl IntoMarketSymbol` | `Result<MarketTicker>` | Ticker data |
 | `get_balances(trade_account_id)` | `&TradeAccountId` | `Result<HashMap<String, BalanceResponse>>` | All balances |
-| `get_orders(account, market, is_open, count)` | `&TradeAccountId, impl IntoMarketSymbol, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
+| `get_orders(market, account, is_open, count)` | `impl IntoMarketSymbol, &TradeAccountId, Option<bool>, u32` | `Result<OrdersResponse>` | Order history |
 | `get_order(market, order_id)` | `impl IntoMarketSymbol, &str` | `Result<Order>` | Single order by ID |
 | `get_nonce(trade_account_id)` | `&str` | `Result<u64>` | Current nonce |
 | `refresh_nonce(session)` | `&mut Session` | `Result<u64>` | Re-sync nonce from API |

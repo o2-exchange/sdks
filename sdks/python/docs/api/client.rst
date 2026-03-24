@@ -397,14 +397,14 @@ Market data
    :rtype: :class:`~o2_sdk.models.Market`
    :raises O2Error: If the market is not found.
 
-.. method:: O2Client.get_depth(market, precision=10)
+.. method:: O2Client.get_depth(market, precision=1)
    :async:
 
    Get the current order book depth snapshot for a market.
 
    :param market: Market pair string, market ID, or Market object.
    :type market: str | :class:`~o2_sdk.models.Market`
-   :param precision: Price aggregation precision (default 10).
+   :param precision: Price aggregation precision (default 1, most precise).
    :type precision: int
    :returns: The depth snapshot with ``buys``, ``sells``, ``best_bid``,
        and ``best_ask``.
@@ -412,7 +412,7 @@ Market data
 
    .. code-block:: python
 
-      depth = await client.get_depth("fFUEL/fUSDC", precision=10)
+      depth = await client.get_depth("fFUEL/fUSDC", precision=1)
       if depth.best_bid:
           print(f"Best bid: {depth.best_bid.price}")
       if depth.best_ask:
@@ -494,16 +494,16 @@ Account data
       for symbol, bal in balances.items():
           print(f"{symbol}: available={bal.trading_account_balance}")
 
-.. method:: O2Client.get_orders(account, market, is_open=None, count=20)
+.. method:: O2Client.get_orders(market, account, is_open=None, count=20)
    :async:
 
    Get orders for an account on a market.
 
+   :param market: Market pair string.
+   :type market: str
    :param account: An :class:`~o2_sdk.models.AccountInfo` object or a
        ``trade_account_id`` string.
    :type account: :class:`~o2_sdk.models.AccountInfo` | str
-   :param market: Market pair string.
-   :type market: str
    :param is_open: Filter by open/closed status. ``None`` returns all.
    :type is_open: bool | None
    :param count: Maximum number of orders to return (default 20).
@@ -531,7 +531,7 @@ All streaming methods return async iterators that yield typed update objects.
 The underlying WebSocket connection is created lazily on first use and
 supports automatic reconnection with exponential backoff.
 
-.. method:: O2Client.stream_depth(market, precision=10)
+.. method:: O2Client.stream_depth(market, precision=1)
    :async:
 
    Stream real-time order book depth updates.
@@ -541,7 +541,7 @@ supports automatic reconnection with exponential backoff.
 
    :param market: Market pair string.
    :type market: str
-   :param precision: Price aggregation precision (default 10).
+   :param precision: Price aggregation precision (default 1, most precise).
    :type precision: int
    :returns: An async iterator of depth updates.
    :rtype: AsyncIterator[:class:`~o2_sdk.models.DepthUpdate`]

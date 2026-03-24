@@ -56,15 +56,15 @@ Each subscription method returns an :class:`~collections.abc.AsyncIterator`
 that yields typed update objects. The first message may be a full snapshot
 (for depth subscriptions), followed by incremental updates.
 
-.. method:: O2WebSocket.stream_depth(market_id, precision="10")
+.. method:: O2WebSocket.stream_depth(market_id, wire_precision="10")
    :async:
 
    Subscribe to order book depth updates.
 
    :param market_id: The market ID (hex string).
    :type market_id: str
-   :param precision: Price aggregation precision (default ``"10"``).
-   :type precision: str
+   :param wire_precision: Wire-format precision value (default ``"10"``, corresponding to user-facing precision level 1).
+   :type wire_precision: str
    :returns: Async iterator of depth updates.
    :rtype: AsyncIterator[:class:`~o2_sdk.models.DepthUpdate`]
 

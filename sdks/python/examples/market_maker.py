@@ -88,7 +88,7 @@ async def main():
                 # 1. Get reference price (use depth or fallback)
                 ref_price = REFERENCE_PRICE
                 try:
-                    depth = await client.get_depth(market.pair, precision=10)
+                    depth = await client.get_depth(market.pair, precision=1)
                     if depth.best_bid and depth.best_ask:
                         bid = market.format_price(int(depth.best_bid.price))
                         ask = market.format_price(int(depth.best_ask.price))

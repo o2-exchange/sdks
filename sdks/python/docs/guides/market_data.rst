@@ -32,7 +32,7 @@ Fetch a snapshot of the order book:
 
 .. code-block:: python
 
-   depth = await client.get_depth("fFUEL/fUSDC", precision=10)
+   depth = await client.get_depth("fFUEL/fUSDC", precision=1)
 
    print(f"Best bid: {depth.best_bid.price if depth.best_bid else 'empty'}")
    print(f"Best ask: {depth.best_ask.price if depth.best_ask else 'empty'}")
