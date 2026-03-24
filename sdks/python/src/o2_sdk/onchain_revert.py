@@ -131,7 +131,10 @@ ABI_ERROR_ENUMS: list[tuple[str, list[str]]] = [
 ]
 
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
-_TX_REVERTED_RE = re.compile(r"transaction reverted:\s*(\w+)")
+# Matches Rust Debug format: Revert { id: ..., ra: 18446744073709486086, ... }
+_REVERT_RA_RE = re.compile(r"Revert\s*\{[^}]*\bra:\s*(\d+)")
+# Matches Panic receipts: PanicInstruction { reason: NotEnoughBalance, ... }
+_PANIC_REASON_RE = re.compile(r"PanicInstruction\s*\{[^}]*\breason:\s*(\w+)")
 
 _FUEL_MASK = 0xFFFF_FFFF_FFFF_0000
 _FUEL_TAG = 0xFFFF_FFFF_FFFF_0000
@@ -177,8 +180,25 @@ def _lookup_variant(enum_name: str, ordinal_1_based: int) -> str | None:
 
 
 def _extract_revert_codes(text: str) -> list[int]:
-    """Return all ``Revert(DIGITS)`` values found in *text*."""
-    return [int(m.group(1)) for m in _REVERT_RE.finditer(text)]
+    """Return all revert code values found in *text*.
+
+    Matches both ``Revert(DIGITS)`` (from structured receipts) and
+    ``Revert { ... ra: DIGITS ... }`` (Rust Debug format embedded in
+    reason strings when the backend doesn't send structured receipts).
+    """
+    codes = [int(m.group(1)) for m in _REVERT_RE.finditer(text)]
+    codes.extend(int(m.group(1)) for m in _REVERT_RA_RE.finditer(text))
+    return codes
+
+
+def _extract_panic_reason(text: str) -> str | None:
+    """Extract a Fuel VM panic reason from embedded receipt text.
+
+    Matches ``PanicInstruction { reason: NotEnoughBalance, ... }`` from
+    Rust Debug formatted receipts embedded in the reason string.
+    """
+    m = _PANIC_REASON_RE.search(text)
+    return m.group(1) if m else None
 
 
 def _decode_revert_code(raw: int, context: str) -> str | None:
@@ -263,12 +283,11 @@ def augment_revert_reason(
         # accessible via OnChainRevert.receipts for callers that need them.
         return decoded
 
-    # The backend sometimes pre-decodes the error name into the reason
-    # string as "transaction reverted: ErrorName".  Extract it before
-    # truncating so callers always see a human-readable name.
-    m = _TX_REVERTED_RE.search(context)
-    if m:
-        return m.group(1)
+    # Check for Fuel VM Panic receipts embedded in the reason string
+    # (e.g. PanicInstruction { reason: NotEnoughBalance }).
+    panic = _extract_panic_reason(context)
+    if panic:
+        return panic
 
     # No decodable revert code found. Cap the raw reason to avoid dumping
     # multi-KB receipt blobs into log lines and error messages.

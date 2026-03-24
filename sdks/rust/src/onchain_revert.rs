@@ -140,6 +140,7 @@ fn lookup_variant(enum_name: &str, ordinal_1_based: usize) -> Option<&'static st
 fn extract_revert_codes(text: &str) -> Vec<u64> {
     let mut out = Vec::new();
     let mut offset = 0usize;
+    // Match Revert(DIGITS) — structured receipts
     while let Some(start_rel) = text[offset..].find("Revert(") {
         let start = offset + start_rel + "Revert(".len();
         let digits = text[start..]
@@ -158,7 +159,48 @@ fn extract_revert_codes(text: &str) -> Vec<u64> {
         }
         offset = start;
     }
+    // Match Revert { ... ra: DIGITS ... } — Rust Debug format embedded in reason strings
+    offset = 0;
+    while let Some(start_rel) = text[offset..].find("Revert {") {
+        let block_start = offset + start_rel;
+        if let Some(ra_rel) = text[block_start..].find("ra:") {
+            let ra_start = block_start + ra_rel + "ra:".len();
+            let digits: String = text[ra_start..]
+                .chars()
+                .skip_while(|c| c.is_whitespace())
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            if let Ok(v) = digits.parse::<u64>() {
+                out.push(v);
+            }
+            offset = ra_start;
+        } else {
+            offset = block_start + "Revert {".len();
+        }
+    }
     out
+}
+
+/// Extract a Fuel VM panic reason from embedded receipt text.
+///
+/// Matches `PanicInstruction { reason: NotEnoughBalance, ... }` from
+/// Rust Debug formatted receipts embedded in the reason string.
+fn extract_panic_reason(text: &str) -> Option<String> {
+    let marker = "PanicInstruction {";
+    let start = text.find(marker)?;
+    let after = &text[start + marker.len()..];
+    let reason_pos = after.find("reason:")?;
+    let name_start = &after[reason_pos + "reason:".len()..];
+    let name: String = name_start
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect();
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 fn decode_revert_code(raw: u64, context: &str) -> Option<String> {
@@ -237,19 +279,10 @@ pub(crate) fn augment_revert_reason(
         return mapped;
     }
 
-    // The backend sometimes pre-decodes the error name into the reason
-    // string as "transaction reverted: ErrorName". Extract it before
-    // truncating so callers always see a human-readable name.
-    if let Some(pos) = context.find("transaction reverted:") {
-        let after = &context[pos + "transaction reverted:".len()..];
-        let name: String = after
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_alphanumeric() || *c == '_')
-            .collect();
-        if !name.is_empty() {
-            return name;
-        }
+    // Check for Fuel VM Panic receipts embedded in the reason string
+    // (e.g. PanicInstruction { reason: NotEnoughBalance }).
+    if let Some(panic) = extract_panic_reason(&context) {
+        return panic;
     }
 
     // No decodable revert code found. Cap the raw reason to avoid dumping
@@ -312,10 +345,21 @@ mod tests {
     }
 
     #[test]
-    fn extracts_pre_decoded_error_name_from_reason() {
+    fn extracts_panic_reason_from_embedded_receipts() {
         let message = "Failed to process transaction";
-        let reason = "Failed to process SessionCallPayload { ... } with error: transaction reverted: NotEnoughBalance, receipts: [...]";
+        let reason = "Failed to process SessionCallPayload { ... } with error: transaction reverted: NotEnoughBalance, receipts: [Panic { id: abc, reason: PanicInstruction { reason: NotEnoughBalance, instruction: CALL { } }, pc: 123, is: 456 }]";
         let decoded = augment_revert_reason(message, reason, None);
         assert_eq!(decoded, "NotEnoughBalance");
+    }
+
+    #[test]
+    fn extracts_revert_ra_from_embedded_receipts() {
+        let message = "Failed to process transaction";
+        let reason = "Failed to process SessionCallPayload { actions: [MarketActions { actions: [CreateOrder { side: Buy }] }] } receipts: [Revert { id: abc, ra: 18446744073709486086, pc: 123, is: 456 }]";
+        let decoded = augment_revert_reason(message, reason, None);
+        assert!(
+            decoded.contains("OrderCreationError::InvalidHeapPrices"),
+            "got: {decoded}"
+        );
     }
 }

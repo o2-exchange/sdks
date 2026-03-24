@@ -90,7 +90,10 @@ const ABI_ERROR_ENUMS: readonly [string, readonly string[]][] = [
 ];
 
 const REVERT_RE = /Revert\((\d+)\)/g;
-const TX_REVERTED_RE = /transaction reverted:\s*(\w+)/;
+// Matches Rust Debug format: Revert { id: ..., ra: 18446744073709486086, ... }
+const REVERT_RA_RE = /Revert\s*\{[^}]*\bra:\s*(\d+)/g;
+// Matches Panic receipts: PanicInstruction { reason: NotEnoughBalance, ... }
+const PANIC_REASON_RE = /PanicInstruction\s*\{[^}]*\breason:\s*(\w+)/;
 
 // Fuel VM uses the top 48 bits as a tag for ABI error codes.
 const FUEL_MASK = 0xffff_ffff_ffff_0000n;
@@ -132,12 +135,22 @@ function lookupVariant(enumName: string, ordinal: number): string | undefined {
 
 function extractRevertCodes(text: string): bigint[] {
   const codes: bigint[] = [];
-  // Reset lastIndex for the global regex.
+  // Revert(DIGITS) — from structured receipts
   REVERT_RE.lastIndex = 0;
   for (let match = REVERT_RE.exec(text); match !== null; match = REVERT_RE.exec(text)) {
     codes.push(BigInt(match[1]));
   }
+  // Revert { ... ra: DIGITS ... } — Rust Debug format embedded in reason strings
+  REVERT_RA_RE.lastIndex = 0;
+  for (let match = REVERT_RA_RE.exec(text); match !== null; match = REVERT_RA_RE.exec(text)) {
+    codes.push(BigInt(match[1]));
+  }
   return codes;
+}
+
+function extractPanicReason(text: string): string | undefined {
+  const match = PANIC_REASON_RE.exec(text);
+  return match ? match[1] : undefined;
 }
 
 function hexPad16(n: bigint): string {
@@ -209,12 +222,11 @@ export function augmentRevertReason(
     }
   }
 
-  // The backend sometimes pre-decodes the error name into the reason
-  // string as "transaction reverted: ErrorName". Extract it before
-  // truncating so callers always see a human-readable name.
-  const txMatch = TX_REVERTED_RE.exec(context);
-  if (txMatch) {
-    return txMatch[1];
+  // Check for Fuel VM Panic receipts embedded in the reason string
+  // (e.g. PanicInstruction { reason: NotEnoughBalance }).
+  const panic = extractPanicReason(context);
+  if (panic) {
+    return panic;
   }
 
   // No decodable revert code found. Cap the raw reason to avoid dumping
