@@ -1030,9 +1030,10 @@ class O2Client:
             InvalidRequest: If *precision* is outside the valid range 1--18.
         """
         _validate_depth_precision(precision)
+        wire_precision = str(10 ** int(precision))
         market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
-        async for update in ws.stream_depth(market_obj.market_id, str(precision)):
+        async for update in ws.stream_depth(market_obj.market_id, wire_precision):
             yield update
 
     async def stream_orders(self, account: AccountInfo | str) -> AsyncIterator[OrderUpdate]:

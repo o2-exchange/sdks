@@ -73,6 +73,33 @@ export const tradeAccountId = (raw: string): TradeAccountId => hexId<"TradeAccou
 /** Create an {@link AssetId} from a raw hex string (validated). */
 export const assetId = (raw: string): AssetId => hexId<"AssetId">(raw);
 
+// ── Depth precision ─────────────────────────────────────────────────
+
+/**
+ * Validated depth precision for order book subscriptions.
+ *
+ * Created via {@link depthPrecision} from a user-facing level (1–18).
+ * Level 1 = most precise (finest tick), 18 = most grouped.
+ *
+ * Required by {@link O2WebSocket.streamDepth}. The high-level
+ * {@link O2Client.streamDepth} accepts a plain number and creates
+ * this internally.
+ */
+export type DepthPrecision = string & { readonly __brand: "DepthPrecision" };
+
+/**
+ * Create a validated {@link DepthPrecision} from a level (1–18).
+ *
+ * @param level - Precision level. 1 = most precise, 18 = most grouped.
+ * @throws {Error} If level is not an integer in the range 1–18.
+ */
+export function depthPrecision(level: number): DepthPrecision {
+  if (!Number.isInteger(level) || level < 1 || level > 18) {
+    throw new Error(`Invalid depth precision ${level}. Must be an integer in range 1-18.`);
+  }
+  return String(10 ** level) as DepthPrecision;
+}
+
 // ── Nonce ────────────────────────────────────────────────────────────
 
 /**

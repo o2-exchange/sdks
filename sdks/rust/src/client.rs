@@ -19,7 +19,7 @@ use crate::encoding::{
 };
 use crate::errors::O2Error;
 use crate::models::*;
-use crate::websocket::TypedStream;
+use crate::websocket::{DepthPrecision, TypedStream};
 
 /// Strategy for refreshing market metadata.
 #[derive(Debug, Clone, Copy)]
@@ -1324,18 +1324,19 @@ impl O2Client {
                 precision
             ))
         })?;
-        validate_depth_precision(p)?;
+        let dp = DepthPrecision::new(p)?;
         let market_id = market_id.into_valid()?;
         debug!(
             "client.stream_depth market_id={} precision={}",
-            market_id, precision
+            market_id,
+            dp.as_str()
         );
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard
             .as_ref()
             .unwrap()
-            .stream_depth(market_id.as_str(), precision)
+            .stream_depth(market_id.as_str(), &dp)
             .await
     }
 

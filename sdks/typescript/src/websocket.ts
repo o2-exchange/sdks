@@ -19,6 +19,7 @@ import WebSocket from "ws";
 import type { NetworkConfig } from "./config.js";
 import type {
   BalanceUpdate,
+  DepthPrecision,
   DepthUpdate,
   Identity,
   NonceUpdate,
@@ -340,27 +341,16 @@ export class O2WebSocket {
    * Subscribe to order book depth updates.
    *
    * @param marketId - The market ID (hex string).
-   * @param precision - Depth aggregation level index (default: `"1"` = finest).
-   *   Valid range: **1--18**. The SDK sends `10^precision` on the wire, matching
-   *   the internal backend convention. All levels support live delta streaming.
+   * @param precision - A validated {@link DepthPrecision} created via
+   *   {@link depthPrecision}`(level)` where level is 1–18. The high-level
+   *   {@link O2Client.streamDepth} creates this automatically from a plain number.
    * @returns An async generator yielding {@link DepthUpdate} messages.
-   * @throws {Error} If `precision` is outside the valid range 1--18.
    */
-  async *streamDepth(
-    marketId: string,
-    precision: string | number = "1",
-  ): AsyncGenerator<DepthUpdate> {
-    const p = typeof precision === "string" ? Number.parseInt(precision, 10) : precision;
-    if (!Number.isFinite(p) || p < 1 || p > 18) {
-      throw new Error(
-        `Invalid depth precision ${precision}. Valid range: 1-18 (powers of 10). ` +
-          "Precision 0 is not supported — use getDepth() via REST for exact prices.",
-      );
-    }
+  async *streamDepth(marketId: string, precision: DepthPrecision): AsyncGenerator<DepthUpdate> {
     const sub = {
       action: "subscribe_depth",
       market_id: marketId,
-      precision: String(10 ** p), // precision is an index; wire value = 10^precision
+      precision: precision as string,
     };
     yield* this.subscribe<DepthUpdate>(
       sub,

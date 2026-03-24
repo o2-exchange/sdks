@@ -76,7 +76,7 @@ import type {
   WalletState,
   WireOrderType,
 } from "./models.js";
-import { assetId as toAssetId, tradeAccountId } from "./models.js";
+import { depthPrecision, assetId as toAssetId, tradeAccountId } from "./models.js";
 import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
@@ -932,11 +932,11 @@ export class O2Client {
    * @throws {Error} If `precision` is outside the valid range 1--18.
    */
   async streamDepth(market: MarketRef, precision = 1): Promise<AsyncGenerator<DepthUpdate>> {
-    validateDepthPrecision(precision);
+    const dp = depthPrecision(precision);
     const ws = await this.ensureWs();
     const marketId =
       typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return ws.streamDepth(marketId, precision);
+    return ws.streamDepth(marketId, dp);
   }
 
   /**

@@ -78,6 +78,34 @@ impl<T> Stream for TypedStream<T> {
     }
 }
 
+/// Validated depth precision for WebSocket subscriptions.
+///
+/// Created via [`DepthPrecision::new`] from a user-facing level (1–18).
+/// Level 1 = most precise (finest tick), 18 = most grouped.
+///
+/// Required by [`O2WebSocket::stream_depth`]. The high-level
+/// [`O2Client::stream_depth`](crate::O2Client::stream_depth) accepts a
+/// plain integer and creates this internally.
+#[derive(Debug, Clone)]
+pub struct DepthPrecision(String);
+
+impl DepthPrecision {
+    /// Create a validated depth precision from a level (1–18).
+    pub fn new(level: u64) -> Result<Self, O2Error> {
+        if !(1..=18).contains(&level) {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid depth precision {level}. Must be an integer in range 1-18."
+            )));
+        }
+        Ok(Self(10u64.pow(level as u32).to_string()))
+    }
+
+    /// The wire-format string value.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
 /// WebSocket lifecycle events emitted out-of-band from data streams.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -528,18 +556,13 @@ impl O2WebSocket {
     pub async fn stream_depth(
         &self,
         market_id: &str,
-        precision: &str,
+        precision: &DepthPrecision,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
         let (tx, rx) = mpsc::unbounded_channel();
-        // precision is a level index; wire value = 10^precision (matches internal Precision::pow())
-        let wire_precision = 10u64
-            .checked_pow(precision.parse::<u32>().unwrap_or(1))
-            .unwrap_or(10)
-            .to_string();
         let sub = json!({
             "action": "subscribe_depth",
             "market_id": market_id,
-            "precision": wire_precision
+            "precision": precision.as_str()
         });
 
         {
