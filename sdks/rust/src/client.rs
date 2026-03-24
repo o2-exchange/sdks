@@ -48,7 +48,6 @@ fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
     Ok(())
 }
 
-
 /// The high-level O2 Exchange client.
 pub struct O2Client {
     pub api: O2Api,
@@ -1017,8 +1016,12 @@ impl O2Client {
         let market = self.get_market(&market_name).await?;
         self.api
             .get_trades(
-                market.market_id.as_str(), "desc", count, start_timestamp,
-                start_trade_id.map(|t| t.as_str()), None,
+                market.market_id.as_str(),
+                "desc",
+                count,
+                start_timestamp,
+                start_trade_id.map(|t| t.as_str()),
+                None,
             )
             .await
     }
@@ -1047,8 +1050,12 @@ impl O2Client {
         let market = self.get_market(&market_name).await?;
         self.api
             .get_trades_by_account(
-                market.market_id.as_str(), account.as_str(), "desc", count,
-                start_timestamp, start_trade_id.map(|t| t.as_str()),
+                market.market_id.as_str(),
+                account.as_str(),
+                "desc",
+                count,
+                start_timestamp,
+                start_trade_id.map(|t| t.as_str()),
             )
             .await
     }
@@ -1171,7 +1178,11 @@ impl O2Client {
     }
 
     /// Get a single order.
-    pub async fn get_order<M>(&mut self, market_name: M, order_id: impl IntoValidId<OrderId>) -> Result<Order, O2Error>
+    pub async fn get_order<M>(
+        &mut self,
+        market_name: M,
+        order_id: impl IntoValidId<OrderId>,
+    ) -> Result<Order, O2Error>
     where
         M: IntoMarketSymbol,
     {
@@ -1192,10 +1203,16 @@ impl O2Client {
     // -----------------------------------------------------------------------
 
     /// Get the current nonce for a trading account.
-    pub async fn get_nonce(&self, trade_account_id: impl IntoValidId<TradeAccountId>) -> Result<u64, O2Error> {
+    pub async fn get_nonce(
+        &self,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
+    ) -> Result<u64, O2Error> {
         let trade_account_id = trade_account_id.into_valid()?;
         debug!("client.get_nonce trade_account_id={}", trade_account_id);
-        let account = self.api.get_account_by_id(trade_account_id.as_str()).await?;
+        let account = self
+            .api
+            .get_account_by_id(trade_account_id.as_str())
+            .await?;
         Self::parse_account_nonce(
             account.trade_account.as_ref().map(|ta| ta.nonce),
             "get_nonce account response",
@@ -1342,7 +1359,11 @@ impl O2Client {
         debug!("client.stream_trades market_id={}", market_id);
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
-        guard.as_ref().unwrap().stream_trades(market_id.as_str()).await
+        guard
+            .as_ref()
+            .unwrap()
+            .stream_trades(market_id.as_str())
+            .await
     }
 
     /// Stream balance updates over a shared WebSocket connection.

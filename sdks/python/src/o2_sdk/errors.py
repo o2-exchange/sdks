@@ -278,6 +278,4 @@ def raise_for_error(data: dict[str, Any]) -> None:
         from .onchain_revert import augment_revert_reason
 
         augmented_reason = augment_revert_reason(message, reason, receipts)
-        raise OnChainRevert(
-            message=message, reason=augmented_reason, receipts=receipts
-        )
+        raise OnChainRevert(message=message, reason=augmented_reason, receipts=receipts)

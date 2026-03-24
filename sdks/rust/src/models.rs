@@ -69,7 +69,8 @@ pub trait IntoValidId<T> {
 }
 
 fn validate_hex(type_name: &str, s: &str) -> Result<(), O2Error> {
-    let hex = s.strip_prefix("0x")
+    let hex = s
+        .strip_prefix("0x")
         .or_else(|| s.strip_prefix("0X"))
         .unwrap_or(s);
     if hex.is_empty() {

@@ -163,7 +163,12 @@ impl O2Api {
         let resp = self
             .client
             .get(&url)
-            .query(&pairs.iter().map(|(k, v)| (*k, v.as_str())).collect::<Vec<_>>())
+            .query(
+                &pairs
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_str()))
+                    .collect::<Vec<_>>(),
+            )
             .send()
             .await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
@@ -257,9 +262,8 @@ impl O2Api {
 
     /// Valid bar resolutions accepted by the API.
     const VALID_RESOLUTIONS: &'static [&'static str] = &[
-        "1s", "1m", "2m", "3m", "5m", "15m", "30m",
-        "1h", "2h", "4h", "6h", "8h", "12h",
-        "1d", "3d", "1w", "1M", "3M",
+        "1s", "1m", "2m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d",
+        "3d", "1w", "1M", "3M",
     ];
 
     /// GET /v1/bars - OHLCV candlestick data.

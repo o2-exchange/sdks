@@ -17,10 +17,7 @@ from o2_sdk.onchain_revert import augment_revert_reason
 
 
 def test_decodes_order_creation_error_from_create_order_context():
-    message = (
-        "Failed payload ... CreateOrder { side: Buy } ... "
-        "Revert(18446744073709486086)"
-    )
+    message = "Failed payload ... CreateOrder { side: Buy } ... Revert(18446744073709486086)"
     reason = "transaction reverted"
     decoded = augment_revert_reason(message, reason, None)
     assert "OrderCreationError::InvalidHeapPrices" in decoded  # ordinal 6

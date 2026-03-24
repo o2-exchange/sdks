@@ -432,8 +432,12 @@ fn test_precomputed_function_selectors_match() {
 
 fn test_market() -> Market {
     Market {
-        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001".into_valid().unwrap(),
-        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002".into_valid().unwrap(),
+        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001"
+            .into_valid()
+            .unwrap(),
+        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+            .into_valid()
+            .unwrap(),
         whitelist_id: None,
         blacklist_id: None,
         maker_fee: 0,
@@ -443,13 +447,17 @@ fn test_market() -> Market {
         price_window: 0,
         base: MarketAsset {
             symbol: "FUEL".into(),
-            asset: "0x0000000000000000000000000000000000000000000000000000000000000003".into_valid().unwrap(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000003"
+                .into_valid()
+                .unwrap(),
             decimals: 9,
             max_precision: 3,
         },
         quote: MarketAsset {
             symbol: "USDC".into(),
-            asset: "0x0000000000000000000000000000000000000000000000000000000000000004".into_valid().unwrap(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000004"
+                .into_valid()
+                .unwrap(),
             decimals: 9,
             max_precision: 3,
         },
