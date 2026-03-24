@@ -131,6 +131,7 @@ ABI_ERROR_ENUMS: list[tuple[str, list[str]]] = [
 ]
 
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
+_TX_REVERTED_RE = re.compile(r"transaction reverted:\s*(\w+)")
 
 _FUEL_MASK = 0xFFFF_FFFF_FFFF_0000
 _FUEL_TAG = 0xFFFF_FFFF_FFFF_0000
@@ -139,6 +140,7 @@ _FUEL_TAG = 0xFFFF_FFFF_FFFF_0000
 # ---------------------------------------------------------------------------
 # Context inference
 # ---------------------------------------------------------------------------
+
 
 def _infer_enum_from_context(context: str) -> str | None:
     """Narrow down to a specific enum based on action keywords in *context*."""
@@ -162,6 +164,7 @@ def _infer_enum_from_context(context: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Lookup helpers
 # ---------------------------------------------------------------------------
+
 
 def _lookup_variant(enum_name: str, ordinal_1_based: int) -> str | None:
     """Return the variant name for *ordinal_1_based* inside *enum_name*."""
@@ -191,10 +194,7 @@ def _decode_revert_code(raw: int, context: str) -> str | None:
     if inferred is not None:
         variant = _lookup_variant(inferred, ordinal)
         if variant is not None:
-            return (
-                f"{inferred}::{variant} "
-                f"(ordinal={ordinal}, raw=0x{raw:016x})"
-            )
+            return f"{inferred}::{variant} (ordinal={ordinal}, raw=0x{raw:016x})"
 
     # Fallback: try all enums.
     candidates: list[str] = []
@@ -209,15 +209,13 @@ def _decode_revert_code(raw: int, context: str) -> str | None:
         return f"{candidates[0]} (ordinal={ordinal}, raw=0x{raw:016x})"
 
     joined = ", ".join(candidates)
-    return (
-        f"ambiguous ABI error ordinal={ordinal} "
-        f"(raw=0x{raw:016x}); candidates=[{joined}]"
-    )
+    return f"ambiguous ABI error ordinal={ordinal} (raw=0x{raw:016x}); candidates=[{joined}]"
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def augment_revert_reason(
     message: str,
@@ -264,6 +262,13 @@ def augment_revert_reason(
         # several KB and makes log lines unreadable. Full receipts are still
         # accessible via OnChainRevert.receipts for callers that need them.
         return decoded
+
+    # The backend sometimes pre-decodes the error name into the reason
+    # string as "transaction reverted: ErrorName".  Extract it before
+    # truncating so callers always see a human-readable name.
+    m = _TX_REVERTED_RE.search(context)
+    if m:
+        return m.group(1)
 
     # No decodable revert code found. Cap the raw reason to avoid dumping
     # multi-KB receipt blobs into log lines and error messages.

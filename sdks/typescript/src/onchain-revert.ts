@@ -90,6 +90,7 @@ const ABI_ERROR_ENUMS: readonly [string, readonly string[]][] = [
 ];
 
 const REVERT_RE = /Revert\((\d+)\)/g;
+const TX_REVERTED_RE = /transaction reverted:\s*(\w+)/;
 
 // Fuel VM uses the top 48 bits as a tag for ABI error codes.
 const FUEL_MASK = 0xffff_ffff_ffff_0000n;
@@ -206,6 +207,14 @@ export function augmentRevertReason(
       // several KB and makes log lines unreadable.
       return decoded;
     }
+  }
+
+  // The backend sometimes pre-decodes the error name into the reason
+  // string as "transaction reverted: ErrorName". Extract it before
+  // truncating so callers always see a human-readable name.
+  const txMatch = TX_REVERTED_RE.exec(context);
+  if (txMatch) {
+    return txMatch[1];
   }
 
   // No decodable revert code found. Cap the raw reason to avoid dumping

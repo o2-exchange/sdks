@@ -237,6 +237,21 @@ pub(crate) fn augment_revert_reason(
         return mapped;
     }
 
+    // The backend sometimes pre-decodes the error name into the reason
+    // string as "transaction reverted: ErrorName". Extract it before
+    // truncating so callers always see a human-readable name.
+    if let Some(pos) = context.find("transaction reverted:") {
+        let after = &context[pos + "transaction reverted:".len()..];
+        let name: String = after
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+
     // No decodable revert code found. Cap the raw reason to avoid dumping
     // multi-KB receipt blobs into log lines and error messages.
     if reason.len() > 200 {
@@ -294,5 +309,13 @@ mod tests {
         // Should NOT contain the original reason prefix
         assert!(!decoded.starts_with("transaction reverted"));
         assert!(decoded.contains("OrderCreationError::InvalidHeapPrices"));
+    }
+
+    #[test]
+    fn extracts_pre_decoded_error_name_from_reason() {
+        let message = "Failed to process transaction";
+        let reason = "Failed to process SessionCallPayload { ... } with error: transaction reverted: NotEnoughBalance, receipts: [...]";
+        let decoded = augment_revert_reason(message, reason, None);
+        assert_eq!(decoded, "NotEnoughBalance");
     }
 }
