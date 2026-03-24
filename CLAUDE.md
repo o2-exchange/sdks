@@ -130,6 +130,76 @@ all subsequent ordinals — this is a breaking change on the contract side.
 - **No `Revert(DIGITS)` pattern found**: Raw reason truncated to 200 chars
 - **Full receipts**: Always accessible via `.receipts` property on the error object
 
+## Release Notes (knope)
+
+Release notes use [knope](https://knope.tech) — a Rust-based CLI that manages
+changelogs and version bumping from per-PR changeset files.
+
+### Creating a changeset
+
+When you change SDK code, create a changeset describing the change:
+
+```bash
+just changeset          # interactive prompt
+# or
+knope document-change   # same thing
+```
+
+This creates a `.changeset/<name>.md` file with YAML frontmatter specifying
+which SDK(s) are affected and the bump type:
+
+```markdown
+---
+sdk-python: minor
+sdk-typescript: minor
+---
+Added `trader_side` field to Trade model.
+```
+
+Bump types: `major` (breaking), `minor` (feature), `patch` (fix).
+
+### CI enforcement
+
+PRs that modify files under `sdks/` must include a `.changeset/*.md` file.
+The `changeset` CI job checks this automatically. For changes that genuinely
+don't need release notes (CI config, docs typos), create an empty changeset
+with no package entries.
+
+### Release flow (automated via GitHub Actions)
+
+Releases are fully automated with a human approval gate:
+
+1. **Changesets accumulate** — as PRs merge to `main`, their `.changeset/*.md` files collect
+2. **Release PR is created/updated** — `prepare-release.yml` runs on every push to `main`.
+   If pending changesets exist, knope creates (or force-updates) a single PR from branch
+   `release` → `main` with version bumps and changelog entries in the diff
+3. **Maintainer reviews and merges** — the PR diff shows exactly what versions will bump
+   and what changelog entries will be added. Merge when ready to ship.
+4. **Tags + GitHub Releases created** — `release.yml` detects the merged release PR and
+   runs `knope release`, which creates GitHub Releases (one per changed package).
+   This creates tags like `sdk-python/v0.2.0` on the remote.
+5. **Packages published** — the tags trigger the publish jobs in `release.yml`,
+   which publish to PyPI / npm / crates.io via OIDC.
+
+```bash
+just release-dry-run    # preview what would ship (local, read-only)
+```
+
+### Config
+
+- `knope.toml` — package definitions, workflows, scopes, GitHub repo
+- `.changeset/` — pending changeset files (consumed on release)
+- `sdks/{python,typescript,rust}/CHANGELOG.md` — generated changelogs (never edit by hand)
+- `.github/workflows/prepare-release.yml` — creates/updates the release PR
+- `.github/workflows/release.yml` — creates GitHub Releases + publishes packages
+
+### GitHub token
+
+The `prepare-release` and `release` workflows require a `PAT` secret (personal
+access token or fine-grained token) with `contents: write` and
+`pull-requests: write` permissions. The default `GITHUB_TOKEN` cannot trigger
+downstream workflows (tag-push → publish), so a PAT is needed.
+
 ## Current Status (as of 2026-02-11)
 
 ### All tests passing across all three SDKs
