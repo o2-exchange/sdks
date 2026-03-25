@@ -241,17 +241,11 @@ export function augmentRevertReason(
   const receiptsText = receipts != null ? JSON.stringify(receipts) : "";
   const context = `${message}\n${reasonStr}\n${receiptsText}`;
 
-  // Decode ALL revert codes — the receipt data may contain multiple reverts
-  // (e.g. an intermediate FractionalPrice check and the real TraderNotWhiteListed).
-  // Returning only the first would hide the actual error from retry logic that
-  // string-matches on specific error names.
-  const decoded: string[] = [];
   for (const raw of extractRevertCodes(context)) {
-    const d = decodeRevertCode(raw, context);
-    if (d !== undefined) decoded.push(d);
-  }
-  if (decoded.length > 0) {
-    return decoded.join("; ");
+    const decoded = decodeRevertCode(raw, context);
+    if (decoded !== undefined) {
+      return decoded;
+    }
   }
 
   // Check for Fuel VM Panic receipts embedded in the reason string

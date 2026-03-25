@@ -309,18 +309,10 @@ def augment_revert_reason(
 
     context = f"{message}\n{reason}\n{receipts_text}"
 
-    # Decode ALL revert codes — the receipt data may contain multiple reverts
-    # (e.g. an intermediate FractionalPrice check and the real
-    # TraderNotWhiteListed).  Returning only the first would hide the actual
-    # error from retry logic that string-matches on specific error names.
-    all_decoded: list[str] = []
     for raw in _extract_revert_codes(context):
-        d = _decode_revert_code(raw, context)
-        if d is not None:
-            all_decoded.append(d)
-
-    if all_decoded:
-        return "; ".join(all_decoded)
+        decoded = _decode_revert_code(raw, context)
+        if decoded is not None:
+            return decoded
 
     # Check for Fuel VM Panic receipts embedded in the reason string
     # (e.g. PanicInstruction { reason: NotEnoughBalance }).
