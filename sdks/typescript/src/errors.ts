@@ -355,14 +355,10 @@ const ERROR_MAP: Record<number, new (message: string) => O2Error> = {
  */
 export function parseApiError(body: Record<string, unknown>): O2Error {
   const code = body.code as number | undefined;
-  const message = (body.message as string) ?? "Unknown error";
+  // Some endpoints use "error" instead of "message" (e.g. HTTP 500).
+  const message = ((body.message ?? body.error) as string) ?? "Unknown error";
   const reason = body.reason as string | undefined;
   const receipts = body.receipts as unknown[] | undefined;
-
-  // DEBUG: dump full error body for diagnosis (temporary)
-  console.error(
-    `[parseApiError DEBUG] code=${code}, message_len=${message?.length}, reason_len=${reason?.length ?? "undefined"}, receipts_len=${receipts?.length ?? "undefined"}, message_preview=${JSON.stringify(message?.slice(0, 500))}`,
-  );
 
   // Pre-flight validation error: has code.
   // The backend sometimes returns code=1000 (InternalError) with revert
