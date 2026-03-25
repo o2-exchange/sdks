@@ -112,7 +112,7 @@ All three must have identical enum lists:
 
 ### How ordinals work
 
-Variants are **1-based** in declaration order. New variants appended at the
+Variants are **0-based** in declaration order. New variants appended at the
 end get the next ordinal. Reordering or removing existing variants changes
 all subsequent ordinals — this is a breaking change on the contract side.
 

@@ -1,6 +1,6 @@
 use serde_json::Value;
 
-// ABI error enum mapping (1-based ordinals).
+// ABI error enum mapping (0-based ordinals).
 // Source of truth: abi/mainnet/*.json (metadataTypes → enum components).
 // See CLAUDE.md "Maintaining On-Chain Revert Decoding" for update procedure.
 const ABI_ERROR_ENUMS: &[(&str, &[&str])] = &[
@@ -127,14 +127,11 @@ fn infer_enum_from_context(context: &str) -> Option<&'static str> {
     None
 }
 
-fn lookup_variant(enum_name: &str, ordinal_1_based: usize) -> Option<&'static str> {
+fn lookup_variant(enum_name: &str, ordinal: usize) -> Option<&'static str> {
     let (_, variants) = ABI_ERROR_ENUMS
         .iter()
         .find(|(name, _)| *name == enum_name)?;
-    if ordinal_1_based == 0 || ordinal_1_based > variants.len() {
-        return None;
-    }
-    Some(variants[ordinal_1_based - 1])
+    variants.get(ordinal).copied()
 }
 
 fn extract_revert_codes(text: &str) -> Vec<u64> {
@@ -205,14 +202,12 @@ fn extract_panic_reason(text: &str) -> Option<String> {
 
 fn decode_revert_code(raw: u64, context: &str) -> Option<String> {
     // `revert_with_log` / `require` error signal convention:
-    // 0xffffffffffff0000 | ordinal_1_based
+    // 0xffffffffffff0000 | ordinal (0-based)
     if (raw & 0xffff_ffff_ffff_0000) != 0xffff_ffff_ffff_0000 {
         return None;
     }
     let ordinal = (raw & 0xffff) as usize;
-    if ordinal == 0 {
-        return Some(format!("on-chain require() failed (raw=0x{raw:016x})"));
-    }
+    // ordinal 0 is valid — it's the first variant of the enum.
 
     if let Some(enum_name) = infer_enum_from_context(context) {
         if let Some(variant) = lookup_variant(enum_name, ordinal) {
@@ -222,15 +217,10 @@ fn decode_revert_code(raw: u64, context: &str) -> Option<String> {
         }
     }
 
+    // Fallback: try all enums (0-based ordinals).
     let candidates: Vec<String> = ABI_ERROR_ENUMS
         .iter()
-        .filter_map(|(name, variants)| {
-            if ordinal <= variants.len() {
-                Some(format!("{name}::{}", variants[ordinal - 1]))
-            } else {
-                None
-            }
-        })
+        .filter_map(|(name, variants)| variants.get(ordinal).map(|v| format!("{name}::{v}")))
         .collect();
 
     if candidates.is_empty() {
@@ -319,12 +309,12 @@ mod tests {
             "Failed payload ... CreateOrder { side: Buy } ... Revert(18446744073709486086)";
         let reason = "transaction reverted";
         let decoded = augment_revert_reason(message, reason, None);
-        assert!(decoded.contains("OrderCreationError::InvalidHeapPrices"));
+        assert!(decoded.contains("OrderCreationError::FractionalPrice"));
     }
 
     #[test]
     fn decodes_even_when_reason_is_empty() {
-        let message = "CreateOrder failed Revert(18446744073709486089)";
+        let message = "CreateOrder failed Revert(18446744073709486088)";
         let decoded = augment_revert_reason(message, "", None);
         assert!(decoded.contains("OrderCreationError::OrderPartiallyFilled"));
     }
@@ -354,7 +344,7 @@ mod tests {
         let decoded = augment_revert_reason(message, reason, None);
         // Should NOT contain the original reason prefix
         assert!(!decoded.starts_with("transaction reverted"));
-        assert!(decoded.contains("OrderCreationError::InvalidHeapPrices"));
+        assert!(decoded.contains("OrderCreationError::FractionalPrice"));
     }
 
     #[test]
@@ -371,7 +361,7 @@ mod tests {
         let reason = "Failed to process SessionCallPayload { actions: [MarketActions { actions: [CreateOrder { side: Buy }] }] } receipts: [Revert { id: abc, ra: 18446744073709486086, pc: 123, is: 456 }]";
         let decoded = augment_revert_reason(message, reason, None);
         assert!(
-            decoded.contains("OrderCreationError::InvalidHeapPrices"),
+            decoded.contains("OrderCreationError::FractionalPrice"),
             "got: {decoded}"
         );
     }

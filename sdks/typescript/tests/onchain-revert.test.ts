@@ -16,22 +16,22 @@ describe("augmentRevertReason", () => {
     const message =
       "Failed payload ... CreateOrder { side: Buy } ... " + "Revert(18446744073709486086)";
     const decoded = augmentRevertReason(message, undefined, undefined);
-    expect(decoded).toContain("OrderCreationError::InvalidHeapPrices");
+    expect(decoded).toContain("OrderCreationError::FractionalPrice");
     expect(decoded).toContain("ordinal=6");
   });
 
   it("decodes even when reason is empty", () => {
-    const message = "CreateOrder Revert(18446744073709486081)";
+    const message = "CreateOrder Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, "", undefined);
     expect(decoded).toContain("OrderCreationError::InvalidOrderArgs");
-    expect(decoded).toContain("ordinal=1");
+    expect(decoded).toContain("ordinal=0");
   });
 
   it("decodes NotEnoughBalance", () => {
-    const message = "Withdraw Revert(18446744073709486082)";
+    const message = "Withdraw Revert(18446744073709486081)";
     const decoded = augmentRevertReason(message, undefined, undefined);
     expect(decoded).toContain("WithdrawError::NotEnoughBalance");
-    expect(decoded).toContain("ordinal=2");
+    expect(decoded).toContain("ordinal=1");
   });
 
   it("leaves reason unchanged when no revert code", () => {
@@ -40,25 +40,25 @@ describe("augmentRevertReason", () => {
   });
 
   it("decodes CancelOrder context", () => {
-    const message = "CancelOrder Revert(18446744073709486081)";
+    const message = "CancelOrder Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, undefined, undefined);
     expect(decoded).toContain("OrderCancelError::NotOrderOwner");
   });
 
   it("decodes session context", () => {
-    const message = "Session Revert(18446744073709486081)";
+    const message = "Session Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, undefined, undefined);
     expect(decoded).toContain("SessionError::SessionInThePast");
   });
 
   it("decodes nonce context", () => {
-    const message = "Nonce Revert(18446744073709486081)";
+    const message = "Nonce Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, undefined, undefined);
     expect(decoded).toContain("NonceError::InvalidNonce");
   });
 
   it("maps SettleBalance to OrderCreationError", () => {
-    const message = "SettleBalance Revert(18446744073709486081)";
+    const message = "SettleBalance Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, undefined, undefined);
     expect(decoded).toContain("OrderCreationError::InvalidOrderArgs");
   });
@@ -85,7 +85,7 @@ describe("augmentRevertReason", () => {
   });
 
   it("searches receipts for revert codes", () => {
-    const receipts = [{ type: "Revert", val: "Revert(18446744073709486082)" }];
+    const receipts = [{ type: "Revert", val: "Revert(18446744073709486081)" }];
     const decoded = augmentRevertReason("CreateOrder", undefined, receipts);
     expect(decoded).toContain("OrderCreationError::InvalidInputAmount");
   });
@@ -95,11 +95,11 @@ describe("augmentRevertReason", () => {
     expect(decoded).toBe("");
   });
 
-  it("returns generic message for ordinal zero", () => {
+  it("decodes ordinal zero with context", () => {
     // 0xffffffffffff0000 | 0 = 0xffffffffffff0000
-    const message = "Revert(18446744073709486080)";
+    const message = "CreateOrder ... Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, "reason", undefined);
-    expect(decoded).toContain("require() failed");
+    expect(decoded).toContain("OrderCreationError::InvalidOrderArgs");
   });
 
   it("truncates long reason without revert code", () => {
@@ -111,7 +111,7 @@ describe("augmentRevertReason", () => {
 
   it("returns clean decoded when reason already contains tag", () => {
     const tag =
-      "contract_schema::order_book::OrderCreationError::InvalidHeapPrices (ordinal=6, raw=0xffffffffffff0006)";
+      "contract_schema::order_book::OrderCreationError::FractionalPrice (ordinal=6, raw=0xffffffffffff0006)";
     const reason = `tx reverted [${tag}]`;
     const decoded = augmentRevertReason(
       "CreateOrder ... Revert(18446744073709486086)",
@@ -135,7 +135,7 @@ describe("parseApiError on-chain revert integration", () => {
     };
     const err = parseApiError(body);
     expect(err).toBeInstanceOf(OnChainRevertError);
-    expect(err.reason).toContain("OrderCreationError::InvalidHeapPrices");
+    expect(err.reason).toContain("OrderCreationError::FractionalPrice");
   });
 
   it("preserves original reason when no revert code", () => {
@@ -157,7 +157,7 @@ describe("parseApiError on-chain revert integration", () => {
     };
     const err = parseApiError(body) as OnChainRevertError;
     expect(err.toString()).toContain("On-chain revert:");
-    expect(err.toString()).toContain("InvalidHeapPrices");
+    expect(err.toString()).toContain("FractionalPrice");
   });
 
   it("toString falls back to message when no reason", () => {

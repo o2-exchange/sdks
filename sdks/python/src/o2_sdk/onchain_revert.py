@@ -4,7 +4,7 @@ Ports the Rust implementation from ``onchain_revert.rs``.
 
 Fuel's ``revert_with_log`` / ``require`` uses the convention::
 
-    raw_code = 0xffffffffffff0000 | ordinal_1_based
+    raw_code = 0xffffffffffff0000 | ordinal
 
 This module extracts ``Revert(DIGITS)`` patterns from error messages,
 decodes the ordinal into a named enum variant, and augments the reason
@@ -19,7 +19,7 @@ import re
 from typing import Any
 
 # ---------------------------------------------------------------------------
-# ABI error enum mapping (1-based ordinals)
+# ABI error enum mapping (0-based ordinals)
 #
 # Source of truth: abi/mainnet/*.json (metadataTypes → enum components).
 # See CLAUDE.md "Maintaining On-Chain Revert Decoding" for update procedure.
@@ -165,13 +165,13 @@ def _infer_enum_from_context(context: str) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def _lookup_variant(enum_name: str, ordinal_1_based: int) -> str | None:
-    """Return the variant name for *ordinal_1_based* inside *enum_name*."""
+def _lookup_variant(enum_name: str, ordinal: int) -> str | None:
+    """Return the variant name for *ordinal* (0-based) inside *enum_name*."""
     for name, variants in ABI_ERROR_ENUMS:
         if name == enum_name:
-            if ordinal_1_based < 1 or ordinal_1_based > len(variants):
+            if ordinal < 0 or ordinal >= len(variants):
                 return None
-            return variants[ordinal_1_based - 1]
+            return variants[ordinal]
     return None
 
 
@@ -233,8 +233,6 @@ def _decode_revert_code(raw: int, context: str) -> str | None:
     if (raw & _FUEL_MASK) != _FUEL_TAG:
         return None
     ordinal = raw & 0xFFFF
-    if ordinal == 0:
-        return f"on-chain require() failed (raw=0x{raw:016x})"
 
     # Try context-based inference first.
     inferred = _infer_enum_from_context(context)
@@ -243,11 +241,11 @@ def _decode_revert_code(raw: int, context: str) -> str | None:
         if variant is not None:
             return f"{inferred}::{variant} (ordinal={ordinal}, raw=0x{raw:016x})"
 
-    # Fallback: try all enums.
+    # Fallback: try all enums (0-based ordinals).
     candidates: list[str] = []
     for name, variants in ABI_ERROR_ENUMS:
-        if ordinal <= len(variants):
-            candidates.append(f"{name}::{variants[ordinal - 1]}")
+        if ordinal < len(variants):
+            candidates.append(f"{name}::{variants[ordinal]}")
 
     if not candidates:
         return f"unknown ABI error ordinal={ordinal} (raw=0x{raw:016x})"

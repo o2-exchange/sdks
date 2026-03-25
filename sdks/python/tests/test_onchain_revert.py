@@ -20,19 +20,19 @@ def test_decodes_order_creation_error_from_create_order_context():
     message = "Failed payload ... CreateOrder { side: Buy } ... Revert(18446744073709486086)"
     reason = "transaction reverted"
     decoded = augment_revert_reason(message, reason, None)
-    assert "OrderCreationError::InvalidHeapPrices" in decoded  # ordinal 6
+    assert "OrderCreationError::FractionalPrice" in decoded  # ordinal 6
 
 
 def test_decodes_even_when_reason_is_empty():
-    message = "CreateOrder failed Revert(18446744073709486089)"
+    message = "CreateOrder failed Revert(18446744073709486088)"
     decoded = augment_revert_reason(message, "", None)
-    assert "OrderCreationError::OrderPartiallyFilled" in decoded  # ordinal 9
+    assert "OrderCreationError::OrderPartiallyFilled" in decoded  # ordinal 8
 
 
 def test_decodes_not_enough_balance():
-    message = "withdraw failed Revert(18446744073709486082)"
+    message = "withdraw failed Revert(18446744073709486081)"
     decoded = augment_revert_reason(message, "", None)
-    assert "WithdrawError::NotEnoughBalance" in decoded  # ordinal 2
+    assert "WithdrawError::NotEnoughBalance" in decoded  # ordinal 1
 
 
 def test_leaves_reason_unchanged_when_no_revert_code():
@@ -46,25 +46,25 @@ def test_leaves_reason_unchanged_when_no_revert_code():
 
 
 def test_decodes_cancel_order_context():
-    message = "CancelOrder ... Revert(18446744073709486081)"
+    message = "CancelOrder ... Revert(18446744073709486080)"
     decoded = augment_revert_reason(message, "", None)
-    assert "OrderCancelError::NotOrderOwner" in decoded  # ordinal 1
+    assert "OrderCancelError::NotOrderOwner" in decoded  # ordinal 0
 
 
 def test_decodes_session_context():
-    message = "Session payload Revert(18446744073709486081)"
+    message = "Session payload Revert(18446744073709486080)"
     decoded = augment_revert_reason(message, "tx reverted", None)
-    assert "SessionError::SessionInThePast" in decoded  # ordinal 1
+    assert "SessionError::SessionInThePast" in decoded  # ordinal 0
 
 
 def test_decodes_nonce_context():
-    message = "bad nonce Revert(18446744073709486081)"
+    message = "bad nonce Revert(18446744073709486080)"
     decoded = augment_revert_reason(message, "", None)
-    assert "NonceError::InvalidNonce" in decoded  # ordinal 1
+    assert "NonceError::InvalidNonce" in decoded  # ordinal 0
 
 
 def test_settle_balance_context_maps_to_order_creation():
-    message = "SettleBalance ... Revert(18446744073709486089)"
+    message = "SettleBalance ... Revert(18446744073709486088)"
     decoded = augment_revert_reason(message, "", None)
     assert "OrderCreationError::OrderPartiallyFilled" in decoded
 
@@ -95,8 +95,8 @@ def test_non_fuel_revert_code_ignored():
 def test_receipts_searched_for_revert_codes():
     message = "some message with no revert code"
     receipts = [
-        {"type": "Revert", "ra": 18446744073709486089},
-        {"note": "Revert(18446744073709486089)"},
+        {"type": "Revert", "ra": 18446744073709486088},
+        {"note": "Revert(18446744073709486088)"},
     ]
     decoded = augment_revert_reason(message, "tx reverted", receipts)
     # The Revert(...) pattern appears in the JSON serialisation of receipts
@@ -104,16 +104,16 @@ def test_receipts_searched_for_revert_codes():
 
 
 def test_reason_none_treated_as_empty():
-    message = "CreateOrder failed Revert(18446744073709486089)"
+    message = "CreateOrder failed Revert(18446744073709486088)"
     decoded = augment_revert_reason(message, None, None)
     assert "OrderCreationError::OrderPartiallyFilled" in decoded
 
 
-def test_ordinal_zero_returns_generic_message():
+def test_ordinal_zero_decodes_with_context():
     raw = 0xFFFF_FFFF_FFFF_0000  # ordinal 0
-    message = f"Revert({raw})"
+    message = f"CreateOrder ... Revert({raw})"
     decoded = augment_revert_reason(message, "reason", None)
-    assert "require() failed" in decoded
+    assert "OrderCreationError::InvalidOrderArgs" in decoded
 
 
 def test_truncates_long_reason_without_revert_code():
@@ -126,7 +126,7 @@ def test_truncates_long_reason_without_revert_code():
 
 def test_existing_decoded_returns_clean():
     """When reason already contains the decoded tag, still return clean decoded."""
-    tag = "contract_schema::order_book::OrderCreationError::InvalidHeapPrices (ordinal=6, raw=0xffffffffffff0006)"
+    tag = "contract_schema::order_book::OrderCreationError::FractionalPrice (ordinal=6, raw=0xffffffffffff0006)"
     reason = f"tx reverted [{tag}]"
     message = "CreateOrder ... Revert(18446744073709486086)"
     decoded = augment_revert_reason(message, reason, None)
@@ -144,7 +144,7 @@ def test_raise_for_error_decodes_on_chain_revert():
         "message": (
             "Failed to process SessionCallPayload { actions: "
             "[MarketActions { actions: [CreateOrder { side: Sell }] }] } "
-            "Revert(18446744073709486089)"
+            "Revert(18446744073709486088)"
         ),
         "reason": "transaction reverted",
         "receipts": [],

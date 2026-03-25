@@ -4,7 +4,7 @@
  * Ports the Rust/Python implementation. Fuel's `revert_with_log` / `require`
  * uses the convention:
  *
- *     raw_code = 0xffffffffffff0000 | ordinal_1_based
+ *     raw_code = 0xffffffffffff0000 | ordinal
  *
  * This module extracts `Revert(DIGITS)` patterns from error messages, decodes
  * the ordinal into a named enum variant, and augments the reason string so
@@ -14,7 +14,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// ABI error enum mapping (1-based ordinals)
+// ABI error enum mapping (0-based ordinals)
 //
 // Source of truth: abi/mainnet/*.json (metadataTypes → enum components).
 // See CLAUDE.md "Maintaining On-Chain Revert Decoding" for update procedure.
@@ -122,8 +122,8 @@ function inferEnumFromContext(context: string): string | undefined {
 function lookupVariant(enumName: string, ordinal: number): string | undefined {
   for (const [name, variants] of ABI_ERROR_ENUMS) {
     if (name === enumName) {
-      if (ordinal < 1 || ordinal > variants.length) return undefined;
-      return variants[ordinal - 1];
+      if (ordinal < 0 || ordinal >= variants.length) return undefined;
+      return variants[ordinal];
     }
   }
   return undefined;
@@ -180,7 +180,7 @@ function hexPad16(n: bigint): string {
 function decodeRevertCode(raw: bigint, context: string): string | undefined {
   if ((raw & FUEL_MASK) !== FUEL_TAG) return undefined;
   const ordinal = Number(raw & 0xffffn);
-  if (ordinal === 0) return `on-chain require() failed (raw=${hexPad16(raw)})`;
+  // ordinal 0 is valid — it's the first variant of the enum.
 
   // Try context-based inference first.
   const inferred = inferEnumFromContext(context);
@@ -191,11 +191,11 @@ function decodeRevertCode(raw: bigint, context: string): string | undefined {
     }
   }
 
-  // Fallback: try all enums.
+  // Fallback: try all enums (0-based ordinals).
   const candidates: string[] = [];
   for (const [name, variants] of ABI_ERROR_ENUMS) {
-    if (ordinal <= variants.length) {
-      candidates.push(`${name}::${variants[ordinal - 1]}`);
+    if (ordinal < variants.length) {
+      candidates.push(`${name}::${variants[ordinal]}`);
     }
   }
 
