@@ -502,13 +502,13 @@ describe("Models Module", () => {
 
     it("parses on-chain revert error (no code)", () => {
       const error = parseApiError({
-        message: "Revert(18446744073709486080)",
+        message: "Withdraw Revert(18446744073709486081)",
         reason: "NotEnoughBalance",
         receipts: [],
       });
       expect(error).toBeInstanceOf(OnChainRevertError);
       expect(error.code).toBeUndefined();
-      expect(error.reason).toBe("NotEnoughBalance");
+      expect(error.reason).toContain("WithdrawError::NotEnoughBalance");
     });
 
     it("parses unknown error code", () => {
