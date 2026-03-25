@@ -142,10 +142,6 @@ export class O2Api {
         const body = (await resp.json()) as Record<string, unknown>;
 
         if (!resp.ok) {
-          // DEBUG: dump full raw error response to inspect receipt ra/rb fields
-          if (path === "/v1/session/actions") {
-            console.error(`[DEBUG-FULL] ${JSON.stringify(body)}`);
-          }
           const err = parseApiError(body);
           if (err instanceof RateLimitExceeded && attempt < this.maxRetries) {
             const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());

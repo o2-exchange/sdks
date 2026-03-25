@@ -1,7 +1,11 @@
 """Tests for on-chain revert code decoding.
 
-Ported from the Rust SDK tests in ``onchain_revert.rs``, plus additional
-coverage for the ``errors.py`` integration.
+Tests the new decoding strategy:
+1. LogResult extraction (backend-decoded names)
+2. LogData receipt parsing (logId + discriminant)
+3. Signal constant recognition
+4. PanicInstruction extraction
+5. "and error:" fallback
 """
 
 from __future__ import annotations
@@ -12,126 +16,196 @@ from o2_sdk.errors import OnChainRevert, raise_for_error
 from o2_sdk.onchain_revert import augment_revert_reason
 
 # ---------------------------------------------------------------------------
-# augment_revert_reason — direct unit tests (ported from Rust)
+# Realistic reason string from a real backend error response.
+# The backend wraps the fuels-rs error chain in the reason field.
+# ---------------------------------------------------------------------------
+
+REALISTIC_REASON = (
+    "Failed to process SessionCallPayload { actions: [MarketActions { actions: "
+    "[SettleBalance, CreateOrder { side: Buy }] }] } with error: "
+    "Transaction abc123 failed with logs: LogResult { results: "
+    '[Ok("IncrementNonceEvent { nonce: 2752 }"), '
+    'Ok("SessionContractCallEvent { nonce: 2751 }"), '
+    'Ok("SessionContractCallEvent { nonce: 2751 }"), '
+    'Ok("OrderCreatedEvent { quantity: 1000000, price: 2129980000000 }"), '
+    'Ok("OrderMatchedEvent { quantity: 1000000, price: 2129320000000 }"), '
+    'Ok("FeesCollectedEvent { base_fees: 100, quote_fees: 0 }"), '
+    'Ok("OrderPartiallyFilled")] } '
+    "and error: transaction reverted: Revert(18446744073709486086), "
+    "receipts: [Call { id: 0000, to: f155, amount: 0 }, "
+    "LogData { id: f155, ra: 0, rb: 2261086600904378517, ptr: 67108286, len: 8, "
+    "digest: abc, data: Some(Bytes(0000000000000000)) }, "
+    "LogData { id: 2a78, ra: 0, rb: 12033795032676640771, ptr: 67100980, len: 8, "
+    "digest: 4c0e, data: Some(Bytes(0000000000000008)) }, "
+    "Revert { id: 2a78, ra: 18446744073709486086 }, "
+    "ScriptResult { result: Revert }]"
+)
+
+
+# ---------------------------------------------------------------------------
+# Strategy 1: LogResult extraction
 # ---------------------------------------------------------------------------
 
 
-def test_decodes_order_creation_error_from_create_order_context():
-    message = "Failed payload ... CreateOrder { side: Buy } ... Revert(18446744073709486086)"
-    reason = "transaction reverted"
-    decoded = augment_revert_reason(message, reason, None)
-    assert "OrderCreationError::FractionalPrice" in decoded  # ordinal 6
+def test_extracts_error_from_log_result():
+    """The last Ok("...") matching a known variant is extracted."""
+    decoded = augment_revert_reason("Failed to process transaction", REALISTIC_REASON, None)
+    assert decoded == "contract_schema::order_book::OrderCreationError::OrderPartiallyFilled"
 
 
-def test_decodes_even_when_reason_is_empty():
-    message = "CreateOrder failed Revert(18446744073709486088)"
-    decoded = augment_revert_reason(message, "", None)
-    assert "OrderCreationError::OrderPartiallyFilled" in decoded  # ordinal 8
+def test_log_result_with_escaped_quotes():
+    """Backend JSON-encodes the reason, so Ok entries have escaped quotes."""
+    reason = (
+        'LogResult { results: [Ok(\\"IncrementNonceEvent\\"), Ok(\\"TraderNotWhiteListed\\")] }'
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "contract_schema::order_book::OrderCreationError::TraderNotWhiteListed"
 
 
-def test_decodes_not_enough_balance():
-    message = "withdraw failed Revert(18446744073709486081)"
-    decoded = augment_revert_reason(message, "", None)
-    assert "WithdrawError::NotEnoughBalance" in decoded  # ordinal 1
+def test_log_result_ignores_non_error_entries():
+    """Event names that aren't error variants are skipped."""
+    reason = (
+        'LogResult { results: [Ok("IncrementNonceEvent"), '
+        'Ok("OrderCreatedEvent"), Ok("NotEnoughBalance")] }'
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "contract_schema::trade_account::WithdrawError::NotEnoughBalance"
 
 
-def test_leaves_reason_unchanged_when_no_revert_code():
+# ---------------------------------------------------------------------------
+# Strategy 2: LogData receipt parsing
+# ---------------------------------------------------------------------------
+
+
+def test_extracts_error_from_logdata_receipt():
+    """Parse logId (rb) and discriminant (data) from embedded LogData receipt."""
+    # LogData with rb=12033795032676640771 (OrderCreationError) and data=0x08 (OrderPartiallyFilled)
+    reason = (
+        "receipts: [LogData { id: abc, ra: 0, rb: 12033795032676640771, "
+        "ptr: 100, len: 8, digest: def, data: Some(Bytes(0000000000000008)) }, "
+        "Revert { id: abc, ra: 18446744073709486086 }]"
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "contract_schema::order_book::OrderCreationError::OrderPartiallyFilled"
+
+
+def test_logdata_discriminant_zero():
+    """Discriminant 0 = first variant."""
+    reason = (
+        "LogData { id: x, ra: 0, rb: 12033795032676640771, "
+        "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000000)) }, "
+        "Revert { id: x, ra: 18446744073709486086 }"
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "contract_schema::order_book::OrderCreationError::InvalidOrderArgs"
+
+
+def test_logdata_withdraw_error():
+    """Different enum: WithdrawError logId with discriminant 1 = NotEnoughBalance."""
+    reason = (
+        "LogData { id: x, ra: 0, rb: 14888260448086063780, "
+        "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000001)) }, "
+        "Revert { id: x, ra: 18446744073709486000 }"
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "contract_schema::trade_account::WithdrawError::NotEnoughBalance"
+
+
+def test_logdata_unknown_log_id_falls_through():
+    """Unknown logId doesn't match any enum — falls through to next strategy."""
+    reason = (
+        "LogData { id: x, ra: 0, rb: 9999999999999999999, "
+        "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000000)) }, "
+        "Revert { id: x, ra: 18446744073709486086 }"
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    # Falls through to signal recognition
+    assert "REVERT_WITH_LOG" in decoded
+
+
+# ---------------------------------------------------------------------------
+# Strategy 3: Signal constant recognition
+# ---------------------------------------------------------------------------
+
+
+def test_recognizes_failed_require_signal():
+    reason = "Revert(18446744073709486080)"  # 0xffffffffffff0000
+    decoded = augment_revert_reason("msg", reason, None)
+    assert "FAILED_REQUIRE" in decoded
+
+
+def test_recognizes_revert_with_log_signal():
+    reason = "Revert(18446744073709486086)"  # 0xffffffffffff0006
+    decoded = augment_revert_reason("msg", reason, None)
+    assert "REVERT_WITH_LOG" in decoded
+
+
+def test_non_signal_revert_code_falls_through():
+    """A revert code that isn't a known signal passes through."""
+    decoded = augment_revert_reason("msg", "Revert(42)", None)
+    # Falls through to truncation — reason is the raw "Revert(42)"
+    assert decoded == "Revert(42)"
+
+
+# ---------------------------------------------------------------------------
+# Strategy 4: PanicInstruction
+# ---------------------------------------------------------------------------
+
+
+def test_extracts_panic_reason():
+    reason = (
+        "receipts: [Panic { id: abc, reason: PanicInstruction "
+        "{ reason: NotEnoughBalance, instruction: CALL {} }, pc: 123 }]"
+    )
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "NotEnoughBalance"
+
+
+# ---------------------------------------------------------------------------
+# Strategy 5: "and error:" fallback
+# ---------------------------------------------------------------------------
+
+
+def test_extracts_and_error_summary():
+    reason = "lots of noise and error: transaction reverted: SomeError, receipts: [...]"
+    decoded = augment_revert_reason("msg", reason, None)
+    assert decoded == "transaction reverted: SomeError"
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_leaves_reason_unchanged_when_no_patterns():
     decoded = augment_revert_reason("plain error", "some reason", None)
     assert decoded == "some reason"
 
 
-# ---------------------------------------------------------------------------
-# Additional coverage
-# ---------------------------------------------------------------------------
-
-
-def test_decodes_cancel_order_context():
-    message = "CancelOrder ... Revert(18446744073709486080)"
-    decoded = augment_revert_reason(message, "", None)
-    assert "OrderCancelError::NotOrderOwner" in decoded  # ordinal 0
-
-
-def test_decodes_session_context():
-    message = "Session payload Revert(18446744073709486080)"
-    decoded = augment_revert_reason(message, "tx reverted", None)
-    assert "SessionError::SessionInThePast" in decoded  # ordinal 0
-
-
-def test_decodes_nonce_context():
-    message = "bad nonce Revert(18446744073709486080)"
-    decoded = augment_revert_reason(message, "", None)
-    assert "NonceError::InvalidNonce" in decoded  # ordinal 0
-
-
-def test_settle_balance_context_maps_to_order_creation():
-    message = "SettleBalance ... Revert(18446744073709486088)"
-    decoded = augment_revert_reason(message, "", None)
-    assert "OrderCreationError::OrderPartiallyFilled" in decoded
-
-
-def test_ambiguous_fallback_when_no_context():
-    # ordinal 1 matches many enums with no context keywords
-    message = "something unknown Revert(18446744073709486081)"
-    decoded = augment_revert_reason(message, "", None)
-    # Should contain "ambiguous" or at least one candidate
-    assert "ordinal=1" in decoded
-
-
-def test_unknown_high_ordinal():
-    # ordinal so large it matches no enum
-    raw = 0xFFFF_FFFF_FFFF_0000 | 9999
-    message = f"Revert({raw})"
-    decoded = augment_revert_reason(message, "", None)
-    assert "unknown ABI error" in decoded
-
-
-def test_non_fuel_revert_code_ignored():
-    # Low value that doesn't match the 0xffffffffffff0000 mask
-    message = "Revert(42)"
-    decoded = augment_revert_reason(message, "some reason", None)
-    assert decoded == "some reason"
-
-
-def test_receipts_searched_for_revert_codes():
-    message = "some message with no revert code"
-    receipts = [
-        {"type": "Revert", "ra": 18446744073709486088},
-        {"note": "Revert(18446744073709486088)"},
-    ]
-    decoded = augment_revert_reason(message, "tx reverted", receipts)
-    # The Revert(...) pattern appears in the JSON serialisation of receipts
-    assert "OrderPartiallyFilled" in decoded
-
-
 def test_reason_none_treated_as_empty():
-    message = "CreateOrder failed Revert(18446744073709486088)"
-    decoded = augment_revert_reason(message, None, None)
-    assert "OrderCreationError::OrderPartiallyFilled" in decoded
+    decoded = augment_revert_reason("plain error", None, None)
+    assert decoded == ""
 
 
-def test_ordinal_zero_decodes_with_context():
-    raw = 0xFFFF_FFFF_FFFF_0000  # ordinal 0
-    message = f"CreateOrder ... Revert({raw})"
-    decoded = augment_revert_reason(message, "reason", None)
-    assert "OrderCreationError::InvalidOrderArgs" in decoded
-
-
-def test_truncates_long_reason_without_revert_code():
-    """Long raw reasons are truncated to avoid multi-KB log lines."""
+def test_truncates_long_reason():
     reason = "x" * 500
     decoded = augment_revert_reason("error", reason, None)
     assert len(decoded) < 300
     assert "truncated" in decoded
 
 
-def test_existing_decoded_returns_clean():
-    """When reason already contains the decoded tag, still return clean decoded."""
-    tag = "contract_schema::order_book::OrderCreationError::FractionalPrice (ordinal=6, raw=0xffffffffffff0006)"
-    reason = f"tx reverted [{tag}]"
-    message = "CreateOrder ... Revert(18446744073709486086)"
-    decoded = augment_revert_reason(message, reason, None)
-    # augment_revert_reason now returns just the decoded name (not the original reason)
-    assert decoded == tag
+def test_receipts_json_searched():
+    """Structured receipts are JSON-serialized and searched."""
+    receipts = [{"note": 'Ok("InvalidNonce")'}]
+    decoded = augment_revert_reason("msg", "", receipts)
+    assert decoded == "contract_schema::trade_account::NonceError::InvalidNonce"
+
+
+def test_priority_log_result_over_logdata():
+    """LogResult extraction takes priority over LogData parsing."""
+    decoded = augment_revert_reason("Failed to process transaction", REALISTIC_REASON, None)
+    # Should get OrderPartiallyFilled from LogResult, not from LogData
+    assert "OrderPartiallyFilled" in decoded
 
 
 # ---------------------------------------------------------------------------
@@ -141,24 +215,17 @@ def test_existing_decoded_returns_clean():
 
 def test_raise_for_error_decodes_on_chain_revert():
     data = {
-        "message": (
-            "Failed to process SessionCallPayload { actions: "
-            "[MarketActions { actions: [CreateOrder { side: Sell }] }] } "
-            "Revert(18446744073709486088)"
-        ),
-        "reason": "transaction reverted",
-        "receipts": [],
+        "message": "Failed to process transaction",
+        "reason": REALISTIC_REASON,
+        "receipts": None,
     }
     with pytest.raises(OnChainRevert) as exc_info:
         raise_for_error(data)
 
     err = exc_info.value
-    assert "OrderCreationError::OrderPartiallyFilled" in err.reason
-    assert err.receipts == []
-    # __str__ should be concise
-    s = str(err)
-    assert s.startswith("On-chain revert:")
-    assert "OrderPartiallyFilled" in s
+    assert "OrderPartiallyFilled" in err.reason
+    assert str(err).startswith("On-chain revert:")
+    assert "OrderPartiallyFilled" in str(err)
 
 
 def test_raise_for_error_no_revert_code_keeps_original_reason():

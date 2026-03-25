@@ -77,17 +77,48 @@ cd sdks/rust && cargo test --features integration --test integration_tests -- --
 
 ## Maintaining On-Chain Revert Decoding
 
-All three SDKs decode Fuel VM revert codes into human-readable error names.
-Fuel's `require()` reverts with `0xffffffffffff0000 | ordinal_1_based`, and
-the SDKs map the ordinal to a named enum variant (e.g.,
-`OrderCreationError::InvalidHeapPrices`).
+All three SDKs decode on-chain revert errors into human-readable names like
+`OrderCreationError::OrderPartiallyFilled`.
+
+### How Fuel VM reverts work
+
+Sway's `require()` and `revert_with_log()` do two things:
+1. **LOG** the typed error value (a `LogData` receipt with the ABI-encoded enum)
+2. **REVERT** with a fixed signal constant (NOT the variant ordinal)
+
+Signal constants (`sway-lib-std/src/error_signals.sw`):
+- `0xffffffffffff0000` — `FAILED_REQUIRE` (`require()` failed)
+- `0xffffffffffff0006` — `REVERT_WITH_LOG` (`revert_with_log()` called)
+- `0xffffffffffff0001` — `FAILED_TRANSFER_TO_ADDRESS`
+- `0xffffffffffff0003..0005` — `FAILED_ASSERT_EQ/ASSERT/ASSERT_NE`
+
+The revert code tells you the *type* of failure. The *specific* error variant
+is in the LOG receipt that precedes the revert.
+
+### How the SDKs decode errors
+
+The backend wraps on-chain failures as `{code: 1000, reason: "..."}` where the
+`reason` string contains the fuels-rs error chain with decoded logs and raw
+receipts. The SDKs extract the error using a priority chain:
+
+1. **LogResult extraction** — The backend's fuels-rs decoded the LOG receipt.
+   The result appears as `Ok("VariantName")` in a `LogResult { results: [...] }`
+   block. The last entry matching a known variant is the error.
+
+2. **LogData receipt parsing** — The raw `LogData` receipt has `rb` (the ABI
+   log-ID identifying the enum type) and `data` (first 8 bytes = 0-based
+   variant discriminant). Match `rb` against the `loggedTypes` in the ABI.
+
+3. **Signal recognition** — Identify the Fuel VM signal constant.
+4. **PanicInstruction** — Extract `PanicInstruction { reason: Name }`.
+5. **"and error:" summary** — Extract the backend's error summary.
+6. **Truncation** — Cap long reasons at 200 chars.
 
 ### Source of truth
 
-The error enums are defined in the contract ABIs bundled in this repo under
-`abi/mainnet/` (and `abi/testnet/`, which is identical). Each ABI JSON has a
-`metadataTypes` array — entries with `"type": "enum some::path::SomeError"`
-contain a `components` array listing the variant names in ordinal order.
+The error enums and their log-IDs come from `abi/mainnet/*.json` (identical
+to testnet). Each ABI has a `loggedTypes` array mapping `logId` →
+`concreteTypeId`, which identifies the enum type and its variant list.
 
 | ABI file | Error enums |
 |----------|-------------|
@@ -104,30 +135,25 @@ SignatureError) appear in multiple ABIs and rarely change.
 
 ### Files to keep in sync
 
-All three must have identical enum lists:
+All three must have identical `ABI_ERROR_ENUMS` mappings (logId → enum name → variants):
 
-- `sdks/python/src/o2_sdk/onchain_revert.py` → `ABI_ERROR_ENUMS`
-- `sdks/typescript/src/onchain-revert.ts` → `ABI_ERROR_ENUMS`
-- `sdks/rust/src/onchain_revert.rs` → `ABI_ERROR_ENUMS`
-
-### How ordinals work
-
-Variants are **0-based** in declaration order. New variants appended at the
-end get the next ordinal. Reordering or removing existing variants changes
-all subsequent ordinals — this is a breaking change on the contract side.
+- `sdks/python/src/o2_sdk/onchain_revert.py` → `ABI_ERROR_ENUMS` dict
+- `sdks/typescript/src/onchain-revert.ts` → `ABI_ERROR_ENUMS` Map
+- `sdks/rust/src/onchain_revert.rs` → `ABI_ERROR_ENUMS` const array
 
 ### How to update after a contract upgrade
 
 1. Get the new ABI JSON (from the contract build or the backend team)
 2. Copy it to `abi/mainnet/` and `abi/testnet/`
-3. Find the changed enum in `metadataTypes` — the `components` array has the variant names in order
-4. Append new variants to the SDK's `ABI_ERROR_ENUMS` list in all three files
-5. Run tests: `just test` or per-SDK test commands
+3. In `loggedTypes`, find the new/changed error enum's `logId` and `concreteTypeId`
+4. In `concreteTypes`/`metadataTypes`, find the variant `components` list
+5. Update `ABI_ERROR_ENUMS` in all three SDK files with the new logId + variants
+6. Run tests: `just test`
 
 ### Fallback behavior
 
-- **Unknown ordinal** (new variant not yet in SDK): `"unknown ABI error ordinal=N (raw=0x...)"`
-- **No `Revert(DIGITS)` pattern found**: Raw reason truncated to 200 chars
+- **No LogResult or LogData match**: Signal constant name returned (e.g., "REVERT_WITH_LOG")
+- **Unknown logId** (new enum not yet in SDK): Falls through to signal recognition
 - **Full receipts**: Always accessible via `.receipts` property on the error object
 
 ## Release Notes (knope)

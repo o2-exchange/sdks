@@ -502,8 +502,13 @@ describe("Models Module", () => {
 
     it("parses on-chain revert error (no code)", () => {
       const error = parseApiError({
-        message: "Withdraw Revert(18446744073709486081)",
-        reason: "NotEnoughBalance",
+        message: "Withdraw failed",
+        reason:
+          'LogResult { results: [Ok("NotEnoughBalance")] } ' +
+          "and error: Revert(18446744073709486086), " +
+          "receipts: [LogData { id: x, ra: 0, rb: 14888260448086063780, " +
+          "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000001)) }, " +
+          "Revert { id: x, ra: 18446744073709486086 }]",
         receipts: [],
       });
       expect(error).toBeInstanceOf(OnChainRevertError);
