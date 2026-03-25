@@ -250,6 +250,19 @@ def _decode_revert_code(raw: int, context: str) -> str | None:
     if not candidates:
         return f"unknown ABI error ordinal={ordinal} (raw=0x{raw:016x})"
 
+    # Deprioritize admin-only enums that SDK users won't encounter.
+    if len(candidates) > 1:
+        filtered = [
+            c
+            for c in candidates
+            if "InitializationError" not in c
+            and "SetProxyOwnerError" not in c
+            and "AccessError" not in c
+            and "PauseError" not in c
+        ]
+        if filtered:
+            candidates = filtered
+
     if len(candidates) == 1:
         return f"{candidates[0]} (ordinal={ordinal}, raw=0x{raw:016x})"
 

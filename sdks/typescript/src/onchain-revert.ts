@@ -203,11 +203,19 @@ function decodeRevertCode(raw: bigint, context: string): string | undefined {
     return `unknown ABI error ordinal=${ordinal} (raw=${hexPad16(raw)})`;
   }
 
-  if (candidates.length === 1) {
-    return `${candidates[0]} (ordinal=${ordinal}, raw=${hexPad16(raw)})`;
+  // Deprioritize admin-only enums that SDK users won't encounter.
+  const ADMIN_ENUMS = ["InitializationError", "SetProxyOwnerError", "AccessError", "PauseError"];
+  let filtered = candidates;
+  if (candidates.length > 1) {
+    const nonAdmin = candidates.filter((c) => !ADMIN_ENUMS.some((a) => c.includes(a)));
+    if (nonAdmin.length > 0) filtered = nonAdmin;
   }
 
-  return `ambiguous ABI error ordinal=${ordinal} (raw=${hexPad16(raw)}); candidates=[${candidates.join(", ")}]`;
+  if (filtered.length === 1) {
+    return `${filtered[0]} (ordinal=${ordinal}, raw=${hexPad16(raw)})`;
+  }
+
+  return `ambiguous ABI error ordinal=${ordinal} (raw=${hexPad16(raw)}); candidates=[${filtered.join(", ")}]`;
 }
 
 // ---------------------------------------------------------------------------

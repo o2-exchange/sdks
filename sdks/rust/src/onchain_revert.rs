@@ -229,18 +229,40 @@ fn decode_revert_code(raw: u64, context: &str) -> Option<String> {
         ));
     }
 
-    if candidates.len() == 1 {
+    // Deprioritize admin-only enums that SDK users won't encounter.
+    let admin_enums = [
+        "InitializationError",
+        "SetProxyOwnerError",
+        "AccessError",
+        "PauseError",
+    ];
+    let filtered: Vec<&String> = if candidates.len() > 1 {
+        let non_admin: Vec<&String> = candidates
+            .iter()
+            .filter(|c| !admin_enums.iter().any(|a| c.contains(a)))
+            .collect();
+        if non_admin.is_empty() {
+            candidates.iter().collect()
+        } else {
+            non_admin
+        }
+    } else {
+        candidates.iter().collect()
+    };
+
+    if filtered.len() == 1 {
         return Some(format!(
             "{} (ordinal={}, raw=0x{:016x})",
-            candidates[0], ordinal, raw
+            filtered[0], ordinal, raw
         ));
     }
 
+    let joined: Vec<&str> = filtered.iter().map(|s| s.as_str()).collect();
     Some(format!(
         "ambiguous ABI error ordinal={} (raw=0x{:016x}); candidates=[{}]",
         ordinal,
         raw,
-        candidates.join(", ")
+        joined.join(", ")
     ))
 }
 
