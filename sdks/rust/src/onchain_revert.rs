@@ -285,8 +285,21 @@ pub(crate) fn augment_revert_reason(
         return panic;
     }
 
-    // No decodable revert code found. Cap the raw reason to avoid dumping
-    // multi-KB receipt blobs into log lines and error messages.
+    // No decodable revert code found. Try to extract the "and error: ..."
+    // summary the backend embeds after the LogResult noise.
+    if let Some(err_idx) = context.find("and error:") {
+        let after = context[err_idx + "and error:".len()..].trim_start();
+        let summary = if let Some(receipts_idx) = after.find(", receipts:") {
+            after[..receipts_idx].trim()
+        } else {
+            &after[..after.len().min(200)]
+        };
+        if !summary.is_empty() {
+            return summary.to_string();
+        }
+    }
+
+    // Cap the raw reason to avoid dumping multi-KB receipt blobs.
     if reason.len() > 200 {
         return format!(
             "{}... (truncated, full receipts on .receipts)",

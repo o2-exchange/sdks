@@ -249,8 +249,17 @@ export function augmentRevertReason(
     return panic;
   }
 
-  // No decodable revert code found. Cap the raw reason to avoid dumping
-  // multi-KB receipt blobs into log lines and error messages.
+  // No decodable revert code found. Try to extract the "and error: ..."
+  // summary the backend embeds after the LogResult noise.
+  const errIdx = context.indexOf("and error:");
+  if (errIdx !== -1) {
+    const after = context.slice(errIdx + "and error:".length).trim();
+    const receiptsIdx = after.indexOf(", receipts:");
+    const summary = receiptsIdx !== -1 ? after.slice(0, receiptsIdx).trim() : after.slice(0, 200);
+    if (summary) return summary;
+  }
+
+  // Cap the raw reason to avoid dumping multi-KB receipt blobs.
   if (reasonStr.length > 200) {
     return `${reasonStr.slice(0, 200)}... (truncated, full receipts on .receipts)`;
   }

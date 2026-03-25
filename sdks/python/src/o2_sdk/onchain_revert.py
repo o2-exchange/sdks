@@ -316,8 +316,18 @@ def augment_revert_reason(
     if panic:
         return panic
 
-    # No decodable revert code found. Cap the raw reason to avoid dumping
-    # multi-KB receipt blobs into log lines and error messages.
+    # No decodable revert code found. Try to extract the "and error: ..."
+    # summary the backend embeds after the LogResult noise.
+    err_idx = context.find("and error:")
+    if err_idx != -1:
+        after = context[err_idx + len("and error:") :].strip()
+        # Take up to the next ", receipts:" or end
+        receipts_idx = after.find(", receipts:")
+        summary = after[:receipts_idx].strip() if receipts_idx != -1 else after[:200]
+        if summary:
+            return summary
+
+    # Cap the raw reason to avoid dumping multi-KB receipt blobs.
     if len(reason) > 200:
         return f"{reason[:200]}... (truncated, full receipts on .receipts)"
     return reason
