@@ -142,6 +142,8 @@ export class O2Api {
         const body = (await resp.json()) as Record<string, unknown>;
 
         if (!resp.ok) {
+          // DEBUG: dump raw error response for FractionalPrice investigation
+          console.error(`[DEBUG] HTTP ${resp.status} ${method} ${path}`, JSON.stringify(body).slice(0, 2000));
           const err = parseApiError(body);
           if (err instanceof RateLimitExceeded && attempt < this.maxRetries) {
             const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
