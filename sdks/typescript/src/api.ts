@@ -142,6 +142,8 @@ export class O2Api {
         const body = (await resp.json()) as Record<string, unknown>;
 
         if (!resp.ok) {
+          // DEBUG: dump full error response body (temporary)
+          console.error(`[API DEBUG] status=${resp.status} body_keys=${Object.keys(body)} full_body=${JSON.stringify(body).slice(0, 2000)}`);
           const err = parseApiError(body);
           if (err instanceof RateLimitExceeded && attempt < this.maxRetries) {
             const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
@@ -484,6 +486,9 @@ export class O2Api {
     if (isActionsSuccess(body)) {
       return SessionActionsResponse.fromResponse(body, parseOrder);
     }
+
+    // DEBUG: dump full actions error body (temporary)
+    console.error(`[submitActions DEBUG] body_keys=${Object.keys(body)} full_body=${JSON.stringify(body).slice(0, 2000)}`);
 
     const error = parseApiError(body);
 
