@@ -266,7 +266,7 @@ def raise_for_error(data: dict[str, Any]) -> None:
         return
 
     code = data.get("code")
-    message = data.get("message", "Unknown error")
+    message = data.get("message") or data.get("error") or "Unknown error"
     reason = data.get("reason")
     receipts = data.get("receipts")
 
@@ -274,7 +274,7 @@ def raise_for_error(data: dict[str, Any]) -> None:
         error_cls = ERROR_CODE_MAP.get(code, O2Error)
         raise error_cls(message=message, code=code, reason=reason, receipts=receipts)
 
-    if "message" in data:
+    if "message" in data or "error" in data:
         from .onchain_revert import augment_revert_reason
 
         augmented_reason = augment_revert_reason(message, reason, receipts)
