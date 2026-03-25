@@ -186,9 +186,9 @@ let mut active_sell: Option<String> = None;
 
 loop {
     // Get current mid price
-    let depth = client.get_depth(market, 10).await?;
+    let depth = client.get_depth(market, 1, None).await?;
 
-    let mid = if let (Some(bid), Some(ask)) = (depth.buys.first(), depth.sells.first()) {
+    let mid = if let (Some(bid), Some(ask)) = (depth.bids.first(), depth.asks.first()) {
         let bid_price = market.format_price(bid.price);
         let ask_price = market.format_price(ask.price);
         (bid_price + ask_price) / 2.0

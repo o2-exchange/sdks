@@ -374,6 +374,37 @@ describe("Models Module", () => {
         expect(trade.quantity).toBe(50n);
         expect(trade.total).toBe(5000n);
         expect(trade.side).toBe("buy");
+        expect(trade.timestamp).toBe(1734876543);
+        expect(trade.trader_side).toBeUndefined();
+      });
+
+      it("parses trader_side when present", () => {
+        const raw = {
+          trade_id: "42",
+          side: "Buy",
+          price: "100",
+          quantity: "50",
+          total: "5000",
+          timestamp: "1734876543",
+          trader_side: "maker",
+        };
+        const trade = parseTrade(raw);
+        expect(trade.trader_side).toBe("maker");
+      });
+
+      it("parses trader_side taker", () => {
+        const raw = {
+          trade_id: "42",
+          side: "Sell",
+          price: "100",
+          quantity: "50",
+          total: "5000",
+          timestamp: 1734876543,
+          trader_side: "taker",
+        };
+        const trade = parseTrade(raw);
+        expect(trade.trader_side).toBe("taker");
+        expect(trade.timestamp).toBe(1734876543);
       });
 
       it("defaults price, quantity, total to 0n when missing", () => {
@@ -428,8 +459,8 @@ describe("Models Module", () => {
           },
         });
         expect(update.view?.precision).toBe(3);
-        expect(update.view?.buys[0].price).toBe(100n);
-        expect(update.view?.sells[0].price).toBe(200n);
+        expect(update.view?.bids[0].price).toBe(100n);
+        expect(update.view?.asks[0].price).toBe(200n);
       });
 
       it("parses view without precision", () => {
@@ -454,7 +485,7 @@ describe("Models Module", () => {
           },
         });
         expect(update.view).toBeUndefined();
-        expect(update.changes?.buys[0].price).toBe(100n);
+        expect(update.changes?.bids[0].price).toBe(100n);
       });
     });
   });
@@ -471,13 +502,18 @@ describe("Models Module", () => {
 
     it("parses on-chain revert error (no code)", () => {
       const error = parseApiError({
-        message: "Revert(18446744073709486080)",
-        reason: "NotEnoughBalance",
+        message: "Withdraw failed",
+        reason:
+          'LogResult { results: [Ok("NotEnoughBalance")] } ' +
+          "and error: Revert(18446744073709486086), " +
+          "receipts: [LogData { id: x, ra: 0, rb: 14888260448086063780, " +
+          "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000001)) }, " +
+          "Revert { id: x, ra: 18446744073709486086 }]",
         receipts: [],
       });
       expect(error).toBeInstanceOf(OnChainRevertError);
       expect(error.code).toBeUndefined();
-      expect(error.reason).toBe("NotEnoughBalance");
+      expect(error.reason).toContain("WithdrawError::NotEnoughBalance");
     });
 
     it("parses unknown error code", () => {

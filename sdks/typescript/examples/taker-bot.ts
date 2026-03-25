@@ -56,7 +56,7 @@ async function main() {
   const depthStream = await client.streamDepth(pair, 1);
 
   for await (const update of depthStream) {
-    const sells = update.view?.sells ?? update.changes?.sells;
+    const sells = update.view?.asks ?? update.changes?.asks;
     if (!sells || sells.length === 0) continue;
 
     // depth levels now have bigint price/quantity

@@ -52,7 +52,7 @@ async function main() {
 
   // 5. Check depth to find a reasonable price
   const depth = await client.getDepth(pair, 10);
-  console.log(`Order book: ${depth.buys.length} bids, ${depth.sells.length} asks`);
+  console.log(`Order book: ${depth.bids.length} bids, ${depth.asks.length} asks`);
 
   // 6. Place a spot buy order at a low price (string = human-readable, auto-scaled)
   const buyPrice = "0.001"; // Very low to avoid immediate fill

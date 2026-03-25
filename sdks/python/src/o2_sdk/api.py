@@ -118,7 +118,7 @@ class O2Api:
 
                     if resp.status >= 400 and isinstance(data, dict):
                         code = data.get("code")
-                        message = data.get("message", f"HTTP {resp.status}")
+                        message = data.get("message") or data.get("error") or f"HTTP {resp.status}"
                         logger.debug(
                             "%s %s -> %d error (code=%s) %.0fms: %s",
                             method,
@@ -132,11 +132,18 @@ class O2Api:
                             from .errors import ERROR_CODE_MAP
 
                             error_cls = ERROR_CODE_MAP.get(code, O2Error)
+                            # Augment revert messages even on code-based errors —
+                            # the backend sometimes returns code=1000 (InternalError)
+                            # with the revert info buried in the message field.
+                            reason = data.get("reason")
+                            receipts = data.get("receipts")
+                            if "Revert" in message or "revert" in message or "Panic" in message:
+                                from .onchain_revert import augment_revert_reason
+
+                                message = augment_revert_reason(message, reason, receipts)
                             raise error_cls(message=message, code=code)
-                        if "message" in data and "tx_id" not in data:
-                            reason = data.get("reason", "")
-                            full_msg = f"{message}: {reason}" if reason else message
-                            raise O2Error(message=full_msg)
+                        if ("message" in data or "error" in data) and "tx_id" not in data:
+                            raise_for_error(data)
                     else:
                         logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)
 
@@ -173,11 +180,27 @@ class O2Api:
         data = await self._request("GET", "/v1/markets/ticker", params={"market_id": market_id})
         return MarketTicker.from_dict(data)
 
-    async def get_depth(self, market_id: str, precision: int = 10) -> DepthSnapshot:
-        data = await self._request(
-            "GET", "/v1/depth", params={"market_id": market_id, "precision": precision}
-        )
-        return DepthSnapshot.from_dict(data)
+    async def get_depth(
+        self,
+        market_id: str,
+        precision: int = 10,
+        limit: int | None = None,
+    ) -> DepthSnapshot:
+        params: dict[str, Any] = {"market_id": market_id, "precision": precision}
+        if limit is not None:
+            params["limit"] = limit
+        data = await self._request("GET", "/v1/depth", params=params)
+        snapshot = DepthSnapshot.from_dict(data)
+        # Client-side truncation: even if the backend doesn't support the
+        # limit parameter yet, we honour it here so callers always get the
+        # expected number of levels.
+        if limit is not None:
+            snapshot = DepthSnapshot(
+                bids=snapshot.bids[:limit],
+                asks=snapshot.asks[:limit],
+                market_id=snapshot.market_id,
+            )
+        return snapshot
 
     async def get_trades(
         self,
@@ -186,6 +209,7 @@ class O2Api:
         count: int = 50,
         start_timestamp: int | None = None,
         start_trade_id: str | None = None,
+        contract: str | None = None,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -196,6 +220,8 @@ class O2Api:
             params["start_timestamp"] = start_timestamp
         if start_trade_id is not None:
             params["start_trade_id"] = start_trade_id
+        if contract is not None:
+            params["contract"] = contract
         data = await self._request("GET", "/v1/trades", params=params)
         if isinstance(data, list):
             return [Trade.from_dict(t) for t in data]
@@ -207,6 +233,8 @@ class O2Api:
         contract: str,
         direction: str = "desc",
         count: int = 50,
+        start_timestamp: int | None = None,
+        start_trade_id: str | None = None,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -214,10 +242,37 @@ class O2Api:
             "direction": direction,
             "count": count,
         }
+        if start_timestamp is not None:
+            params["start_timestamp"] = start_timestamp
+        if start_trade_id is not None:
+            params["start_trade_id"] = start_trade_id
         data = await self._request("GET", "/v1/trades_by_account", params=params)
         if isinstance(data, list):
             return [Trade.from_dict(t) for t in data]
         return [Trade.from_dict(t) for t in data.get("trades", [])]
+
+    _VALID_RESOLUTIONS = frozenset(
+        {
+            "1s",
+            "1m",
+            "2m",
+            "3m",
+            "5m",
+            "15m",
+            "30m",
+            "1h",
+            "2h",
+            "4h",
+            "6h",
+            "8h",
+            "12h",
+            "1d",
+            "3d",
+            "1w",
+            "1M",
+            "3M",
+        }
+    )
 
     async def get_bars(
         self,
@@ -226,6 +281,25 @@ class O2Api:
         to_ts: int,
         resolution: str = "1h",
     ) -> list[Bar]:
+        """Fetch OHLCV candle bars.
+
+        Args:
+            market_id: Market identifier.
+            from_ts: Start timestamp in **milliseconds** (not seconds).
+            to_ts: End timestamp in **milliseconds** (not seconds).
+            resolution: Bar resolution. Valid values:
+                ``1s``, ``1m``, ``2m``, ``3m``, ``5m``, ``15m``, ``30m``,
+                ``1h``, ``2h``, ``4h``, ``6h``, ``8h``, ``12h``,
+                ``1d``, ``3d``, ``1w``, ``1M``, ``3M``.
+
+        Raises:
+            ValueError: If *resolution* is not one of the valid values.
+        """
+        if resolution not in self._VALID_RESOLUTIONS:
+            raise ValueError(
+                f"Invalid bar resolution {resolution!r}. "
+                f"Valid values: {sorted(self._VALID_RESOLUTIONS)}"
+            )
         params: dict[str, Any] = {
             "market_id": market_id,
             "from": from_ts,

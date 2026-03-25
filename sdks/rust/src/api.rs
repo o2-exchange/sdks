@@ -51,30 +51,59 @@ impl O2Api {
             // Try to parse as API error
             if let Ok(err) = serde_json::from_str::<serde_json::Value>(&text) {
                 if let Some(code) = err.get("code").and_then(|c| c.as_u64()) {
-                    let message = err
+                    let raw_message = err
                         .get("message")
+                        .or_else(|| err.get("error"))
                         .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown error")
-                        .to_string();
+                        .unwrap_or("Unknown error");
+                    // Augment revert messages even on code-based errors —
+                    // the backend sometimes returns code=1000 with revert
+                    // info in the message field.
+                    let message = if raw_message.contains("Revert")
+                        || raw_message.contains("revert")
+                        || raw_message.contains("Panic")
+                    {
+                        let reason = err.get("reason").and_then(|r| r.as_str()).unwrap_or("");
+                        let receipts = err.get("receipts").cloned();
+                        crate::onchain_revert::augment_revert_reason(
+                            raw_message,
+                            reason,
+                            receipts.as_ref(),
+                        )
+                    } else {
+                        raw_message.to_string()
+                    };
                     return Err(O2Error::from_code(code as u32, message));
                 }
-                if let Some(message) = err.get("message").and_then(|m| m.as_str()) {
-                    let raw_reason = err
-                        .get("reason")
-                        .and_then(|r| r.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                if let Some(message) = err
+                    .get("message")
+                    .or_else(|| err.get("error"))
+                    .and_then(|m| m.as_str())
+                {
+                    let raw_reason = err.get("reason").and_then(|r| r.as_str()).unwrap_or("");
                     let receipts = err.get("receipts").cloned();
-                    let reason = crate::onchain_revert::augment_revert_reason(
-                        message,
-                        &raw_reason,
-                        receipts.as_ref(),
-                    );
-                    return Err(O2Error::OnChainRevert {
-                        message: message.to_string(),
-                        reason,
-                        receipts,
-                    });
+                    let has_receipts = receipts.as_ref().is_some_and(|v| !v.is_null());
+                    let has_revert_evidence = raw_reason.contains("Revert")
+                        || raw_reason.to_lowercase().contains("receipt")
+                        || message.to_lowercase().contains("transaction");
+
+                    // Only classify as OnChainRevert when there's evidence of
+                    // an on-chain transaction.  Plain API errors (e.g. analytics
+                    // 500) should be generic HttpError, not OnChainRevert.
+                    if has_receipts || has_revert_evidence {
+                        let reason = crate::onchain_revert::augment_revert_reason(
+                            message,
+                            raw_reason,
+                            receipts.as_ref(),
+                        );
+                        return Err(O2Error::OnChainRevert {
+                            message: message.to_string(),
+                            reason,
+                            receipts,
+                        });
+                    }
+
+                    return Err(O2Error::HttpError(format!("HTTP {}: {}", status, message)));
                 }
             }
             return Err(O2Error::HttpError(format!("HTTP {}: {}", status, text)));
@@ -145,20 +174,30 @@ impl O2Api {
         &self,
         market_id: &str,
         precision: u64,
+        limit: Option<usize>,
     ) -> Result<DepthSnapshot, O2Error> {
         debug!(
-            "api.get_depth market_id={} precision={}",
-            market_id, precision
+            "api.get_depth market_id={} precision={} limit={:?}",
+            market_id, precision, limit
         );
         let url = format!("{}/v1/depth", self.config.api_base);
         let precision_str = precision.to_string();
+        let mut pairs: Vec<(&str, String)> = vec![
+            ("market_id", market_id.to_string()),
+            ("precision", precision_str),
+        ];
+        if let Some(lim) = limit {
+            pairs.push(("limit", lim.to_string()));
+        }
         let resp = self
             .client
             .get(&url)
-            .query(&[
-                ("market_id", market_id),
-                ("precision", precision_str.as_str()),
-            ])
+            .query(
+                &pairs
+                    .iter()
+                    .map(|(k, v)| (*k, v.as_str()))
+                    .collect::<Vec<_>>(),
+            )
             .send()
             .await?;
         let val: serde_json::Value = self.parse_response(resp).await?;
@@ -167,8 +206,15 @@ impl O2Api {
             .get("orders")
             .or_else(|| val.get("view"))
             .unwrap_or(&val);
-        serde_json::from_value(depth.clone())
-            .map_err(|e| O2Error::JsonError(format!("Failed to parse depth: {e}")))
+        let mut snapshot: DepthSnapshot = serde_json::from_value(depth.clone())
+            .map_err(|e| O2Error::JsonError(format!("Failed to parse depth: {e}")))?;
+        // Client-side truncation: honour the limit even if the backend
+        // doesn't support it yet.
+        if let Some(lim) = limit {
+            snapshot.bids.truncate(lim);
+            snapshot.asks.truncate(lim);
+        }
+        Ok(snapshot)
     }
 
     // -----------------------------------------------------------------------
@@ -183,10 +229,11 @@ impl O2Api {
         count: u32,
         start_timestamp: Option<u64>,
         start_trade_id: Option<&str>,
+        contract: Option<&str>,
     ) -> Result<TradesResponse, O2Error> {
         debug!(
-            "api.get_trades market_id={} direction={} count={} start_timestamp={:?} start_trade_id={:?}",
-            market_id, direction, count, start_timestamp, start_trade_id
+            "api.get_trades market_id={} direction={} count={} contract={:?}",
+            market_id, direction, count, contract
         );
         let url = format!("{}/v1/trades", self.config.api_base);
         let count_str = count.to_string();
@@ -202,6 +249,9 @@ impl O2Api {
         if let Some(tid) = start_trade_id {
             query.push(("start_trade_id", tid));
         }
+        if let Some(c) = contract {
+            query.push(("contract", c));
+        }
         let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
@@ -213,6 +263,8 @@ impl O2Api {
         contract: &str,
         direction: &str,
         count: u32,
+        start_timestamp: Option<u64>,
+        start_trade_id: Option<&str>,
     ) -> Result<TradesResponse, O2Error> {
         debug!(
             "api.get_trades_by_account market_id={} contract={} direction={} count={}",
@@ -220,21 +272,34 @@ impl O2Api {
         );
         let url = format!("{}/v1/trades_by_account", self.config.api_base);
         let count_str = count.to_string();
-        let resp = self
-            .client
-            .get(&url)
-            .query(&[
-                ("market_id", market_id),
-                ("contract", contract),
-                ("direction", direction),
-                ("count", count_str.as_str()),
-            ])
-            .send()
-            .await?;
+        let start_timestamp_str = start_timestamp.map(|ts| ts.to_string());
+        let mut query: Vec<(&str, &str)> = vec![
+            ("market_id", market_id),
+            ("contract", contract),
+            ("direction", direction),
+            ("count", count_str.as_str()),
+        ];
+        if let Some(ts) = start_timestamp_str.as_deref() {
+            query.push(("start_timestamp", ts));
+        }
+        if let Some(tid) = start_trade_id {
+            query.push(("start_trade_id", tid));
+        }
+        let resp = self.client.get(&url).query(&query).send().await?;
         self.parse_response(resp).await
     }
 
+    /// Valid bar resolutions accepted by the API.
+    const VALID_RESOLUTIONS: &'static [&'static str] = &[
+        "1s", "1m", "2m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "6h", "8h", "12h", "1d",
+        "3d", "1w", "1M", "3M",
+    ];
+
     /// GET /v1/bars - OHLCV candlestick data.
+    ///
+    /// `from_ts` and `to_ts` are in **milliseconds** (not seconds).
+    /// `resolution` must be one of: `1s`, `1m`, `2m`, `3m`, `5m`, `15m`, `30m`,
+    /// `1h`, `2h`, `4h`, `6h`, `8h`, `12h`, `1d`, `3d`, `1w`, `1M`, `3M`.
     pub async fn get_bars(
         &self,
         market_id: &str,
@@ -242,6 +307,12 @@ impl O2Api {
         to_ts: u64,
         resolution: &str,
     ) -> Result<Vec<Bar>, O2Error> {
+        if !Self::VALID_RESOLUTIONS.contains(&resolution) {
+            return Err(O2Error::InvalidRequest(format!(
+                "Invalid bar resolution \"{resolution}\". Valid values: {:?}",
+                Self::VALID_RESOLUTIONS
+            )));
+        }
         debug!(
             "api.get_bars market_id={} from_ts={} to_ts={} resolution={}",
             market_id, from_ts, to_ts, resolution

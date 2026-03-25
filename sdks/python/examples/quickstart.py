@@ -42,7 +42,7 @@ async def main():
     print(f"Session created, expires: {session.session_expiry}")
 
     # 6. Place a spot buy order using high-level create_order
-    depth = await client.get_depth(market.pair, precision=10)
+    depth = await client.get_depth(market.pair, precision=1)
     price = market.format_price(int(depth.best_ask.price)) * 0.5 if depth.best_ask else 0.01
 
     quantity = max(
@@ -69,7 +69,7 @@ async def main():
             print(f"Order ID: {order.order_id}")
 
             # 7. Check order status
-            orders = await client.get_orders(account.trade_account_id, market.pair, is_open=True)
+            orders = await client.get_orders(market.pair, account.trade_account_id, is_open=True)
             print(f"Open orders: {len(orders)}")
 
             # 8. Build and submit a typed batch with the fluent builder

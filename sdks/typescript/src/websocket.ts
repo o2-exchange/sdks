@@ -7,9 +7,10 @@
  * Features:
  * - Auto-reconnect with exponential backoff and jitter
  * - `AsyncGenerator` streams for each subscription type
- * - Heartbeat/ping-pong health monitoring
+ * - Heartbeat/ping-pong health monitoring (protocol-level, not data-based)
  * - Automatic re-subscription after reconnect
- * - Proper cleanup on disconnect
+ * - Connection lifecycle events for state awareness
+ * - Proper cleanup on disconnect with timeouts
  *
  * @module
  */
@@ -18,6 +19,7 @@ import WebSocket from "ws";
 import type { NetworkConfig } from "./config.js";
 import type {
   BalanceUpdate,
+  DepthPrecision,
   DepthUpdate,
   Identity,
   NonceUpdate,
@@ -31,6 +33,36 @@ import {
   parseOrderUpdate,
   parseTradeUpdate,
 } from "./models.js";
+
+// ── Lifecycle events ─────────────────────────────────────────────
+
+/**
+ * WebSocket connection lifecycle states.
+ */
+export type ConnectionState =
+  | "connected"
+  | "disconnected"
+  | "reconnecting"
+  | "reconnected"
+  | "closed";
+
+/**
+ * Emitted on WebSocket lifecycle transitions.
+ *
+ * Subscribe via {@link O2WebSocket.streamLifecycle} to detect reconnects
+ * and re-sync state from the REST API — messages during the disconnect
+ * window are lost.
+ */
+export interface ConnectionEvent {
+  /** The new connection state. */
+  state: ConnectionState;
+  /** Reconnect attempt number (0 when not reconnecting). */
+  attempt: number;
+  /** Human-readable description. */
+  message: string;
+}
+
+// ── Options ──────────────────────────────────────────────────────
 
 /**
  * Configuration options for {@link O2WebSocket}.
@@ -74,7 +106,7 @@ type MessageHandler = (data: Record<string, unknown>) => void;
 export class O2WebSocket {
   private ws: WebSocket | null = null;
   private readonly url: string;
-  private readonly reconnect: boolean;
+  private readonly shouldReconnect: boolean;
   private readonly maxReconnectAttempts: number;
   private readonly reconnectDelayMs: number;
   private readonly pingIntervalMs: number;
@@ -85,12 +117,11 @@ export class O2WebSocket {
   private connected = false;
   private closing = false;
   private terminated = false;
-  private lastPong = 0;
   private pendingSubscriptions: Array<Record<string, unknown>> = [];
 
   constructor(options: O2WebSocketOptions) {
     this.url = options.config.wsUrl;
-    this.reconnect = options.reconnect ?? true;
+    this.shouldReconnect = options.reconnect ?? true;
     this.maxReconnectAttempts = options.maxReconnectAttempts ?? 10;
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
@@ -107,7 +138,6 @@ export class O2WebSocket {
       this.ws.on("open", () => {
         this.connected = true;
         this.reconnectAttempts = 0;
-        this.lastPong = Date.now();
         this.startPingInterval();
         // Re-subscribe after reconnect
         for (const sub of this.pendingSubscriptions) {
@@ -117,7 +147,6 @@ export class O2WebSocket {
       });
 
       this.ws.on("message", (data: WebSocket.Data) => {
-        this.lastPong = Date.now();
         try {
           const msg = JSON.parse(data.toString()) as Record<string, unknown>;
           const action = msg.action as string | undefined;
@@ -140,7 +169,8 @@ export class O2WebSocket {
       this.ws.on("close", () => {
         this.connected = false;
         this.stopPingInterval();
-        if (!this.closing && this.reconnect) {
+        if (!this.closing && this.shouldReconnect) {
+          this.emitLifecycle("disconnected", 0, "Connection lost");
           this.attemptReconnect();
         }
       });
@@ -151,28 +181,59 @@ export class O2WebSocket {
         }
       });
 
+      // Protocol-level pong — the ONLY signal used for liveness detection.
+      // Application data arrival is NOT used because subscriptions may
+      // legitimately receive no data for long periods (e.g. depth at
+      // precision 0 on a quiet market).
       this.ws.on("pong", () => {
-        this.lastPong = Date.now();
+        // Pong received — connection is alive.  The ping interval check
+        // uses ws.ping() which returns a pong; we just need to know it
+        // arrived.  Node ws fires this event on protocol-level pong.
       });
     });
   }
 
-  /** Disconnect from the WebSocket server. */
+  /**
+   * Disconnect from the WebSocket server.
+   *
+   * Signals all active generators to stop before closing the connection,
+   * so consumers are unblocked immediately even if the close handshake
+   * is slow.
+   */
   disconnect(): void {
     this.closing = true;
     this.stopPingInterval();
     this.pendingSubscriptions = [];
-    // Signal all active generators to stop before clearing handlers
+
+    // Signal all active generators to stop FIRST — consumers should
+    // unblock before we attempt the (potentially slow) WS close.
+    this.emitLifecycle("closed", 0, "Disconnected by client");
     const closeHandlers = this.handlers.get("__close__");
     if (closeHandlers) {
       for (const handler of closeHandlers) handler({});
     }
     this.handlers.clear();
+
     if (this.ws) {
-      this.ws.close();
+      // Close with a timeout — a half-open TCP socket can hang for
+      // minutes waiting for the server's close frame.
+      const ws = this.ws;
       this.ws = null;
+      this.connected = false;
+
+      const closeTimeout = setTimeout(() => {
+        try {
+          ws.terminate();
+        } catch {
+          // Already closed
+        }
+      }, 5000);
+
+      ws.once("close", () => clearTimeout(closeTimeout));
+      ws.close();
+    } else {
+      this.connected = false;
     }
-    this.connected = false;
   }
 
   /** Check if connected. */
@@ -185,20 +246,111 @@ export class O2WebSocket {
     return this.terminated;
   }
 
+  // ── Lifecycle events ───────────────────────────────────────────
+
+  /**
+   * Stream WebSocket connection lifecycle events.
+   *
+   * Yields {@link ConnectionEvent} objects whenever the connection state
+   * changes.  Use this to detect reconnects and re-sync state from the
+   * REST API — messages received during the disconnect window are lost.
+   *
+   * @example
+   * ```ts
+   * for await (const event of ws.streamLifecycle()) {
+   *   if (event.state === "reconnected") {
+   *     const balances = await client.getBalances(account);
+   *     // ... rebuild local state ...
+   *   } else if (event.state === "closed") {
+   *     break;
+   *   }
+   * }
+   * ```
+   */
+  async *streamLifecycle(): AsyncGenerator<ConnectionEvent> {
+    const queue: ConnectionEvent[] = [];
+    let resolve: (() => void) | null = null;
+    let done = false;
+
+    const handler = (msg: Record<string, unknown>) => {
+      queue.push(msg as unknown as ConnectionEvent);
+      if (resolve) {
+        resolve();
+        resolve = null;
+      }
+    };
+
+    const closeHandler = () => {
+      done = true;
+      if (resolve) {
+        resolve();
+        resolve = null;
+      }
+    };
+
+    // Register on the __lifecycle__ action
+    let lifecycleHandlers = this.handlers.get("__lifecycle__");
+    if (!lifecycleHandlers) {
+      lifecycleHandlers = new Set();
+      this.handlers.set("__lifecycle__", lifecycleHandlers);
+    }
+    lifecycleHandlers.add(handler);
+
+    let closeHandlers = this.handlers.get("__close__");
+    if (!closeHandlers) {
+      closeHandlers = new Set();
+      this.handlers.set("__close__", closeHandlers);
+    }
+    closeHandlers.add(closeHandler);
+
+    try {
+      while (!done) {
+        if (queue.length > 0) {
+          yield queue.shift()!;
+        } else {
+          await new Promise<void>((r) => {
+            resolve = r;
+          });
+        }
+      }
+      // Drain events queued before done was set. disconnect() emits
+      // the "closed" lifecycle event synchronously before firing close
+      // handlers that set done=true — so the event is in the queue but
+      // the while-loop exits before yielding it. This ensures consumers
+      // always receive the terminal "closed" event.
+      while (queue.length > 0) {
+        yield queue.shift()!;
+      }
+    } finally {
+      const lh = this.handlers.get("__lifecycle__");
+      if (lh) {
+        lh.delete(handler);
+        if (lh.size === 0) this.handlers.delete("__lifecycle__");
+      }
+      const ch = this.handlers.get("__close__");
+      if (ch) {
+        ch.delete(closeHandler);
+        if (ch.size === 0) this.handlers.delete("__close__");
+      }
+    }
+  }
+
   // ── Subscription streams ────────────────────────────────────────
 
   /**
    * Subscribe to order book depth updates.
-   * Returns an AsyncGenerator yielding DepthUpdate messages.
+   *
+   * @param marketId - The market ID (hex string).
+   * @param precision - A validated {@link DepthPrecision} created via
+   *   {@link depthPrecision}`(level)` where level is 1–18. The high-level
+   *   {@link O2Client.streamDepth} creates this automatically from a plain number.
+   * @returns An async generator yielding {@link DepthUpdate} messages.
    */
-  async *streamDepth(
-    marketId: string,
-    precision: string | number = "10",
-  ): AsyncGenerator<DepthUpdate> {
+  async *streamDepth(marketId: string, precision: DepthPrecision): AsyncGenerator<DepthUpdate> {
     const sub = {
       action: "subscribe_depth",
       market_id: marketId,
-      precision: String(precision),
+      precision: precision as string,
     };
     yield* this.subscribe<DepthUpdate>(
       sub,
@@ -283,6 +435,14 @@ export class O2WebSocket {
     }
   }
 
+  private emitLifecycle(state: ConnectionState, attempt: number, message: string): void {
+    const event: ConnectionEvent = { state, attempt, message };
+    const handlers = this.handlers.get("__lifecycle__");
+    if (handlers) {
+      for (const handler of handlers) handler(event as unknown as Record<string, unknown>);
+    }
+  }
+
   private async *subscribe<T>(
     subscription: Record<string, unknown>,
     actions: string[],
@@ -355,6 +515,10 @@ export class O2WebSocket {
           });
         }
       }
+      // Drain data queued before close handler set done=true.
+      while (queue.length > 0) {
+        yield queue.shift()!;
+      }
     } finally {
       // Clean up handlers
       for (const action of actions) {
@@ -375,13 +539,30 @@ export class O2WebSocket {
   private startPingInterval(): void {
     this.stopPingInterval();
     this.pingInterval = setInterval(() => {
-      if (this.ws && this.connected) {
-        // Check pong timeout
-        if (this.lastPong > 0 && Date.now() - this.lastPong > this.pongTimeoutMs) {
-          this.ws.close();
-          return;
-        }
+      if (!this.ws || !this.connected) return;
+
+      // Use protocol-level ping/pong for liveness detection.
+      // Do NOT use application data arrival — subscriptions may
+      // legitimately receive no data for long periods.
+      try {
+        let pongReceived = false;
+        const pongHandler = () => {
+          pongReceived = true;
+        };
+        this.ws.once("pong", pongHandler);
         this.ws.ping();
+
+        // Check after pongTimeoutMs if pong arrived
+        setTimeout(() => {
+          this.ws?.removeListener("pong", pongHandler);
+          if (!pongReceived && this.connected && !this.closing) {
+            // No pong — connection is dead
+            this.ws?.close();
+          }
+        }, this.pongTimeoutMs);
+      } catch {
+        // Connection error during ping
+        this.ws?.close();
       }
     }, this.pingIntervalMs);
   }
@@ -397,6 +578,11 @@ export class O2WebSocket {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       // Max attempts exhausted — signal all generators to terminate
       this.terminated = true;
+      this.emitLifecycle(
+        "closed",
+        this.reconnectAttempts,
+        `Max reconnect attempts (${this.maxReconnectAttempts}) exhausted`,
+      );
       const closeHandlers = this.handlers.get("__close__");
       if (closeHandlers) {
         for (const handler of closeHandlers) handler({});
@@ -406,12 +592,25 @@ export class O2WebSocket {
 
     const delay = this.reconnectDelayMs * 2 ** this.reconnectAttempts * (0.5 + Math.random());
     this.reconnectAttempts++;
+    this.emitLifecycle(
+      "reconnecting",
+      this.reconnectAttempts,
+      `Reconnecting in ${Math.round(delay)}ms (attempt ${this.reconnectAttempts})`,
+    );
 
     setTimeout(() => {
       if (!this.closing) {
-        this.connect().catch(() => {
-          // Reconnect failed, will try again via the close handler
-        });
+        this.connect()
+          .then(() => {
+            this.emitLifecycle(
+              "reconnected",
+              this.reconnectAttempts,
+              "Reconnected — consumers should re-sync from REST",
+            );
+          })
+          .catch(() => {
+            // Reconnect failed, will try again via the close handler
+          });
       }
     }, delay);
   }

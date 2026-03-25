@@ -14,6 +14,8 @@
  * @module
  */
 
+import { augmentRevertReason } from "./onchain-revert.js";
+
 /**
  * Base error class for all O2 Exchange errors.
  *
@@ -299,13 +301,19 @@ export class SessionExpired extends O2Error {
 /**
  * Error raised when an on-chain transaction reverts.
  *
- * Has no `code` field. Check `reason` for the revert name (e.g.,
- * `"NotEnoughBalance"`, `"TraderNotWhiteListed"`, `"PricePrecision"`).
+ * Has no `code` field. Check `reason` for the decoded revert name (e.g.,
+ * `"OrderCreationError::InvalidHeapPrices"`, `"WithdrawError::NotEnoughBalance"`).
+ * Full transaction receipts are available via the `receipts` property.
  */
 export class OnChainRevertError extends O2Error {
   constructor(message: string, reason?: string, receipts?: unknown[]) {
     super(message, undefined, reason, receipts);
     this.name = "OnChainRevertError";
+  }
+
+  override toString(): string {
+    if (this.reason) return `On-chain revert: ${this.reason}`;
+    return `On-chain revert: ${this.message}`;
   }
 }
 
@@ -347,21 +355,41 @@ const ERROR_MAP: Record<number, new (message: string) => O2Error> = {
  */
 export function parseApiError(body: Record<string, unknown>): O2Error {
   const code = body.code as number | undefined;
-  const message = (body.message as string) ?? "Unknown error";
+  // Some endpoints use "error" instead of "message" (e.g. HTTP 500).
+  const message = ((body.message ?? body.error) as string) ?? "Unknown error";
   const reason = body.reason as string | undefined;
   const receipts = body.receipts as unknown[] | undefined;
 
-  // Pre-flight validation error: has code
+  // Pre-flight validation error: has code.
+  // The backend sometimes returns code=1000 (InternalError) with revert
+  // info in the message — augment before raising so callers see a clean name.
   if (code !== undefined) {
+    let msg = message;
+    if (message.includes("Revert") || message.includes("revert") || message.includes("Panic")) {
+      msg = augmentRevertReason(message, reason, receipts);
+    }
     const ErrorClass = ERROR_MAP[code];
     if (ErrorClass) {
-      return new ErrorClass(message);
+      return new ErrorClass(msg);
     }
-    return new O2Error(message, code);
+    return new O2Error(msg, code);
   }
 
-  // On-chain revert: no code, has message (and possibly reason/receipts)
-  return new OnChainRevertError(message, reason, receipts);
+  // Only classify as OnChainRevert when there's evidence of an on-chain
+  // transaction (receipts, reason with revert patterns, etc.).  Plain API
+  // errors (e.g. analytics 500) should be generic O2Error, not OnChainRevert.
+  const hasOnchainEvidence =
+    receipts != null ||
+    (typeof reason === "string" &&
+      (reason.includes("Revert") || reason.toLowerCase().includes("receipt"))) ||
+    (typeof message === "string" && message.toLowerCase().includes("transaction"));
+
+  if (hasOnchainEvidence) {
+    const decoded = augmentRevertReason(message, reason, receipts);
+    return new OnChainRevertError(message, decoded || undefined, receipts);
+  }
+
+  return new O2Error(message);
 }
 
 /**

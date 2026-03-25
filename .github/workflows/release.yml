@@ -1,16 +1,45 @@
 name: Release
 
 on:
+  # Trigger when the release PR is merged
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+  # Also trigger on manual tag push (fallback)
   push:
     tags:
-      - "python-v*"
-      - "typescript-v*"
-      - "rust-v*"
+      - "sdk-python/v*"
+      - "sdk-typescript/v*"
+      - "sdk-rust/v*"
+
+permissions:
+  contents: write
+  id-token: write
 
 jobs:
+  # --- Create GitHub Releases + tags when the release PR merges ---
+  create-releases:
+    name: Create GitHub Releases
+    if: github.event_name == 'pull_request' && github.head_ref == 'release' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: knope-dev/action@v2
+        with:
+          version: 0.22.4
+      - name: Create releases
+        run: knope release --verbose
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
+
+  # --- Publish jobs (triggered by tags created above) ---
   publish-python:
     name: Publish Python SDK
-    if: startsWith(github.ref, 'refs/tags/python-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk-python/v')
     runs-on: ubuntu-latest
     environment:
       name: deploy-pypi
@@ -33,7 +62,7 @@ jobs:
 
   publish-typescript:
     name: Publish TypeScript SDK
-    if: startsWith(github.ref, 'refs/tags/typescript-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk-typescript/v')
     runs-on: ubuntu-latest
     environment: deploy-npm
     timeout-minutes: 15
@@ -50,7 +79,7 @@ jobs:
           registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
-          node-version: 24 # install later node to support npm publishing
+          node-version: 24
       - run: sudo npm install -g npm@latest
       - run: npm ci
       - run: npm run build
@@ -58,7 +87,7 @@ jobs:
 
   publish-rust:
     name: Publish Rust SDK
-    if: startsWith(github.ref, 'refs/tags/rust-v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/sdk-rust/v')
     runs-on: ubuntu-latest
     environment: deploy-cargo
     timeout-minutes: 15

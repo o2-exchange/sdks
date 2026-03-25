@@ -121,9 +121,9 @@ Market data endpoints
 
    :param market_id: The market ID.
    :type market_id: str
-   :param from_ts: Start timestamp (Unix seconds).
+   :param from_ts: Start timestamp in **milliseconds** (not seconds).
    :type from_ts: int
-   :param to_ts: End timestamp (Unix seconds).
+   :param to_ts: End timestamp in **milliseconds** (not seconds).
    :type to_ts: int
    :param resolution: Candle resolution (e.g., ``"1m"``, ``"5m"``,
        ``"1h"``, ``"1d"``). Default ``"1h"``.

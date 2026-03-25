@@ -19,7 +19,7 @@ use crate::encoding::{
 };
 use crate::errors::O2Error;
 use crate::models::*;
-use crate::websocket::TypedStream;
+use crate::websocket::{DepthPrecision, TypedStream};
 
 /// Strategy for refreshing market metadata.
 #[derive(Debug, Clone, Copy)]
@@ -34,6 +34,18 @@ impl Default for MetadataPolicy {
     fn default() -> Self {
         Self::OptimisticTtl(Duration::from_secs(45))
     }
+}
+
+/// Validate that a REST depth precision value is within the supported range (1–18).
+fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
+    if !(1..=18).contains(&precision) {
+        return Err(O2Error::InvalidRequest(format!(
+            "Invalid depth precision {}. Valid range: 1-18 (powers of 10). \
+             Precision 0 is not supported — use get_depth() via REST for exact prices.",
+            precision
+        )));
+    }
+    Ok(())
 }
 
 /// The high-level O2 Exchange client.
@@ -79,10 +91,11 @@ impl MarketActionsBuilder {
     }
 
     /// Add a cancel-order action.
-    pub fn cancel_order(mut self, order_id: impl Into<OrderId>) -> Self {
-        self.actions.push(Action::CancelOrder {
-            order_id: order_id.into(),
-        });
+    pub fn cancel_order(mut self, order_id: impl IntoValidId<OrderId>) -> Self {
+        match order_id.into_valid() {
+            Ok(id) => self.actions.push(Action::CancelOrder { order_id: id }),
+            Err(e) => self.record_error_once(e),
+        }
         self
     }
 
@@ -304,7 +317,7 @@ impl O2Client {
     }
 
     async fn should_faucet_account(&mut self, trade_account_id: &str) -> bool {
-        let account_id = TradeAccountId::from(trade_account_id.to_string());
+        let account_id = TradeAccountId::new(trade_account_id);
         match self.get_balances(&account_id).await {
             Ok(balances) => {
                 let has_non_zero_balance = balances.values().any(|balance| {
@@ -950,30 +963,50 @@ impl O2Client {
     // -----------------------------------------------------------------------
 
     /// Get order book depth.
+    ///
+    /// # Arguments
+    /// * `market_name` - Market pair string (e.g. `"ETH/USDC"`) or market ID.
+    /// * `precision` - Price grouping level, from `1` (most precise) to `18`
+    ///   (most grouped). At level 1, prices are at or near their exact values.
+    ///   Higher levels round prices into larger buckets — useful for a visual
+    ///   depth chart but too coarse for trading. Same scale as
+    ///   [`stream_depth`][O2Client::stream_depth].
+    /// * `limit` - Maximum number of price levels per side.
+    ///
+    /// # Errors
+    /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
     pub async fn get_depth<M>(
         &mut self,
         market_name: M,
         precision: u64,
+        limit: Option<usize>,
     ) -> Result<DepthSnapshot, O2Error>
     where
         M: IntoMarketSymbol,
     {
+        validate_depth_precision(precision)?;
+        let wire_precision = 10u64.pow(precision as u32);
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_depth market={} precision={}",
-            market_name, precision
+            market_name, wire_precision
         );
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_depth(market.market_id.as_str(), precision)
+            .get_depth(market.market_id.as_str(), wire_precision, limit)
             .await
     }
 
-    /// Get recent trades.
+    /// Get recent trades for a market.
+    ///
+    /// Use `start_timestamp` + `start_trade_id` for cursor pagination
+    /// (both must be provided together or omitted).
     pub async fn get_trades<M>(
         &mut self,
         market_name: M,
         count: u32,
+        start_timestamp: Option<u64>,
+        start_trade_id: Option<&TradeId>,
     ) -> Result<TradesResponse, O2Error>
     where
         M: IntoMarketSymbol,
@@ -982,11 +1015,54 @@ impl O2Client {
         debug!("client.get_trades market={} count={}", market_name, count);
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_trades(market.market_id.as_str(), "desc", count, None, None)
+            .get_trades(
+                market.market_id.as_str(),
+                "desc",
+                count,
+                start_timestamp,
+                start_trade_id.map(|t| t.as_str()),
+                None,
+            )
+            .await
+    }
+
+    /// Get trades for a specific account on a market.
+    ///
+    /// Use `start_timestamp` + `start_trade_id` for cursor pagination
+    /// (both must be provided together or omitted).
+    pub async fn get_account_trades<M>(
+        &mut self,
+        market_name: M,
+        account: impl IntoValidId<TradeAccountId>,
+        count: u32,
+        start_timestamp: Option<u64>,
+        start_trade_id: Option<&TradeId>,
+    ) -> Result<TradesResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+    {
+        let account = account.into_valid()?;
+        let market_name = market_name.into_market_symbol()?;
+        debug!(
+            "client.get_account_trades market={} account={} count={}",
+            market_name, account, count
+        );
+        let market = self.get_market(&market_name).await?;
+        self.api
+            .get_trades_by_account(
+                market.market_id.as_str(),
+                account.as_str(),
+                "desc",
+                count,
+                start_timestamp,
+                start_trade_id.map(|t| t.as_str()),
+            )
             .await
     }
 
     /// Get OHLCV bars.
+    ///
+    /// `from_ts` and `to_ts` are in **milliseconds** (not seconds).
     pub async fn get_bars<M>(
         &mut self,
         market_name: M,
@@ -1033,8 +1109,9 @@ impl O2Client {
     /// Get balances for a trading account, keyed by asset symbol.
     pub async fn get_balances(
         &mut self,
-        trade_account_id: &TradeAccountId,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
     ) -> Result<HashMap<String, BalanceResponse>, O2Error> {
+        let trade_account_id = trade_account_id.into_valid()?;
         debug!("client.get_balances trade_account_id={}", trade_account_id);
         let markets = self.get_markets().await?;
         let mut balances = HashMap::new();
@@ -1065,16 +1142,22 @@ impl O2Client {
     }
 
     /// Get orders for a trading account in a market.
+    ///
+    /// Use `start_timestamp` + `start_order_id` for cursor pagination
+    /// (both must be provided together or omitted).
     pub async fn get_orders<M>(
         &mut self,
-        trade_account_id: &TradeAccountId,
         market_name: M,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
         is_open: Option<bool>,
         count: u32,
+        start_timestamp: Option<u64>,
+        start_order_id: Option<&OrderId>,
     ) -> Result<OrdersResponse, O2Error>
     where
         M: IntoMarketSymbol,
     {
+        let trade_account_id = trade_account_id.into_valid()?;
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_orders trade_account_id={} market={} is_open={:?} count={}",
@@ -1088,17 +1171,22 @@ impl O2Client {
                 "desc",
                 count,
                 is_open,
-                None,
-                None,
+                start_timestamp,
+                start_order_id.map(|o| o.as_str()),
             )
             .await
     }
 
     /// Get a single order.
-    pub async fn get_order<M>(&mut self, market_name: M, order_id: &str) -> Result<Order, O2Error>
+    pub async fn get_order<M>(
+        &mut self,
+        market_name: M,
+        order_id: impl IntoValidId<OrderId>,
+    ) -> Result<Order, O2Error>
     where
         M: IntoMarketSymbol,
     {
+        let order_id = order_id.into_valid()?;
         let market_name = market_name.into_market_symbol()?;
         debug!(
             "client.get_order market={} order_id={}",
@@ -1106,7 +1194,7 @@ impl O2Client {
         );
         let market = self.get_market(&market_name).await?;
         self.api
-            .get_order(market.market_id.as_str(), order_id)
+            .get_order(market.market_id.as_str(), order_id.as_str())
             .await
     }
 
@@ -1115,9 +1203,16 @@ impl O2Client {
     // -----------------------------------------------------------------------
 
     /// Get the current nonce for a trading account.
-    pub async fn get_nonce(&self, trade_account_id: &str) -> Result<u64, O2Error> {
+    pub async fn get_nonce(
+        &self,
+        trade_account_id: impl IntoValidId<TradeAccountId>,
+    ) -> Result<u64, O2Error> {
+        let trade_account_id = trade_account_id.into_valid()?;
         debug!("client.get_nonce trade_account_id={}", trade_account_id);
-        let account = self.api.get_account_by_id(trade_account_id).await?;
+        let account = self
+            .api
+            .get_account_by_id(trade_account_id.as_str())
+            .await?;
         Self::parse_account_nonce(
             account.trade_account.as_ref().map(|ta| ta.nonce),
             "get_nonce account response",
@@ -1208,21 +1303,34 @@ impl O2Client {
     }
 
     /// Stream depth updates over a shared WebSocket connection.
+    ///
+    /// # Arguments
+    /// * `market_id` - The market ID (hex string).
+    /// * `precision` - Price grouping level, from `"1"` (most precise) to `"18"`
+    ///   (most grouped). Default `"1"`. At level 1, prices are at or near their
+    ///   exact values. Higher levels round prices into larger buckets. Same
+    ///   scale as [`get_depth`][O2Client::get_depth].
+    ///
+    /// # Errors
+    /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
     pub async fn stream_depth(
         &self,
-        market_id: &str,
-        precision: &str,
+        market_id: impl IntoValidId<MarketId>,
+        precision: u64,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
+        let dp = DepthPrecision::new(precision)?;
+        let market_id = market_id.into_valid()?;
         debug!(
             "client.stream_depth market_id={} precision={}",
-            market_id, precision
+            market_id,
+            dp.as_str()
         );
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
         guard
             .as_ref()
             .unwrap()
-            .stream_depth(market_id, precision)
+            .stream_depth(market_id.as_str(), &dp)
             .await
     }
 
@@ -1240,12 +1348,17 @@ impl O2Client {
     /// Stream trade updates over a shared WebSocket connection.
     pub async fn stream_trades(
         &self,
-        market_id: &str,
+        market_id: impl IntoValidId<MarketId>,
     ) -> Result<TypedStream<TradeUpdate>, O2Error> {
+        let market_id = market_id.into_valid()?;
         debug!("client.stream_trades market_id={}", market_id);
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
-        guard.as_ref().unwrap().stream_trades(market_id).await
+        guard
+            .as_ref()
+            .unwrap()
+            .stream_trades(market_id.as_str())
+            .await
     }
 
     /// Stream balance updates over a shared WebSocket connection.
@@ -1296,29 +1409,32 @@ mod tests {
 
     use crate::{
         config::{Network, NetworkConfig},
-        models::{Action, Market, MarketAsset, MarketsResponse, OrderId, OrderType, Side},
+        models::{
+            Action, AssetId, ContractId, Market, MarketAsset, MarketId, MarketsResponse, OrderId,
+            OrderType, Side,
+        },
     };
 
     use super::{MarketActionsBuilder, MetadataPolicy, O2Client};
 
     fn dummy_markets_response() -> MarketsResponse {
         MarketsResponse {
-            books_registry_id: "0x1".into(),
+            books_registry_id: ContractId::new("0x1"),
             books_whitelist_id: None,
             books_blacklist_id: None,
-            accounts_registry_id: "0x2".into(),
-            trade_account_oracle_id: "0x3".into(),
+            accounts_registry_id: ContractId::new("0x2"),
+            trade_account_oracle_id: ContractId::new("0x3"),
             fast_bridge_asset_registry_contract_id: None,
             chain_id: "0x0".to_string(),
-            base_asset_id: "0x4".into(),
+            base_asset_id: AssetId::new("0x4"),
             markets: Vec::new(),
         }
     }
 
     fn dummy_market(market_id: &str) -> Market {
         Market {
-            contract_id: "0x01".into(),
-            market_id: market_id.into(),
+            contract_id: ContractId::new("0x01"),
+            market_id: MarketId::new(market_id),
             whitelist_id: None,
             blacklist_id: None,
             maker_fee: 0,
@@ -1328,13 +1444,13 @@ mod tests {
             price_window: 0,
             base: MarketAsset {
                 symbol: "fETH".to_string(),
-                asset: "0xbase".into(),
+                asset: AssetId::new("0xbase"),
                 decimals: 9,
                 max_precision: 6,
             },
             quote: MarketAsset {
                 symbol: "fUSDC".to_string(),
-                asset: "0xquote".into(),
+                asset: AssetId::new("0xquote"),
                 decimals: 9,
                 max_precision: 6,
             },
@@ -1477,7 +1593,7 @@ mod tests {
     #[test]
     fn build_cancel_actions_skips_empty_order_ids() {
         let empty = OrderId::default();
-        let valid = OrderId::from("0xabc123");
+        let valid = OrderId::new("0xabc123");
 
         let actions = O2Client::build_cancel_actions([&empty, &valid]);
         assert_eq!(actions.len(), 1);
@@ -1485,5 +1601,44 @@ mod tests {
             Action::CancelOrder { order_id } => assert_eq!(order_id.as_str(), valid.as_str()),
             _ => panic!("expected cancel action"),
         }
+    }
+
+    // REST depth precision (1-18)
+    #[test]
+    fn validate_depth_precision_rejects_0() {
+        let err = super::validate_depth_precision(0).unwrap_err();
+        assert!(err.to_string().contains("Invalid depth precision 0"));
+    }
+
+    #[test]
+    fn validate_depth_precision_rejects_19() {
+        let err = super::validate_depth_precision(19).unwrap_err();
+        assert!(err.to_string().contains("Invalid depth precision 19"));
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_1() {
+        assert!(super::validate_depth_precision(1).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_18() {
+        assert!(super::validate_depth_precision(18).is_ok());
+    }
+
+    // stream_depth shares the same 1-18 validator as get_depth
+    #[test]
+    fn validate_depth_precision_accepts_1_for_stream() {
+        assert!(super::validate_depth_precision(1).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_9_for_stream() {
+        assert!(super::validate_depth_precision(9).is_ok());
+    }
+
+    #[test]
+    fn validate_depth_precision_accepts_10_for_stream() {
+        assert!(super::validate_depth_precision(10).is_ok());
     }
 }

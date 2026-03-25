@@ -75,7 +75,6 @@ export {
   TradeNotFound,
   WhitelistNotConfigured,
 } from "./errors.js";
-
 // ── Models ────────────────────────────────────────────────────────
 export type {
   AccountInfo,
@@ -88,6 +87,7 @@ export type {
   ContractId,
   CreateAccountResponse,
   DepthLevel,
+  DepthPrecision,
   DepthSnapshot,
   DepthUpdate,
   FaucetResponse,
@@ -98,6 +98,7 @@ export type {
   Market,
   MarketAsset,
   MarketId,
+  MarketRef,
   MarketSummary,
   MarketsResponse,
   MarketTicker,
@@ -133,6 +134,7 @@ export {
   assetId,
   boundedMarketOrder,
   contractId,
+  depthPrecision,
   formatPrice,
   formatQuantity,
   hexId,
@@ -149,6 +151,13 @@ export {
   tradeAccountId,
   txId,
 } from "./models.js";
+// ── On-chain revert decoding ──────────────────────────────────────
+export { augmentRevertReason } from "./onchain-revert.js";
 
 // ── WebSocket ─────────────────────────────────────────────────────
-export { O2WebSocket, type O2WebSocketOptions } from "./websocket.js";
+export {
+  type ConnectionEvent,
+  type ConnectionState,
+  O2WebSocket,
+  type O2WebSocketOptions,
+} from "./websocket.js";

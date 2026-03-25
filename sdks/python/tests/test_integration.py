@@ -215,8 +215,8 @@ class TestMarketData:
 
     async def test_get_depth(self, market_snapshot):
         depth = market_snapshot["depth"]
-        assert isinstance(depth.buys, list)
-        assert isinstance(depth.sells, list)
+        assert isinstance(depth.bids, list)
+        assert isinstance(depth.asks, list)
 
     async def test_get_trades(self, market_snapshot):
         trades = market_snapshot["trades"]
@@ -360,7 +360,10 @@ async def _conservative_post_only_buy_price(client, market):
     fallback = _moderate_fill_price(market)
     price_step = 10 ** (-market.quote.max_precision)
     try:
-        depth = await client.get_depth(market.pair, precision=10)
+        # Use precision=1 (finest) to get accurate best ask/bid prices.
+        # Coarser levels aggregate prices into wide buckets, which can cause
+        # the chosen price to accidentally cross the actual best ask.
+        depth = await client.get_depth(market.pair, precision=1)
         if depth.best_ask:
             best_ask = market.format_price(int(depth.best_ask.price))
             return max(price_step, best_ask - price_step)

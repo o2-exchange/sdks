@@ -20,13 +20,12 @@ import {
   type AggregatedAsset,
   type AggregatedOrderbook,
   type AssetId,
-  assetId,
   type BalanceResponse,
   type Bar,
   type CreateAccountResponse,
-  contractId,
   type DepthSnapshot,
   type FaucetResponse,
+  hexIdTrusted,
   type Identity,
   type MarketId,
   type MarketSummary,
@@ -191,11 +190,11 @@ export class O2Api {
     const raw = await this.get<Record<string, unknown>>("/v1/markets");
     const rawMarkets = raw.markets as Record<string, unknown>[];
     return {
-      books_registry_id: contractId(raw.books_registry_id as string),
-      accounts_registry_id: contractId(raw.accounts_registry_id as string),
-      trade_account_oracle_id: contractId(raw.trade_account_oracle_id as string),
+      books_registry_id: hexIdTrusted<"ContractId">(raw.books_registry_id as string),
+      accounts_registry_id: hexIdTrusted<"ContractId">(raw.accounts_registry_id as string),
+      trade_account_oracle_id: hexIdTrusted<"ContractId">(raw.trade_account_oracle_id as string),
       chain_id: raw.chain_id as string,
-      base_asset_id: assetId(raw.base_asset_id as string),
+      base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
     };
   }
@@ -224,19 +223,30 @@ export class O2Api {
    * Fetch the order book depth snapshot.
    * @param marketId - The market identifier.
    * @param precision - Price aggregation precision (default: 10).
+   * @param limit - Maximum number of price levels per side. `undefined` returns the full book.
    */
-  async getDepth(marketId: MarketId, precision = 10): Promise<DepthSnapshot> {
-    const data = await this.get<Record<string, unknown>>("/v1/depth", {
+  async getDepth(marketId: MarketId, precision = 10, limit?: number): Promise<DepthSnapshot> {
+    const params: Record<string, string | number | boolean | undefined> = {
       market_id: marketId,
       precision,
-    });
+    };
+    if (limit !== undefined) {
+      params.limit = limit;
+    }
+    const data = await this.get<Record<string, unknown>>("/v1/depth", params);
     // API wraps depth in "orders" or "view" field; unwrap it
     const depth = (data.orders ?? data.view ?? data) as Record<string, unknown>;
-    const buys = (depth.buys ?? []) as Record<string, unknown>[];
-    const sells = (depth.sells ?? []) as Record<string, unknown>[];
+    let buys = (depth.buys ?? []) as Record<string, unknown>[];
+    let sells = (depth.sells ?? []) as Record<string, unknown>[];
+    // Client-side truncation: honour the limit even if the backend
+    // doesn't support it yet, so callers always get the expected count.
+    if (limit !== undefined) {
+      buys = buys.slice(0, limit);
+      sells = sells.slice(0, limit);
+    }
     return {
-      buys: buys.map(parseDepthLevel),
-      sells: sells.map(parseDepthLevel),
+      bids: buys.map(parseDepthLevel),
+      asks: sells.map(parseDepthLevel),
     };
   }
 
@@ -256,6 +266,7 @@ export class O2Api {
     count = 50,
     startTimestamp?: number,
     startTradeId?: string,
+    contract?: string,
   ): Promise<Trade[]> {
     const data = await this.get<unknown>("/v1/trades", {
       market_id: marketId,
@@ -263,6 +274,7 @@ export class O2Api {
       count,
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
+      contract,
     });
     const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
@@ -295,20 +307,53 @@ export class O2Api {
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
 
+  /** Valid bar resolutions accepted by the API. */
+  static readonly VALID_RESOLUTIONS = new Set([
+    "1s",
+    "1m",
+    "2m",
+    "3m",
+    "5m",
+    "15m",
+    "30m",
+    "1h",
+    "2h",
+    "4h",
+    "6h",
+    "8h",
+    "12h",
+    "1d",
+    "3d",
+    "1w",
+    "1M",
+    "3M",
+  ]);
+
   /**
    * Fetch OHLCV candlestick bars.
    * @param marketId - The market identifier.
-   * @param from - Start time (Unix seconds).
-   * @param to - End time (Unix seconds).
-   * @param resolution - Bar resolution (e.g., `"1m"`, `"1h"`, `"1d"`).
+   * @param from - Start time in **milliseconds** (not seconds).
+   * @param to - End time in **milliseconds** (not seconds).
+   * @param resolution - Bar resolution. Valid values:
+   *   `1s`, `1m`, `2m`, `3m`, `5m`, `15m`, `30m`,
+   *   `1h`, `2h`, `4h`, `6h`, `8h`, `12h`,
+   *   `1d`, `3d`, `1w`, `1M`, `3M`.
+   * @throws {Error} If resolution is not valid.
    */
   async getBars(marketId: MarketId, from: number, to: number, resolution: string): Promise<Bar[]> {
-    return this.get<Bar[]>("/v1/bars", {
+    if (!O2Api.VALID_RESOLUTIONS.has(resolution)) {
+      throw new Error(
+        `Invalid bar resolution "${resolution}". Valid values: ${[...O2Api.VALID_RESOLUTIONS].sort().join(", ")}`,
+      );
+    }
+    const data = await this.get<{ bars?: Bar[] } | Bar[]>("/v1/bars", {
       market_id: marketId,
       from,
       to,
       resolution,
     });
+    if (Array.isArray(data)) return data;
+    return (data.bars ?? []) as Bar[];
   }
 
   // ── Account & Balance ───────────────────────────────────────────
