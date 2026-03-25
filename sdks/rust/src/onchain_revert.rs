@@ -276,19 +276,17 @@ pub(crate) fn augment_revert_reason(
         receipts.map(|v| v.to_string()).unwrap_or_default()
     );
 
-    let mut decoded: Option<String> = None;
-    for raw in extract_revert_codes(&context) {
-        if let Some(mapped) = decode_revert_code(raw, &context) {
-            decoded = Some(mapped);
-            break;
-        }
-    }
+    // Decode ALL revert codes — the receipt data may contain multiple reverts
+    // (e.g. an intermediate FractionalPrice check and the real
+    // TraderNotWhiteListed).  Returning only the first would hide the actual
+    // error from retry logic that string-matches on specific error names.
+    let all_decoded: Vec<String> = extract_revert_codes(&context)
+        .into_iter()
+        .filter_map(|raw| decode_revert_code(raw, &context))
+        .collect();
 
-    if let Some(mapped) = decoded {
-        // Return just the decoded name — the raw reason/receipts dump can be
-        // several KB and makes log lines unreadable. Full receipts are still
-        // accessible via OnChainRevert.receipts for callers that need them.
-        return mapped;
+    if !all_decoded.is_empty() {
+        return all_decoded.join("; ");
     }
 
     // Check for Fuel VM Panic receipts embedded in the reason string
