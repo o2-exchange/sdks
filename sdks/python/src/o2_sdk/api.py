@@ -118,7 +118,7 @@ class O2Api:
 
                     if resp.status >= 400 and isinstance(data, dict):
                         code = data.get("code")
-                        message = data.get("message", f"HTTP {resp.status}")
+                        message = data.get("message") or data.get("error") or f"HTTP {resp.status}"
                         logger.debug(
                             "%s %s -> %d error (code=%s) %.0fms: %s",
                             method,
@@ -142,7 +142,7 @@ class O2Api:
 
                                 message = augment_revert_reason(message, reason, receipts)
                             raise error_cls(message=message, code=code)
-                        if "message" in data and "tx_id" not in data:
+                        if ("message" in data or "error" in data) and "tx_id" not in data:
                             raise_for_error(data)
                     else:
                         logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)

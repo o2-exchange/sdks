@@ -53,6 +53,7 @@ impl O2Api {
                 if let Some(code) = err.get("code").and_then(|c| c.as_u64()) {
                     let raw_message = err
                         .get("message")
+                        .or_else(|| err.get("error"))
                         .and_then(|m| m.as_str())
                         .unwrap_or("Unknown error");
                     // Augment revert messages even on code-based errors —
@@ -74,7 +75,11 @@ impl O2Api {
                     };
                     return Err(O2Error::from_code(code as u32, message));
                 }
-                if let Some(message) = err.get("message").and_then(|m| m.as_str()) {
+                if let Some(message) = err
+                    .get("message")
+                    .or_else(|| err.get("error"))
+                    .and_then(|m| m.as_str())
+                {
                     let raw_reason = err
                         .get("reason")
                         .and_then(|r| r.as_str())
