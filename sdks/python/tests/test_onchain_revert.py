@@ -109,11 +109,11 @@ def test_reason_none_treated_as_empty():
     assert "OrderCreationError::OrderPartiallyFilled" in decoded
 
 
-def test_ordinal_zero_ignored():
+def test_ordinal_zero_returns_generic_message():
     raw = 0xFFFF_FFFF_FFFF_0000  # ordinal 0
     message = f"Revert({raw})"
     decoded = augment_revert_reason(message, "reason", None)
-    assert decoded == "reason"
+    assert "require() failed" in decoded
 
 
 def test_truncates_long_reason_without_revert_code():

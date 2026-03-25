@@ -95,11 +95,11 @@ describe("augmentRevertReason", () => {
     expect(decoded).toBe("");
   });
 
-  it("ignores ordinal zero", () => {
+  it("returns generic message for ordinal zero", () => {
     // 0xffffffffffff0000 | 0 = 0xffffffffffff0000
     const message = "Revert(18446744073709486080)";
     const decoded = augmentRevertReason(message, "reason", undefined);
-    expect(decoded).toBe("reason");
+    expect(decoded).toContain("require() failed");
   });
 
   it("truncates long reason without revert code", () => {

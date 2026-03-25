@@ -180,7 +180,7 @@ function hexPad16(n: bigint): string {
 function decodeRevertCode(raw: bigint, context: string): string | undefined {
   if ((raw & FUEL_MASK) !== FUEL_TAG) return undefined;
   const ordinal = Number(raw & 0xffffn);
-  if (ordinal === 0) return undefined;
+  if (ordinal === 0) return `on-chain require() failed (raw=${hexPad16(raw)})`;
 
   // Try context-based inference first.
   const inferred = inferEnumFromContext(context);

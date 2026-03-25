@@ -234,7 +234,7 @@ def _decode_revert_code(raw: int, context: str) -> str | None:
         return None
     ordinal = raw & 0xFFFF
     if ordinal == 0:
-        return None
+        return f"on-chain require() failed (raw=0x{raw:016x})"
 
     # Try context-based inference first.
     inferred = _infer_enum_from_context(context)

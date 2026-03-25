@@ -211,7 +211,7 @@ fn decode_revert_code(raw: u64, context: &str) -> Option<String> {
     }
     let ordinal = (raw & 0xffff) as usize;
     if ordinal == 0 {
-        return None;
+        return Some(format!("on-chain require() failed (raw=0x{raw:016x})"));
     }
 
     if let Some(enum_name) = infer_enum_from_context(context) {
