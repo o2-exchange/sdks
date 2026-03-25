@@ -50,7 +50,10 @@ REALISTIC_REASON = (
 def test_extracts_error_from_log_result():
     """The last Ok("...") matching a known variant is extracted."""
     decoded = augment_revert_reason("Failed to process transaction", REALISTIC_REASON, None)
-    assert decoded == "contract_schema::order_book::OrderCreationError::OrderPartiallyFilled"
+    assert (
+        decoded
+        == "OrderCreationError::OrderPartiallyFilled \u2014 PostOnly order would cross the spread. Use a lower buy price or higher sell price."
+    )
 
 
 def test_log_result_with_escaped_quotes():
@@ -59,7 +62,10 @@ def test_log_result_with_escaped_quotes():
         'LogResult { results: [Ok(\\"IncrementNonceEvent\\"), Ok(\\"TraderNotWhiteListed\\")] }'
     )
     decoded = augment_revert_reason("msg", reason, None)
-    assert decoded == "contract_schema::order_book::OrderCreationError::TraderNotWhiteListed"
+    assert (
+        decoded
+        == "OrderCreationError::TraderNotWhiteListed \u2014 Account not whitelisted. Call whitelist_account() first."
+    )
 
 
 def test_log_result_ignores_non_error_entries():
@@ -69,7 +75,7 @@ def test_log_result_ignores_non_error_entries():
         'Ok("OrderCreatedEvent"), Ok("NotEnoughBalance")] }'
     )
     decoded = augment_revert_reason("msg", reason, None)
-    assert decoded == "contract_schema::trade_account::WithdrawError::NotEnoughBalance"
+    assert decoded == "WithdrawError::NotEnoughBalance \u2014 Insufficient balance for withdrawal"
 
 
 # ---------------------------------------------------------------------------
@@ -86,7 +92,10 @@ def test_extracts_error_from_logdata_receipt():
         "Revert { id: abc, ra: 18446744073709486086 }]"
     )
     decoded = augment_revert_reason("msg", reason, None)
-    assert decoded == "contract_schema::order_book::OrderCreationError::OrderPartiallyFilled"
+    assert (
+        decoded
+        == "OrderCreationError::OrderPartiallyFilled \u2014 PostOnly order would cross the spread. Use a lower buy price or higher sell price."
+    )
 
 
 def test_logdata_discriminant_zero():
@@ -97,7 +106,7 @@ def test_logdata_discriminant_zero():
         "Revert { id: x, ra: 18446744073709486086 }"
     )
     decoded = augment_revert_reason("msg", reason, None)
-    assert decoded == "contract_schema::order_book::OrderCreationError::InvalidOrderArgs"
+    assert decoded == "OrderCreationError::InvalidOrderArgs \u2014 Order arguments are invalid"
 
 
 def test_logdata_withdraw_error():
@@ -108,7 +117,7 @@ def test_logdata_withdraw_error():
         "Revert { id: x, ra: 18446744073709486000 }"
     )
     decoded = augment_revert_reason("msg", reason, None)
-    assert decoded == "contract_schema::trade_account::WithdrawError::NotEnoughBalance"
+    assert decoded == "WithdrawError::NotEnoughBalance \u2014 Insufficient balance for withdrawal"
 
 
 def test_logdata_unknown_log_id_falls_through():
@@ -198,7 +207,10 @@ def test_receipts_json_searched():
     """Structured receipts are JSON-serialized and searched."""
     receipts = [{"note": 'Ok("InvalidNonce")'}]
     decoded = augment_revert_reason("msg", "", receipts)
-    assert decoded == "contract_schema::trade_account::NonceError::InvalidNonce"
+    assert (
+        decoded
+        == "NonceError::InvalidNonce \u2014 Nonce is stale or out of sequence. Refresh the nonce and retry."
+    )
 
 
 def test_priority_log_result_over_logdata():

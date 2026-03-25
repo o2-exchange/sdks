@@ -50,14 +50,18 @@ describe("Strategy 1: LogResult extraction", () => {
       REALISTIC_REASON,
       undefined,
     );
-    expect(decoded).toBe("contract_schema::order_book::OrderCreationError::OrderPartiallyFilled");
+    expect(decoded).toBe(
+      "OrderCreationError::OrderPartiallyFilled \u2014 PostOnly order would cross the spread. Use a lower buy price or higher sell price.",
+    );
   });
 
   it("log result with escaped quotes", () => {
     const reason =
       'LogResult { results: [Ok(\\"IncrementNonceEvent\\"), ' + 'Ok(\\"TraderNotWhiteListed\\")] }';
     const decoded = augmentRevertReason("msg", reason, undefined);
-    expect(decoded).toBe("contract_schema::order_book::OrderCreationError::TraderNotWhiteListed");
+    expect(decoded).toBe(
+      "OrderCreationError::TraderNotWhiteListed \u2014 Account not whitelisted. Call whitelist_account() first.",
+    );
   });
 
   it("log result ignores non-error entries", () => {
@@ -65,7 +69,9 @@ describe("Strategy 1: LogResult extraction", () => {
       'LogResult { results: [Ok("IncrementNonceEvent"), ' +
       'Ok("OrderCreatedEvent"), Ok("NotEnoughBalance")] }';
     const decoded = augmentRevertReason("msg", reason, undefined);
-    expect(decoded).toBe("contract_schema::trade_account::WithdrawError::NotEnoughBalance");
+    expect(decoded).toBe(
+      "WithdrawError::NotEnoughBalance \u2014 Insufficient balance for withdrawal",
+    );
   });
 });
 
@@ -81,7 +87,9 @@ describe("Strategy 2: LogData receipt parsing", () => {
       "ptr: 100, len: 8, digest: def, data: Some(Bytes(0000000000000008)) }, " +
       "Revert { id: abc, ra: 18446744073709486086 }]";
     const decoded = augmentRevertReason("msg", reason, undefined);
-    expect(decoded).toBe("contract_schema::order_book::OrderCreationError::OrderPartiallyFilled");
+    expect(decoded).toBe(
+      "OrderCreationError::OrderPartiallyFilled \u2014 PostOnly order would cross the spread. Use a lower buy price or higher sell price.",
+    );
   });
 
   it("logdata discriminant zero", () => {
@@ -90,7 +98,7 @@ describe("Strategy 2: LogData receipt parsing", () => {
       "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000000)) }, " +
       "Revert { id: x, ra: 18446744073709486086 }";
     const decoded = augmentRevertReason("msg", reason, undefined);
-    expect(decoded).toBe("contract_schema::order_book::OrderCreationError::InvalidOrderArgs");
+    expect(decoded).toBe("OrderCreationError::InvalidOrderArgs \u2014 Order arguments are invalid");
   });
 
   it("logdata withdraw error", () => {
@@ -99,7 +107,9 @@ describe("Strategy 2: LogData receipt parsing", () => {
       "ptr: 0, len: 8, digest: y, data: Some(Bytes(0000000000000001)) }, " +
       "Revert { id: x, ra: 18446744073709486000 }";
     const decoded = augmentRevertReason("msg", reason, undefined);
-    expect(decoded).toBe("contract_schema::trade_account::WithdrawError::NotEnoughBalance");
+    expect(decoded).toBe(
+      "WithdrawError::NotEnoughBalance \u2014 Insufficient balance for withdrawal",
+    );
   });
 
   it("logdata unknown log id falls through", () => {
@@ -188,7 +198,9 @@ describe("Edge cases", () => {
   it("receipts json searched", () => {
     const receipts = [{ note: 'Ok("InvalidNonce")' }];
     const decoded = augmentRevertReason("msg", "", receipts);
-    expect(decoded).toBe("contract_schema::trade_account::NonceError::InvalidNonce");
+    expect(decoded).toBe(
+      "NonceError::InvalidNonce \u2014 Nonce is stale or out of sequence. Refresh the nonce and retry.",
+    );
   });
 
   it("priority log result over logdata", () => {

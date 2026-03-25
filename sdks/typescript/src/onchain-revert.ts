@@ -35,32 +35,66 @@
 // Validate with:  python scripts/validate_abi_enums.py
 // ---------------------------------------------------------------------------
 
-// logId (u64 from LogData receipt rb register) → [fully-qualified enum name, variant names]
+// logId (u64 from LogData receipt rb register) → [fully-qualified enum name, [[variant, description], ...]]
 // Variant index = 0-based discriminant found in LogData.data first 8 bytes.
-const ABI_ERROR_ENUMS: Map<bigint, [string, string[]]> = new Map([
-  [537125673719950211n, ["upgradability::errors::SetProxyOwnerError", ["CannotUninitialize"]]],
-  [821289540733930261n, ["contract_schema::trade_account::CallerError", ["InvalidCaller"]]],
+const ABI_ERROR_ENUMS: Map<bigint, [string, [string, string][]]> = new Map([
+  [
+    537125673719950211n,
+    [
+      "upgradability::errors::SetProxyOwnerError",
+      [["CannotUninitialize", "Cannot uninitialize proxy owner"]],
+    ],
+  ],
+  [
+    821289540733930261n,
+    [
+      "contract_schema::trade_account::CallerError",
+      [["InvalidCaller", "Caller is not authorized for this operation"]],
+    ],
+  ],
   [
     1043998670105365804n,
     [
       "contract_schema::order_book::OrderCancelError",
-      ["NotOrderOwner", "TraderNotBlacklisted", "NoBlacklist"],
+      [
+        ["NotOrderOwner", "You can only cancel your own orders"],
+        ["TraderNotBlacklisted", "Trader is not blacklisted"],
+        ["NoBlacklist", "No blacklist configured for this market"],
+      ],
     ],
   ],
   [
     2735857006735158246n,
     [
       "contract_schema::trade_account::SessionError",
-      ["SessionInThePast", "NoApprovedContractIdsProvided"],
+      [
+        ["SessionInThePast", "Session expiry is in the past. Create a new session."],
+        ["NoApprovedContractIdsProvided", "Session must include at least one approved contract"],
+      ],
     ],
   ],
-  [4755763688038835574n, ["contract_schema::order_book::FeeError", ["NoFeesAvailable"]]],
-  [4997665884103701952n, ["pausable::errors::PauseError", ["Paused", "NotPaused"]]],
+  [
+    4755763688038835574n,
+    ["contract_schema::order_book::FeeError", [["NoFeesAvailable", "No fees to collect"]]],
+  ],
+  [
+    4997665884103701952n,
+    [
+      "pausable::errors::PauseError",
+      [
+        ["Paused", "Market is paused"],
+        ["NotPaused", "Market is not paused"],
+      ],
+    ],
+  ],
   [
     5347491661573165298n,
     [
       "contract_schema::whitelist::WhitelistError",
-      ["TraderAlreadyWhitelisted", "TraderNotWhitelisted"],
+      [
+        ["TraderAlreadyWhitelisted", "Account is already whitelisted"],
+        ["TraderNotWhitelisted", "Account is not whitelisted"],
+      ],
     ],
   ],
   [
@@ -68,12 +102,12 @@ const ABI_ERROR_ENUMS: Map<bigint, [string, string[]]> = new Map([
     [
       "contract_schema::order_book::OrderBookInitializationError",
       [
-        "InvalidAsset",
-        "InvalidDecimals",
-        "InvalidPriceWindow",
-        "InvalidPricePrecision",
-        "OwnerNotSet",
-        "InvalidMinOrder",
+        ["InvalidAsset", "Invalid asset configuration (admin)"],
+        ["InvalidDecimals", "Invalid decimals configuration (admin)"],
+        ["InvalidPriceWindow", "Invalid price window (admin)"],
+        ["InvalidPricePrecision", "Invalid price precision (admin)"],
+        ["OwnerNotSet", "Owner not set (admin)"],
+        ["InvalidMinOrder", "Invalid minimum order (admin)"],
       ],
     ],
   ],
@@ -81,64 +115,118 @@ const ABI_ERROR_ENUMS: Map<bigint, [string, string[]]> = new Map([
     9305944841695250538n,
     [
       "contract_schema::register::TradeAccountRegistryError",
-      ["OwnerAlreadyHasTradeAccount", "TradeAccountNotRegistered", "TradeAccountAlreadyHasReferer"],
+      [
+        ["OwnerAlreadyHasTradeAccount", "This wallet already has a trade account"],
+        ["TradeAccountNotRegistered", "Trade account not found. Call setup_account() first."],
+        ["TradeAccountAlreadyHasReferer", "Referral code already set for this account"],
+      ],
     ],
   ],
   [
     11035215306127844569n,
-    ["contract_schema::trade_account::SignerError", ["InvalidSigner", "ProxyOwnerIsContract"]],
+    [
+      "contract_schema::trade_account::SignerError",
+      [
+        ["InvalidSigner", "Signature doesn't match the session signer"],
+        ["ProxyOwnerIsContract", "Contract IDs cannot be used as proxy owners"],
+      ],
+    ],
   ],
   [
     12033795032676640771n,
     [
       "contract_schema::order_book::OrderCreationError",
       [
-        "InvalidOrderArgs",
-        "InvalidInputAmount",
-        "InvalidAsset",
-        "PriceExceedsRange",
-        "PricePrecision",
-        "InvalidHeapPrices",
-        "FractionalPrice",
-        "OrderNotFilled",
-        "OrderPartiallyFilled",
-        "TraderNotWhiteListed",
-        "TraderBlackListed",
-        "InvalidMarketOrder",
-        "InvalidMarketOrderArgs",
+        ["InvalidOrderArgs", "Order arguments are invalid"],
+        [
+          "InvalidInputAmount",
+          "Input amount doesn't match price \u00d7 quantity. Check your balance.",
+        ],
+        ["InvalidAsset", "Wrong asset for this market"],
+        ["PriceExceedsRange", "Price is outside the allowed range for this market"],
+        [
+          "PricePrecision",
+          "Price doesn't align with the market's tick size. Use Market.scale_price().",
+        ],
+        ["InvalidHeapPrices", "Internal order book state error. Retry the order."],
+        [
+          "FractionalPrice",
+          "price \u00d7 quantity must be divisible by 10^base_decimals. Use Market.adjust_quantity().",
+        ],
+        [
+          "OrderNotFilled",
+          "FillOrKill order could not be fully filled. Try a smaller quantity or use Spot.",
+        ],
+        [
+          "OrderPartiallyFilled",
+          "PostOnly order would cross the spread. Use a lower buy price or higher sell price.",
+        ],
+        ["TraderNotWhiteListed", "Account not whitelisted. Call whitelist_account() first."],
+        ["TraderBlackListed", "Account is blacklisted and cannot trade on this market"],
+        ["InvalidMarketOrder", "Market orders are not supported on this order book"],
+        ["InvalidMarketOrderArgs", "Invalid arguments for bounded market order"],
       ],
     ],
   ],
-  [12825652816513834595n, ["ownership::errors::InitializationError", ["CannotReinitialized"]]],
+  [
+    12825652816513834595n,
+    [
+      "ownership::errors::InitializationError",
+      [["CannotReinitialized", "Contract already initialized"]],
+    ],
+  ],
   [
     13517258236389385817n,
     [
       "contract_schema::blacklist::BlacklistError",
-      ["TraderAlreadyBlacklisted", "TraderNotBlacklisted"],
+      [
+        ["TraderAlreadyBlacklisted", "Account is already blacklisted"],
+        ["TraderNotBlacklisted", "Account is not blacklisted"],
+      ],
     ],
   ],
   [
     14509209538366790003n,
     [
       "std::crypto::signature_error::SignatureError",
-      ["UnrecoverablePublicKey", "InvalidPublicKey", "InvalidSignature", "InvalidOperation"],
+      [
+        ["UnrecoverablePublicKey", "Could not recover public key from signature"],
+        ["InvalidPublicKey", "Public key is invalid"],
+        ["InvalidSignature", "Signature verification failed"],
+        ["InvalidOperation", "Invalid cryptographic operation"],
+      ],
     ],
   ],
   [
     14888260448086063780n,
-    ["contract_schema::trade_account::WithdrawError", ["AmountIsZero", "NotEnoughBalance"]],
+    [
+      "contract_schema::trade_account::WithdrawError",
+      [
+        ["AmountIsZero", "Withdrawal amount must be greater than zero"],
+        ["NotEnoughBalance", "Insufficient balance for withdrawal"],
+      ],
+    ],
   ],
-  [17376141311665587813n, ["src5::AccessError", ["NotOwner"]]],
-  [17909535172322737929n, ["contract_schema::trade_account::NonceError", ["InvalidNonce"]]],
+  [
+    17376141311665587813n,
+    ["src5::AccessError", [["NotOwner", "Caller is not the contract owner"]]],
+  ],
+  [
+    17909535172322737929n,
+    [
+      "contract_schema::trade_account::NonceError",
+      [["InvalidNonce", "Nonce is stale or out of sequence. Refresh the nonce and retry."]],
+    ],
+  ],
 ]);
 
-// Reverse lookup: variant name → fully qualified "EnumName::VariantName"
-const VARIANT_TO_QUALIFIED: Map<string, string> = new Map();
+// Reverse lookup: variant name → [fully qualified "EnumName::VariantName", description]
+const VARIANT_TO_QUALIFIED: Map<string, [string, string]> = new Map();
 for (const [enumName, variants] of ABI_ERROR_ENUMS.values()) {
-  for (const v of variants) {
+  for (const [v, desc] of variants) {
     // If a variant name appears in multiple enums, keep the first (most specific).
     if (!VARIANT_TO_QUALIFIED.has(v)) {
-      VARIANT_TO_QUALIFIED.set(v, `${enumName}::${v}`);
+      VARIANT_TO_QUALIFIED.set(v, [`${enumName}::${v}`, desc]);
     }
   }
 }
@@ -158,6 +246,23 @@ const SIGNAL_CONSTANTS: Map<bigint, string> = new Map([
 const REVERT_RE = /Revert\((\d+)\)/g;
 // Matches both Ok(\"...\") (JSON-escaped) and Ok("...") (raw)
 const OK_RE = /Ok\(\\"([^"\\]+)\\"\)|Ok\("([^"]+)"\)/g;
+
+// ---------------------------------------------------------------------------
+// Formatting helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a decoded error into the standard output string.
+ *
+ * Output: `EnumShortName::Variant \u2014 description`
+ *
+ * The short name is the last segment of the fully-qualified enum name
+ * (e.g. `contract_schema::order_book::OrderCreationError` -> `OrderCreationError`).
+ */
+function formatError(enumName: string, variant: string, description: string): string {
+  const shortName = enumName.split("::").pop() ?? enumName;
+  return `${shortName}::${variant} \u2014 ${description}`;
+}
 
 // ---------------------------------------------------------------------------
 // Extraction helpers
@@ -181,7 +286,14 @@ function extractLogResultError(text: string): string | undefined {
     }
   }
   if (result !== undefined) {
-    return VARIANT_TO_QUALIFIED.get(result);
+    const entry = VARIANT_TO_QUALIFIED.get(result);
+    if (entry !== undefined) {
+      const [qualified, desc] = entry;
+      // Extract enum name (everything before the last ::variant)
+      const lastColons = qualified.lastIndexOf("::");
+      const enumName = qualified.slice(0, lastColons);
+      return formatError(enumName, result, desc);
+    }
   }
   return undefined;
 }
@@ -233,7 +345,8 @@ function extractLogdataError(text: string): string | undefined {
   const discriminant = Number.parseInt(hexStr.slice(0, 16), 16);
 
   if (discriminant < variants.length) {
-    return `${enumName}::${variants[discriminant]}`;
+    const [variantName, desc] = variants[discriminant];
+    return formatError(enumName, variantName, desc);
   }
   return `${enumName}::unknown(discriminant=${discriminant})`;
 }
@@ -360,7 +473,7 @@ export function augmentRevertReason(
 
   // 6. If we recognized a signal, return it as context
   if (signal !== undefined) {
-    return `${signal} (specific error unknown — check .receipts)`;
+    return `${signal} (specific error unknown \u2014 check .receipts)`;
   }
 
   // 7. Truncate raw reason
