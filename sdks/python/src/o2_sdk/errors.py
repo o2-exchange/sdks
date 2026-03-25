@@ -275,7 +275,18 @@ def raise_for_error(data: dict[str, Any]) -> None:
         raise error_cls(message=message, code=code, reason=reason, receipts=receipts)
 
     if "message" in data or "error" in data:
-        from .onchain_revert import augment_revert_reason
+        # Only classify as OnChainRevert when there's evidence of an on-chain
+        # transaction (receipts, reason with revert patterns, etc.).  Plain API
+        # errors (e.g. analytics 500) should be generic O2Error, not OnChainRevert.
+        has_onchain_evidence = (
+            receipts is not None
+            or (isinstance(reason, str) and ("Revert" in reason or "receipt" in reason.lower()))
+            or (isinstance(message, str) and "transaction" in message.lower())
+        )
+        if has_onchain_evidence:
+            from .onchain_revert import augment_revert_reason
 
-        augmented_reason = augment_revert_reason(message, reason, receipts)
-        raise OnChainRevert(message=message, reason=augmented_reason, receipts=receipts)
+            augmented_reason = augment_revert_reason(message, reason, receipts)
+            raise OnChainRevert(message=message, reason=augmented_reason, receipts=receipts)
+
+        raise O2Error(message=message)

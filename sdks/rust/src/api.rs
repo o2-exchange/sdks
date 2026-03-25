@@ -80,22 +80,30 @@ impl O2Api {
                     .or_else(|| err.get("error"))
                     .and_then(|m| m.as_str())
                 {
-                    let raw_reason = err
-                        .get("reason")
-                        .and_then(|r| r.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let raw_reason = err.get("reason").and_then(|r| r.as_str()).unwrap_or("");
                     let receipts = err.get("receipts").cloned();
-                    let reason = crate::onchain_revert::augment_revert_reason(
-                        message,
-                        &raw_reason,
-                        receipts.as_ref(),
-                    );
-                    return Err(O2Error::OnChainRevert {
-                        message: message.to_string(),
-                        reason,
-                        receipts,
-                    });
+                    let has_receipts = receipts.as_ref().is_some_and(|v| !v.is_null());
+                    let has_revert_evidence = raw_reason.contains("Revert")
+                        || raw_reason.to_lowercase().contains("receipt")
+                        || message.to_lowercase().contains("transaction");
+
+                    // Only classify as OnChainRevert when there's evidence of
+                    // an on-chain transaction.  Plain API errors (e.g. analytics
+                    // 500) should be generic HttpError, not OnChainRevert.
+                    if has_receipts || has_revert_evidence {
+                        let reason = crate::onchain_revert::augment_revert_reason(
+                            message,
+                            raw_reason,
+                            receipts.as_ref(),
+                        );
+                        return Err(O2Error::OnChainRevert {
+                            message: message.to_string(),
+                            reason,
+                            receipts,
+                        });
+                    }
+
+                    return Err(O2Error::HttpError(format!("HTTP {}: {}", status, message)));
                 }
             }
             return Err(O2Error::HttpError(format!("HTTP {}: {}", status, text)));

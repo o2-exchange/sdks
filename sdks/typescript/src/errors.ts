@@ -375,10 +375,21 @@ export function parseApiError(body: Record<string, unknown>): O2Error {
     return new O2Error(msg, code);
   }
 
-  // On-chain revert: no code, has message (and possibly reason/receipts).
-  // Decode Fuel VM revert codes into human-readable error names.
-  const decoded = augmentRevertReason(message, reason, receipts);
-  return new OnChainRevertError(message, decoded || undefined, receipts);
+  // Only classify as OnChainRevert when there's evidence of an on-chain
+  // transaction (receipts, reason with revert patterns, etc.).  Plain API
+  // errors (e.g. analytics 500) should be generic O2Error, not OnChainRevert.
+  const hasOnchainEvidence =
+    receipts != null ||
+    (typeof reason === "string" &&
+      (reason.includes("Revert") || reason.toLowerCase().includes("receipt"))) ||
+    (typeof message === "string" && message.toLowerCase().includes("transaction"));
+
+  if (hasOnchainEvidence) {
+    const decoded = augmentRevertReason(message, reason, receipts);
+    return new OnChainRevertError(message, decoded || undefined, receipts);
+  }
+
+  return new O2Error(message);
 }
 
 /**

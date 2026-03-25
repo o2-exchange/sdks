@@ -241,16 +241,19 @@ def test_raise_for_error_decodes_on_chain_revert():
 
 
 def test_raise_for_error_no_revert_code_keeps_original_reason():
+    """Plain API errors without on-chain evidence raise O2Error, not OnChainRevert."""
+    from o2_sdk.errors import O2Error
+
     data = {
-        "message": "Something went wrong on chain",
+        "message": "Something went wrong",
         "reason": "out of gas",
     }
-    with pytest.raises(OnChainRevert) as exc_info:
+    with pytest.raises(O2Error) as exc_info:
         raise_for_error(data)
 
     err = exc_info.value
-    assert err.reason == "out of gas"
-    assert str(err) == "On-chain revert: out of gas"
+    assert not isinstance(err, OnChainRevert)
+    assert err.message == "Something went wrong"
 
 
 def test_on_chain_revert_str_without_reason():
