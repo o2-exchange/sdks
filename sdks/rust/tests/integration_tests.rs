@@ -664,10 +664,8 @@ async fn conservative_post_only_buy_params(
     // Prefer a price one quote tick below best ask to keep the order post-only while
     // minimizing over-aggressive bids in a live book.
     let mut chosen = default_dec;
-    // Use precision=1 (finest) to get accurate best ask/bid prices.
-    // Coarser levels aggregate prices into wide buckets, which can cause
-    // the chosen price to accidentally cross the actual best ask.
-    if let Ok(depth) = client.get_depth(market_pair, 1, None).await {
+    // TEMPORARY: precision=10 to validate error decoding with real on-chain errors
+    if let Ok(depth) = client.get_depth(market_pair, 10, None).await {
         if let Some(best_ask) = depth.asks.first() {
             let best_ask_human = market.format_price(best_ask.price);
             let best_ask_dec = *best_ask_human.inner();

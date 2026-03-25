@@ -360,10 +360,8 @@ async def _conservative_post_only_buy_price(client, market):
     fallback = _moderate_fill_price(market)
     price_step = 10 ** (-market.quote.max_precision)
     try:
-        # Use precision=1 (finest) to get accurate best ask/bid prices.
-        # Coarser levels aggregate prices into wide buckets, which can cause
-        # the chosen price to accidentally cross the actual best ask.
-        depth = await client.get_depth(market.pair, precision=1)
+        # TEMPORARY: precision=10 to validate error decoding with real on-chain errors
+        depth = await client.get_depth(market.pair, precision=10)
         if depth.best_ask:
             best_ask = market.format_price(int(depth.best_ask.price))
             return max(price_step, best_ask - price_step)

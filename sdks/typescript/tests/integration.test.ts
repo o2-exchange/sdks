@@ -143,10 +143,8 @@ async function conservativePostOnlyBuyPriceStr(client: O2Client, market: Market)
     // Use precision=1 (finest) to get accurate best ask/bid prices.
     // Coarser levels aggregate prices into wide buckets, which can cause
     // the chosen price to accidentally cross the actual best ask.
-    // Use precision=1 (finest) to get accurate best ask/bid prices.
-    // Coarser levels aggregate prices into wide buckets, which can cause
-    // the chosen price to accidentally cross the actual best ask.
-    const depth = await client.getDepth(market, 1);
+    // TEMPORARY: precision=10 to validate error decoding with real on-chain errors
+    const depth = await client.getDepth(market, 10);
     if (depth.asks.length > 0) {
       const bestAsk = Number(depth.asks[0].price) / 10 ** market.quote.decimals;
       chosen = Math.max(step, floorToStep(bestAsk - step, step));
