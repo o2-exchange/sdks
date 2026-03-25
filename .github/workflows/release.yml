@@ -13,7 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      releases: ${{ steps.knope.outputs.releases }}
+      python: ${{ steps.detect.outputs.python }}
+      typescript: ${{ steps.detect.outputs.typescript }}
+      rust: ${{ steps.detect.outputs.rust }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -22,17 +24,28 @@ jobs:
         with:
           version: 0.22.4
       - name: Create releases
-        id: knope
-        run: |
-          knope release --verbose 2>&1 | tee /tmp/knope-output.txt
-          # Check which packages were released by looking at created tags
-          echo "releases=true" >> "$GITHUB_OUTPUT"
+        run: knope release --verbose
         env:
           GITHUB_TOKEN: ${{ github.token }}
+      - name: Detect which packages were released
+        id: detect
+        run: |
+          # Check which tags knope just created
+          git fetch --tags
+          for pkg in python typescript rust; do
+            tag=$(git tag --sort=-creatordate | grep "^sdk-${pkg}/v" | head -1)
+            # Tag points to HEAD means it was just created in this run
+            if [ -n "$tag" ] && [ "$(git rev-list -1 "$tag")" = "$(git rev-parse HEAD)" ]; then
+              echo "${pkg}=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "${pkg}=false" >> "$GITHUB_OUTPUT"
+            fi
+          done
 
   publish-python:
     name: Publish Python SDK
     needs: create-releases
+    if: needs.create-releases.outputs.python == 'true'
     runs-on: ubuntu-latest
     environment:
       name: deploy-pypi
@@ -58,6 +71,7 @@ jobs:
   publish-typescript:
     name: Publish TypeScript SDK
     needs: create-releases
+    if: needs.create-releases.outputs.typescript == 'true'
     runs-on: ubuntu-latest
     environment: deploy-npm
     timeout-minutes: 15
@@ -85,6 +99,7 @@ jobs:
   publish-rust:
     name: Publish Rust SDK
     needs: create-releases
+    if: needs.create-releases.outputs.rust == 'true'
     runs-on: ubuntu-latest
     environment: deploy-cargo
     timeout-minutes: 15
