@@ -41,8 +41,7 @@ command = "git push --force --set-upstream origin release"
 
 [[workflows.steps]]
 type = "Command"
-command = "gh pr create --base main --head release --title 'chore: prepare release' --body 'Merging this PR will create new releases for all packages with pending changes.\n\nReview the version bumps and changelog entries in the diff.' || true"
-shell = "bash"
+command = "bash -c \"gh pr create --base main --head release --title 'chore: prepare release' --body 'Merging this PR will create new releases for all packages with pending changes.' || true\""
 
 # Run when the release PR is merged. Creates GitHub Releases (which
 # create tags on the remote), triggering the publish workflows.
