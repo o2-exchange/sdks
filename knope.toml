@@ -1,0 +1,63 @@
+[packages.sdk-python]
+versioned_files = ["sdks/python/pyproject.toml"]
+changelog = "sdks/python/CHANGELOG.md"
+scopes = ["python"]
+
+[packages.sdk-typescript]
+versioned_files = ["sdks/typescript/package.json"]
+changelog = "sdks/typescript/CHANGELOG.md"
+scopes = ["typescript"]
+
+[packages.sdk-rust]
+versioned_files = ["sdks/rust/Cargo.toml"]
+changelog = "sdks/rust/CHANGELOG.md"
+scopes = ["rust"]
+
+# --- Workflows ---
+
+# Run on push to main (via CI). Creates/updates a "release" PR with
+# version bumps and changelog entries for all packages with pending changes.
+[[workflows]]
+name = "prepare-release"
+
+[[workflows.steps]]
+type = "Command"
+command = "git switch -c release"
+
+[[workflows.steps]]
+type = "PrepareRelease"
+
+[[workflows.steps]]
+type = "Command"
+command = "git add -A"
+
+[[workflows.steps]]
+type = "Command"
+command = "git commit -m 'chore: prepare release'"
+
+[[workflows.steps]]
+type = "Command"
+command = "git push --force --set-upstream origin release"
+
+# NOTE: Org policy blocks GitHub Actions from creating PRs.
+# After this workflow runs, manually create the release PR:
+#   gh pr create --base main --head release --title "chore: prepare release"
+
+# Run when the release PR is merged. Creates GitHub Releases (which
+# create tags on the remote), triggering the publish workflows.
+[[workflows]]
+name = "release"
+
+[[workflows.steps]]
+type = "Release"
+
+# Interactive: create a changeset file describing your changes.
+[[workflows]]
+name = "document-change"
+
+[[workflows.steps]]
+type = "CreateChangeFile"
+
+[github]
+owner = "o2-exchange"
+repo = "sdks"

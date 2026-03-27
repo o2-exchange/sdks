@@ -170,7 +170,7 @@ Identifier usage:
 | `batch_actions(actions)` | Submit typed action batch (`MarketActions` or `MarketActionGroup`) |
 | `get_markets()` / `get_market(pair)` | Fetch market info |
 | `get_depth(market)` / `get_trades(market)` | Order book and trade data |
-| `get_balances(account)` / `get_orders(account, market)` | Account data |
+| `get_balances(account)` / `get_orders(market, account)` | Account data |
 | `stream_depth(market)` | Real-time order book stream |
 | `stream_orders(account)` / `stream_trades(market)` | Real-time updates |
 | `withdraw(owner, asset, amount)` | Withdraw funds |

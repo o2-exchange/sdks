@@ -29,7 +29,7 @@ from .encoding import (
     build_session_signing_bytes,
     build_withdraw_signing_bytes,
 )
-from .errors import O2Error, SessionExpired
+from .errors import InvalidRequest, O2Error, SessionExpired
 from .models import (
     AccountInfo,
     Action,
@@ -64,7 +64,7 @@ from .models import (
     TradeUpdate,
     WithdrawResponse,
 )
-from .websocket import O2WebSocket
+from .websocket import ConnectionEvent, O2WebSocket
 
 logger = logging.getLogger("o2_sdk.client")
 
@@ -105,6 +105,27 @@ class MarketActionsBuilder:
 
     def build(self) -> MarketActionGroup:
         return MarketActionGroup(market=self._market, actions=list(self._actions))
+
+
+def _validate_depth_precision(precision: int | str) -> None:
+    """Raise :class:`InvalidRequest` if *precision* is outside 1--18.
+
+    Shared validator for both REST ``get_depth`` and WebSocket ``stream_depth``.
+    Valid range: 1--18.
+    """
+    try:
+        p = int(precision)
+    except (TypeError, ValueError) as err:
+        raise InvalidRequest(
+            message=f"Invalid depth precision {precision!r}. Must be an integer in range 1-18."
+        ) from err
+    if p < 1 or p > 18:
+        raise InvalidRequest(
+            message=(
+                f"Invalid depth precision {p}. Valid range: 1-18 (powers of 10). "
+                "Precision 0 is not supported — use get_depth() via REST for exact prices."
+            ),
+        )
 
 
 class O2Client:
@@ -760,15 +781,84 @@ class O2Client:
         resp = await self._get_markets_cached()
         return self._resolve_market(resp, symbol_pair)
 
-    async def get_depth(self, market: str | Market, precision: int = 10) -> DepthSnapshot:
-        """Get order book depth for a market."""
-        market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_depth(market_obj.market_id, precision)
+    async def get_depth(
+        self,
+        market: str | Market,
+        precision: int = 1,
+        limit: int | None = None,
+    ) -> DepthSnapshot:
+        """Get order book depth for a market.
 
-    async def get_trades(self, market: str | Market, count: int = 50) -> list[Trade]:
-        """Get recent trades for a market."""
+        Args:
+            market: Market pair string (e.g. ``"fFUEL/fUSDC"``) or :class:`Market` object.
+            precision: Price grouping level, from ``1`` (most precise) to ``18``
+                (most grouped). Default ``1``.  At level 1, prices are at or
+                near their exact values.  Higher levels round prices into larger
+                buckets — useful for a visual depth chart but too coarse for
+                trading.  Same scale as :meth:`stream_depth`.
+            limit: Maximum number of price levels per side (bids/asks).
+                ``None`` (default) returns the full order book.
+
+        Raises:
+            InvalidRequest: If *precision* is outside the valid range 1--18.
+        """
+        _validate_depth_precision(precision)
+        precision = 10 ** int(precision)
         market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_trades(market_obj.market_id, count=count)
+        return await self.api.get_depth(market_obj.market_id, precision, limit=limit)
+
+    async def get_trades(
+        self,
+        market: str | Market,
+        count: int = 50,
+        account: AccountInfo | str | Id | None = None,
+        start_timestamp: int | None = None,
+        start_trade_id: str | Id | None = None,
+    ) -> list[Trade]:
+        """Get recent trades for a market.
+
+        Args:
+            market: Market pair string or Market object.
+            count: Number of trades to return (max 50).
+            account: Optional AccountInfo, trade_account_id string, or Id
+                to filter trades for a specific account. Strings are
+                validated as hex.
+            start_timestamp: Cursor for pagination — timestamp of the last
+                trade from the previous page. Must be paired with
+                ``start_trade_id``.
+            start_trade_id: Cursor for pagination — trade ID of the last
+                trade from the previous page. Must be paired with
+                ``start_timestamp``. Strings are validated as hex.
+        """
+        market_obj = await self._resolve_market_like_async(market)
+        validated_tid = (
+            Id(start_trade_id)
+            if isinstance(start_trade_id, str) and not isinstance(start_trade_id, Id)
+            else start_trade_id
+        )
+        if account is not None:
+            if isinstance(account, str) and not isinstance(account, Id):
+                contract = Id(account)
+            elif isinstance(account, Id):
+                contract = account
+            else:
+                if account.trade_account_id is None:
+                    msg = "AccountInfo has no trade_account_id"
+                    raise ValueError(msg)
+                contract = account.trade_account_id
+            return await self.api.get_trades_by_account(
+                market_obj.market_id,
+                contract=contract,
+                count=count,
+                start_timestamp=start_timestamp,
+                start_trade_id=validated_tid,
+            )
+        return await self.api.get_trades(
+            market_obj.market_id,
+            count=count,
+            start_timestamp=start_timestamp,
+            start_trade_id=validated_tid,
+        )
 
     async def get_bars(
         self,
@@ -777,7 +867,14 @@ class O2Client:
         from_ts: int,
         to_ts: int,
     ) -> list[Bar]:
-        """Get OHLCV bars for a market."""
+        """Get OHLCV bars for a market.
+
+        Args:
+            market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
+            resolution: Bar resolution (e.g. ``"1m"``, ``"1h"``, ``"1d"``).
+            from_ts: Start timestamp in **milliseconds** (not seconds).
+            to_ts: End timestamp in **milliseconds** (not seconds).
+        """
         market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_bars(market_obj.market_id, from_ts, to_ts, resolution)
 
@@ -791,13 +888,22 @@ class O2Client:
     # Account data
     # -----------------------------------------------------------------------
 
-    async def get_balances(self, account: AccountInfo | str) -> dict[str, Balance]:
+    async def get_balances(self, account: AccountInfo | str | Id) -> dict[str, Balance]:
         """Get balances keyed by asset symbol.
 
         Args:
-            account: AccountInfo or trade_account_id string
+            account: AccountInfo, trade_account_id string, or Id.
+                Strings are validated as hex.
         """
-        trade_account_id = account if isinstance(account, str) else account.trade_account_id
+        if isinstance(account, str) and not isinstance(account, Id):
+            trade_account_id = Id(account)
+        elif isinstance(account, Id):
+            trade_account_id = account
+        else:
+            if account.trade_account_id is None:
+                msg = "AccountInfo has no trade_account_id"
+                raise ValueError(msg)
+            trade_account_id = account.trade_account_id
 
         markets_resp = await self._get_markets_cached()
         result: dict[str, Balance] = {}
@@ -821,13 +927,42 @@ class O2Client:
 
     async def get_orders(
         self,
-        account: AccountInfo | str,
         market: str | Market,
+        account: AccountInfo | str | Id,
         is_open: bool | None = None,
         count: int = 20,
+        start_timestamp: int | None = None,
+        start_order_id: str | Id | None = None,
     ) -> list[Order]:
-        """Get orders for an account on a market."""
-        trade_account_id = account if isinstance(account, str) else account.trade_account_id
+        """Get orders for an account on a market.
+
+        Args:
+            market: Market pair string or Market object.
+            account: AccountInfo, trade_account_id string, or Id.
+                Strings are validated as hex.
+            is_open: Filter by open/closed status. ``None`` returns all.
+            count: Number of orders to return (max 200).
+            start_timestamp: Cursor for pagination — timestamp of the last
+                order from the previous page. Must be paired with
+                ``start_order_id``.
+            start_order_id: Cursor for pagination — order ID of the last
+                order from the previous page. Must be paired with
+                ``start_timestamp``. Strings are validated as hex.
+        """
+        if isinstance(account, str) and not isinstance(account, Id):
+            trade_account_id = Id(account)
+        elif isinstance(account, Id):
+            trade_account_id = account
+        else:
+            if account.trade_account_id is None:
+                msg = "AccountInfo has no trade_account_id"
+                raise ValueError(msg)
+            trade_account_id = account.trade_account_id
+        validated_oid = (
+            Id(start_order_id)
+            if isinstance(start_order_id, str) and not isinstance(start_order_id, Id)
+            else start_order_id
+        )
         market_obj = await self._resolve_market_like_async(market)
         resp = await self.api.get_orders(
             market_id=market_obj.market_id,
@@ -835,11 +970,15 @@ class O2Client:
             direction="desc",
             count=count,
             is_open=is_open,
+            start_timestamp=start_timestamp,
+            start_order_id=validated_oid,
         )
         return resp.orders
 
-    async def get_order(self, market: str | Market, order_id: str) -> Order:
-        """Get a specific order."""
+    async def get_order(self, market: str | Market, order_id: str | Id) -> Order:
+        """Get a specific order. Strings are validated as hex."""
+        if isinstance(order_id, str) and not isinstance(order_id, Id):
+            order_id = Id(order_id)
         market_obj = await self._resolve_market_like_async(market)
         return await self.api.get_order(market_obj.market_id, order_id)
 
@@ -853,13 +992,48 @@ class O2Client:
             await self._ws.connect()
         return self._ws
 
+    async def stream_lifecycle(self) -> AsyncIterator[ConnectionEvent]:
+        """Stream WebSocket connection lifecycle events.
+
+        Yields :class:`ConnectionEvent` objects whenever the connection state
+        changes (connected, disconnected, reconnecting, reconnected, closed).
+
+        Use this to detect reconnects and re-sync critical state from the
+        REST API — messages received during the disconnect window are lost.
+
+        Example::
+
+            async for event in client.stream_lifecycle():
+                if event.state == ConnectionState.RECONNECTED:
+                    # Re-sync balances, open orders, etc.
+                    balances = await client.get_balances(account)
+                elif event.state == ConnectionState.CLOSED:
+                    break
+        """
+        ws = await self._ensure_ws()
+        async for event in ws.stream_lifecycle():
+            yield event
+
     async def stream_depth(
-        self, market: str | Market, precision: int = 10
+        self, market: str | Market, precision: int = 1
     ) -> AsyncIterator[DepthUpdate]:
-        """Stream order book depth updates."""
+        """Stream order book depth updates.
+
+        Args:
+            market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
+            precision: Price grouping level, from ``1`` (most precise) to ``18``
+                (most grouped). Default ``1``.  At level 1, prices are at or
+                near their exact values.  Higher levels round prices into larger
+                buckets.  Same scale as :meth:`get_depth`.
+
+        Raises:
+            InvalidRequest: If *precision* is outside the valid range 1--18.
+        """
+        _validate_depth_precision(precision)
+        wire_precision = str(10 ** int(precision))
         market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
-        async for update in ws.stream_depth(market_obj.market_id, str(precision)):
+        async for update in ws.stream_depth(market_obj.market_id, wire_precision):
             yield update
 
     async def stream_orders(self, account: AccountInfo | str) -> AsyncIterator[OrderUpdate]:

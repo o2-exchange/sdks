@@ -207,9 +207,19 @@ class SessionExpired(O2Error):
 
 # On-chain revert error (no code, has message + reason)
 class OnChainRevert(O2Error):
-    """On-chain transaction revert (no error code)."""
+    """On-chain transaction revert (no error code).
 
-    pass
+    The ``str()`` representation is kept concise — it shows the decoded
+    revert reason rather than dumping multi-KB receipts.  Full receipts
+    are still accessible via the ``.receipts`` attribute.
+    """
+
+    def __str__(self) -> str:
+        # Prefer the decoded reason (set by raise_for_error); fall back to
+        # the raw message only when no reason is available.
+        if self.reason:
+            return f"On-chain revert: {self.reason}"
+        return f"On-chain revert: {self.message}"
 
 
 ERROR_CODE_MAP: dict[int, type[O2Error]] = {
@@ -256,7 +266,7 @@ def raise_for_error(data: dict[str, Any]) -> None:
         return
 
     code = data.get("code")
-    message = data.get("message", "Unknown error")
+    message = data.get("message") or data.get("error") or "Unknown error"
     reason = data.get("reason")
     receipts = data.get("receipts")
 
@@ -264,5 +274,19 @@ def raise_for_error(data: dict[str, Any]) -> None:
         error_cls = ERROR_CODE_MAP.get(code, O2Error)
         raise error_cls(message=message, code=code, reason=reason, receipts=receipts)
 
-    if "message" in data:
-        raise OnChainRevert(message=message, reason=reason, receipts=receipts)
+    if "message" in data or "error" in data:
+        # Only classify as OnChainRevert when there's evidence of an on-chain
+        # transaction (receipts, reason with revert patterns, etc.).  Plain API
+        # errors (e.g. analytics 500) should be generic O2Error, not OnChainRevert.
+        has_onchain_evidence = (
+            receipts is not None
+            or (isinstance(reason, str) and ("Revert" in reason or "receipt" in reason.lower()))
+            or (isinstance(message, str) and "transaction" in message.lower())
+        )
+        if has_onchain_evidence:
+            from .onchain_revert import augment_revert_reason
+
+            augmented_reason = augment_revert_reason(message, reason, receipts)
+            raise OnChainRevert(message=message, reason=augmented_reason, receipts=receipts)
+
+        raise O2Error(message=message)

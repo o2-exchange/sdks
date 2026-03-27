@@ -103,7 +103,7 @@ await client.createOrder("fFUEL/fUSDC", "buy", 20000000n, 100000000000n);
 await client.createOrder("fFUEL/fUSDC", "buy", "0.02", 100000000000n);
 ```
 
-Values from API responses (e.g., `order.price`, `depth.sells[0].price`) are
+Values from API responses (e.g., `order.price`, `depth.asks[0].price`) are
 `bigint` and pass through the bigint path automatically — no double-scaling.
 
 ## Cancel and Replace

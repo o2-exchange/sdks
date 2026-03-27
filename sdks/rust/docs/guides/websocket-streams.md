@@ -39,7 +39,7 @@ Stream real-time order book updates:
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_depth(&market.market_id, "10").await?;
+let mut stream = client.stream_depth(&market.market_id, 1).await?;
 
 while let Some(Ok(update)) = stream.next().await {
     // First message is a full snapshot (action = "subscribe_depth")
@@ -48,13 +48,13 @@ while let Some(Ok(update)) = stream.next().await {
 
     if is_snapshot {
         if let Some(ref view) = update.view {
-            println!("Snapshot: {} bids, {} asks", view.buys.len(), view.sells.len());
+            println!("Snapshot: {} bids, {} asks", view.bids.len(), view.asks.len());
         }
     } else if let Some(ref changes) = update.changes {
-        if let Some(bid) = changes.buys.first() {
+        if let Some(bid) = changes.bids.first() {
             println!("Best bid: {}", bid.price);
         }
-        if let Some(ask) = changes.sells.first() {
+        if let Some(ask) = changes.asks.first() {
             println!("Best ask: {}", ask.price);
         }
     }
@@ -174,14 +174,14 @@ use tokio_stream::StreamExt;
 let market = client.get_market("fFUEL/fUSDC").await?;
 let identity = Identity::ContractId(session.trade_account_id.to_string());
 
-let mut depth_stream = client.stream_depth(&market.market_id, "10").await?;
+let mut depth_stream = client.stream_depth(&market.market_id, 1).await?;
 let mut order_stream = client.stream_orders(&[identity.clone()]).await?;
 let mut trade_stream = client.stream_trades(&market.market_id).await?;
 
 let depth_task = tokio::spawn(async move {
     while let Some(Ok(update)) = depth_stream.next().await {
         if let Some(ref changes) = update.changes {
-            if let Some(bid) = changes.buys.first() {
+            if let Some(bid) = changes.bids.first() {
                 println!("Best bid: {}", bid.price);
             }
         }
@@ -225,7 +225,7 @@ use o2_sdk::WsLifecycleEvent;
 use tokio_stream::StreamExt;
 
 let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_depth(&market.market_id, "10").await?;
+let mut stream = client.stream_depth(&market.market_id, 1).await?;
 let mut lifecycle = client.subscribe_ws_lifecycle().await?;
 
 loop {

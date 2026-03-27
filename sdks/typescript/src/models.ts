@@ -22,10 +22,19 @@ export type HexId<Brand extends string> = string & {
 
 /**
  * Create a normalized branded hex ID from a raw string.
- * Normalizes to 0x-prefixed lowercase.
+ * Normalizes to 0x-prefixed lowercase. Validates that the input
+ * is a non-empty hex string (with or without `0x` prefix).
+ *
+ * @throws {Error} if the input is empty or contains non-hex characters.
  */
 export function hexId<B extends string>(raw: string): HexId<B> {
   const stripped = raw.startsWith("0x") || raw.startsWith("0X") ? raw.slice(2) : raw;
+  if (!stripped) {
+    throw new Error(`Invalid hex ID: expected non-empty hex string, got ${JSON.stringify(raw)}`);
+  }
+  if (!/^[0-9a-fA-F]+$/.test(stripped)) {
+    throw new Error(`Invalid hex ID: contains non-hex characters: ${JSON.stringify(raw)}`);
+  }
   return `0x${stripped.toLowerCase()}` as HexId<B>;
 }
 
@@ -42,18 +51,54 @@ export type TradeAccountId = HexId<"TradeAccountId">;
 /** Asset identifier. */
 export type AssetId = HexId<"AssetId">;
 
-/** Create a {@link TxId} from a raw hex string. */
+/**
+ * Create a normalized hex ID without validation. For internal/parsing use only.
+ * @internal
+ */
+export function hexIdTrusted<B extends string>(raw: string): HexId<B> {
+  const stripped = raw.startsWith("0x") || raw.startsWith("0X") ? raw.slice(2) : raw;
+  return `0x${stripped.toLowerCase()}` as HexId<B>;
+}
+
+/** Create a {@link TxId} from a raw hex string (validated). */
 export const txId = (raw: string): TxId => hexId<"TxId">(raw);
-/** Create an {@link OrderId} from a raw hex string. */
+/** Create an {@link OrderId} from a raw hex string (validated). */
 export const orderId = (raw: string): OrderId => hexId<"OrderId">(raw);
-/** Create a {@link MarketId} from a raw hex string. */
+/** Create a {@link MarketId} from a raw hex string (validated). */
 export const marketId = (raw: string): MarketId => hexId<"MarketId">(raw);
-/** Create a {@link ContractId} from a raw hex string. */
+/** Create a {@link ContractId} from a raw hex string (validated). */
 export const contractId = (raw: string): ContractId => hexId<"ContractId">(raw);
-/** Create a {@link TradeAccountId} from a raw hex string. */
+/** Create a {@link TradeAccountId} from a raw hex string (validated). */
 export const tradeAccountId = (raw: string): TradeAccountId => hexId<"TradeAccountId">(raw);
-/** Create an {@link AssetId} from a raw hex string. */
+/** Create an {@link AssetId} from a raw hex string (validated). */
 export const assetId = (raw: string): AssetId => hexId<"AssetId">(raw);
+
+// ── Depth precision ─────────────────────────────────────────────────
+
+/**
+ * Validated depth precision for order book subscriptions.
+ *
+ * Created via {@link depthPrecision} from a user-facing level (1–18).
+ * Level 1 = most precise (finest tick), 18 = most grouped.
+ *
+ * Required by {@link O2WebSocket.streamDepth}. The high-level
+ * {@link O2Client.streamDepth} accepts a plain number and creates
+ * this internally.
+ */
+export type DepthPrecision = string & { readonly __brand: "DepthPrecision" };
+
+/**
+ * Create a validated {@link DepthPrecision} from a level (1–18).
+ *
+ * @param level - Precision level. 1 = most precise, 18 = most grouped.
+ * @throws {Error} If level is not an integer in the range 1–18.
+ */
+export function depthPrecision(level: number): DepthPrecision {
+  if (!Number.isInteger(level) || level < 1 || level > 18) {
+    throw new Error(`Invalid depth precision ${level}. Must be an integer in range 1-18.`);
+  }
+  return String(10 ** level) as DepthPrecision;
+}
 
 // ── Nonce ────────────────────────────────────────────────────────────
 
@@ -214,6 +259,8 @@ export interface Market {
   contract_id: ContractId;
   /** Unique market identifier (0x-prefixed hex). */
   market_id: MarketId;
+  /** Human-readable pair string (e.g., `"ETH/USDC"`). */
+  pair: string;
   /** Maker fee (chain integer). */
   maker_fee: bigint;
   /** Taker fee (chain integer). */
@@ -229,6 +276,16 @@ export interface Market {
   /** Quote asset (the asset used for pricing). */
   quote: MarketAsset;
 }
+
+/**
+ * A reference to a market: a symbol pair string (e.g. `"ETH/USDC"`),
+ * a hex {@link MarketId}, or a full {@link Market} object.
+ *
+ * All client methods that accept a market parameter use this type.
+ * Runtime validation happens in `resolveMarket()` which matches the
+ * input against the cached market list.
+ */
+export type MarketRef = string | MarketId | Market;
 
 /**
  * Response from the `GET /v1/markets` endpoint.
@@ -306,15 +363,15 @@ export interface DepthLevel {
  * @example
  * ```ts
  * const depth = await client.getDepth("fFUEL/fUSDC");
- * console.log(`Best bid: ${depth.buys[0]?.price}`);
- * console.log(`Best ask: ${depth.sells[0]?.price}`);
+ * console.log(`Best bid: ${depth.bids[0]?.price}`);
+ * console.log(`Best ask: ${depth.asks[0]?.price}`);
  * ```
  */
 export interface DepthSnapshot {
-  /** Buy (bid) side of the order book, sorted by price descending. */
-  buys: DepthLevel[];
-  /** Sell (ask) side of the order book, sorted by price ascending. */
-  sells: DepthLevel[];
+  /** Bid side of the order book, sorted by price descending. */
+  bids: DepthLevel[];
+  /** Ask side of the order book, sorted by price ascending. */
+  asks: DepthLevel[];
 }
 
 /**
@@ -327,9 +384,9 @@ export interface DepthUpdate {
   /** The action type (`"subscribe_depth"` or `"subscribe_depth_update"`). */
   action: string;
   /** Incremental changes (present on updates). */
-  changes?: { buys: DepthLevel[]; sells: DepthLevel[] };
+  changes?: { bids: DepthLevel[]; asks: DepthLevel[] };
   /** Full order book view (present on snapshots). */
-  view?: { precision?: number; buys: DepthLevel[]; sells: DepthLevel[] };
+  view?: { precision?: number; bids: DepthLevel[]; asks: DepthLevel[] };
   /** Market identifier. */
   market_id: MarketId;
   /** On-chain timestamp. */
@@ -525,7 +582,7 @@ export type DesiredQuantity =
  *
  * @example
  * ```ts
- * const orders = await client.getOrders(tradeAccountId, "fFUEL/fUSDC", true);
+ * const orders = await client.getOrders("fFUEL/fUSDC", tradeAccountId, true);
  * for (const order of orders) {
  *   console.log(`${order.side} ${order.quantity} @ ${order.price}`);
  * }
@@ -602,7 +659,13 @@ export interface OrdersResponse {
 export interface Trade {
   /** Unique trade identifier. */
   trade_id: string;
-  /** Taker side of the trade. */
+  /**
+   * The **maker's** order side (`"buy"` or `"sell"`).
+   *
+   * This is an objective property of the trade — both maker and taker see the
+   * same value. To determine your own direction when you may be either maker
+   * or taker, combine `side` with `trader_side`.
+   */
   side: Side;
   /** Total trade value in quote asset (chain integer). */
   total: bigint;
@@ -610,8 +673,14 @@ export interface Trade {
   quantity: bigint;
   /** Trade price (chain integer). */
   price: bigint;
-  /** Trade execution timestamp. */
-  timestamp: string;
+  /** Trade execution timestamp (milliseconds since epoch). */
+  timestamp: number;
+  /**
+   * The querying account's role: `"maker"`, `"taker"`, or `"both"` (self-trade).
+   * Only present on trades returned by account-scoped endpoints
+   * (e.g. `getTrades({ account: ... })`).
+   */
+  trader_side?: "maker" | "taker" | "both";
   /** Maker account identity. */
   maker?: Identity;
   /** Taker account identity. */
@@ -635,22 +704,58 @@ export interface OrderBookBalance {
 /**
  * Balance information for a trading account on a specific asset.
  *
+ * The balance model tracks funds across three locations:
+ *
+ * - **trading_account_balance** — funds sitting directly in the trading account
+ *   contract, ready to be allocated to any market.
+ * - **total_unlocked** — the *total* available balance, i.e.
+ *   `trading_account_balance` **plus** unlocked amounts sitting in individual
+ *   order-book contracts (e.g. proceeds from filled orders not yet settled).
+ *   **Use this when computing how much you can trade.**
+ * - **total_locked** — funds locked as collateral for currently open orders
+ *   across all order-book contracts.
+ *
+ * ⚠️ `total_unlocked` already *includes* `trading_account_balance`.
+ * Do **not** add them together — that double-counts your funds.
+ *
+ * ```
+ * available_for_new_orders = total_unlocked       // correct
+ * locked_in_open_orders   = total_locked
+ * grand_total             = total_unlocked + total_locked
+ * ```
+ *
  * @example
  * ```ts
  * const balances = await client.getBalances(tradeAccountId);
  * for (const [symbol, bal] of Object.entries(balances)) {
- *   console.log(`${symbol}: ${bal.trading_account_balance}`);
+ *   // ✅ correct: total_unlocked is already the full available balance
+ *   console.log(`${symbol}: available=${bal.total_unlocked}, locked=${bal.total_locked}`);
+ *   // ❌ wrong: do NOT do trading_account_balance + total_unlocked
  * }
  * ```
  */
 export interface BalanceResponse {
   /** Per-order-book balance breakdown, keyed by order book contract ID. */
   order_books: Record<string, OrderBookBalance>;
-  /** Total locked across all order books (chain integer). */
+  /**
+   * Total balance locked as collateral for open orders across all order-book
+   * contracts (chain integer).
+   */
   total_locked: bigint;
-  /** Total unlocked across all order books (chain integer). */
+  /**
+   * Total available balance for trading (chain integer).
+   *
+   * This is `trading_account_balance` + unlocked amounts in each order-book
+   * contract.  Use this value — not `trading_account_balance` alone — when
+   * deciding how much you can spend on new orders.
+   */
   total_unlocked: bigint;
-  /** Total balance in the trading account (chain integer). */
+  /**
+   * Balance sitting directly in the trading account contract (chain integer).
+   *
+   * This is a *subset* of `total_unlocked`. Do not add these two fields
+   * together.
+   */
   trading_account_balance: bigint;
 }
 
@@ -854,7 +959,7 @@ export class SessionActionsResponse {
     data: Record<string, unknown>,
     parseOrderFn: (raw: Record<string, unknown>) => Order,
   ): SessionActionsResponse {
-    const rawTxId = typeof data.tx_id === "string" ? txId(data.tx_id) : null;
+    const rawTxId = typeof data.tx_id === "string" ? hexIdTrusted<"TxId">(data.tx_id) : null;
     const rawOrders = Array.isArray(data.orders)
       ? (data.orders as Record<string, unknown>[]).map(parseOrderFn)
       : null;
@@ -1303,7 +1408,7 @@ export function parseOrder(raw: Record<string, unknown>): Order {
 
   return {
     ...(raw as unknown as Order),
-    order_id: orderId(raw.order_id as string),
+    order_id: hexIdTrusted<"OrderId">(raw.order_id as string),
     side,
     order_type: orderType,
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
@@ -1311,7 +1416,8 @@ export function parseOrder(raw: Record<string, unknown>): Order {
     quantity_fill: raw.quantity_fill != null ? parseBigInt(raw.quantity_fill) : undefined,
     price_fill: raw.price_fill != null ? parseBigInt(raw.price_fill) : undefined,
     desired_quantity: parseDesiredQuantity(raw.desired_quantity),
-    market_id: raw.market_id != null ? marketId(raw.market_id as string) : undefined,
+    market_id:
+      raw.market_id != null ? hexIdTrusted<"MarketId">(raw.market_id as string) : undefined,
   };
 }
 
@@ -1325,12 +1431,18 @@ export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
 
 /** Parse a raw trade into a typed {@link Trade}. */
 export function parseTrade(raw: Record<string, unknown>): Trade {
+  const traderSide = raw.trader_side as string | undefined;
   return {
     ...(raw as unknown as Trade),
     side: parseRequiredSide(raw.side),
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
     quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
     total: raw.total != null ? parseBigInt(raw.total) : 0n,
+    timestamp: Number(raw.timestamp ?? 0),
+    trader_side:
+      traderSide === "maker" || traderSide === "taker" || traderSide === "both"
+        ? traderSide
+        : undefined,
   };
 }
 
@@ -1364,7 +1476,7 @@ export function parseAggregatedTrade(raw: Record<string, unknown>): Trade {
     price: raw.price != null ? parseBigInt(raw.price) : 0n,
     quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
     total: raw.total != null ? parseBigInt(raw.total) : 0n,
-    timestamp: raw.timestamp != null ? String(raw.timestamp) : "0",
+    timestamp: Number(raw.timestamp ?? 0),
   };
 }
 
@@ -1396,22 +1508,25 @@ export function parseBalanceResponse(raw: Record<string, unknown>): BalanceRespo
 export function parseMarket(raw: Record<string, unknown>): Market {
   const base = raw.base as Record<string, unknown>;
   const quote = raw.quote as Record<string, unknown>;
+  const baseAsset = {
+    ...(base as unknown as MarketAsset),
+    asset: hexIdTrusted<"AssetId">(base.asset as string),
+  };
+  const quoteAsset = {
+    ...(quote as unknown as MarketAsset),
+    asset: hexIdTrusted<"AssetId">(quote.asset as string),
+  };
   return {
     ...(raw as unknown as Market),
-    contract_id: contractId(raw.contract_id as string),
-    market_id: marketId(raw.market_id as string),
+    contract_id: hexIdTrusted<"ContractId">(raw.contract_id as string),
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
+    pair: `${baseAsset.symbol}/${quoteAsset.symbol}`,
     maker_fee: parseBigInt(raw.maker_fee),
     taker_fee: parseBigInt(raw.taker_fee),
     min_order: parseBigInt(raw.min_order),
     dust: parseBigInt(raw.dust),
-    base: {
-      ...(base as unknown as MarketAsset),
-      asset: assetId(base.asset as string),
-    },
-    quote: {
-      ...(quote as unknown as MarketAsset),
-      asset: assetId(quote.asset as string),
-    },
+    base: baseAsset,
+    quote: quoteAsset,
   };
 }
 
@@ -1428,7 +1543,7 @@ export function parseBalanceUpdate(raw: Record<string, unknown>): BalanceUpdate 
       }
       return {
         identity: entry.identity as Identity,
-        asset_id: assetId(entry.asset_id as string),
+        asset_id: hexIdTrusted<"AssetId">(entry.asset_id as string),
         total_locked: parseBigInt(entry.total_locked),
         total_unlocked: parseBigInt(entry.total_unlocked),
         trading_account_balance: parseBigInt(entry.trading_account_balance),
@@ -1442,7 +1557,7 @@ export function parseBalanceUpdate(raw: Record<string, unknown>): BalanceUpdate 
 export function parseNonceUpdate(raw: Record<string, unknown>): NonceUpdate {
   return {
     ...(raw as unknown as NonceUpdate),
-    contract_id: tradeAccountId(raw.contract_id as string),
+    contract_id: hexIdTrusted<"TradeAccountId">(raw.contract_id as string),
     nonce: parseBigInt(raw.nonce),
   };
 }
@@ -1451,14 +1566,15 @@ export function parseNonceUpdate(raw: Record<string, unknown>): NonceUpdate {
 export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
   const result: DepthUpdate = {
     ...(raw as unknown as DepthUpdate),
-    market_id: marketId(raw.market_id as string),
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
   };
 
   if (raw.changes) {
     const changes = raw.changes as Record<string, unknown>;
     result.changes = {
-      buys: ((changes.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
-      sells: ((changes.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      // Wire format uses "buys"/"sells"; we map to bids/asks
+      bids: ((changes.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      asks: ((changes.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
     };
   }
 
@@ -1466,8 +1582,8 @@ export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
     const view = raw.view as Record<string, unknown>;
     result.view = {
       precision: typeof view.precision === "number" ? view.precision : undefined,
-      buys: ((view.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
-      sells: ((view.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      bids: ((view.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      asks: ((view.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
     };
   }
 
@@ -1488,7 +1604,7 @@ export function parseTradeUpdate(raw: Record<string, unknown>): TradeUpdate {
   const rawTrades = (raw.trades ?? []) as Record<string, unknown>[];
   return {
     ...(raw as unknown as TradeUpdate),
-    market_id: marketId(raw.market_id as string),
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
     trades: rawTrades.map(parseTrade),
   };
 }
@@ -1498,7 +1614,7 @@ export function parseAccountInfo(raw: Record<string, unknown>): AccountInfo {
   const ta = raw.trade_account as Record<string, unknown> | null;
   const rawId = raw.trade_account_id as string | null;
   return {
-    trade_account_id: rawId ? tradeAccountId(rawId) : null,
+    trade_account_id: rawId ? hexIdTrusted<"TradeAccountId">(rawId) : null,
     trade_account: ta
       ? {
           ...(ta as unknown as TradeAccount),

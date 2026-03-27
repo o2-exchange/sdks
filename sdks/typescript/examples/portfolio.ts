@@ -16,7 +16,7 @@ import {
   type Market,
   Network,
   O2Client,
-} from "../src/index.js";
+} from "@o2exchange/sdk";
 
 // ── Main ──────────────────────────────────────────────────────────
 
@@ -47,7 +47,7 @@ async function main() {
   console.log("\n=== Open Orders ===");
   for (const market of markets) {
     try {
-      const orders = await client.getOrders(tradeAccountId, market, true, 50);
+      const orders = await client.getOrders(market, tradeAccountId, true, 50);
       if (orders.length > 0) {
         console.log(`\n${market.base.symbol}/${market.quote.symbol}:`);
         for (const order of orders) {

@@ -123,6 +123,7 @@ from .models import (
     WhitelistResponse,
     WithdrawResponse,
 )
+from .websocket import ConnectionEvent, ConnectionState
 
 __all__ = [
     "GAS_MAX",
@@ -142,6 +143,8 @@ __all__ = [
     "CancelOrderAction",
     "CancelOrderRequestAction",
     "ChainInt",
+    "ConnectionEvent",
+    "ConnectionState",
     "ContractIdentity",
     "CreateOrderAction",
     "CreateOrderRequestAction",

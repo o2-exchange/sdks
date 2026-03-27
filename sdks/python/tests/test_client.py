@@ -524,3 +524,68 @@ async def test_setup_account_skips_faucet_when_balance_present(monkeypatch: pyte
     out = await client.setup_account(wallet)
     assert out.trade_account_id == account.trade_account_id
     assert called["mint"] is False
+
+
+# ---------------------------------------------------------------------------
+# Depth precision validation
+# ---------------------------------------------------------------------------
+
+from o2_sdk.errors import InvalidRequest  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_get_depth_rejects_precision_0():
+    client = O2Client()
+    market = _test_market()
+    client._markets_cache = _test_markets_response(market)
+    with pytest.raises(InvalidRequest, match="Invalid depth precision 0"):
+        await client.get_depth(market, precision=0)
+
+
+@pytest.mark.asyncio
+async def test_get_depth_rejects_precision_19():
+    client = O2Client()
+    market = _test_market()
+    client._markets_cache = _test_markets_response(market)
+    with pytest.raises(InvalidRequest, match="Invalid depth precision 19"):
+        await client.get_depth(market, precision=19)
+
+
+@pytest.mark.asyncio
+async def test_get_depth_rejects_negative_precision():
+    client = O2Client()
+    market = _test_market()
+    client._markets_cache = _test_markets_response(market)
+    with pytest.raises(InvalidRequest, match="Invalid depth precision -1"):
+        await client.get_depth(market, precision=-1)
+
+
+@pytest.mark.asyncio
+async def test_stream_depth_rejects_precision_0():
+    client = O2Client()
+    market = _test_market()
+    client._markets_cache = _test_markets_response(market)
+    with pytest.raises(InvalidRequest, match="Invalid depth precision 0"):
+        async for _ in client.stream_depth(market, precision=0):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_get_depth_accepts_precision_1():
+    """REST get_depth works correctly at precision=1."""
+    from o2_sdk.client import _validate_depth_precision
+
+    _validate_depth_precision(1)
+    _validate_depth_precision(10)
+    _validate_depth_precision(18)
+
+
+@pytest.mark.asyncio
+async def test_stream_depth_accepts_valid_precisions():
+    """stream_depth accepts precision 1-18 (shared validator with get_depth)."""
+    from o2_sdk.client import _validate_depth_precision
+
+    _validate_depth_precision(1)
+    _validate_depth_precision(9)
+    _validate_depth_precision(10)
+    _validate_depth_precision(18)

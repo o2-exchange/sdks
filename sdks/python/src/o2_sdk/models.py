@@ -571,12 +571,26 @@ class OrdersResponse:
 
 @dataclass
 class Trade:
+    """A single trade execution.
+
+    Attributes:
+        side: The **maker's** order side (``"buy"`` or ``"sell"``).
+            This is an objective property of the trade — both maker and taker
+            see the same value.  To determine your own direction when you may
+            be either maker or taker, combine ``side`` with ``trader_side``.
+        trader_side: The querying account's role: ``"maker"``, ``"taker"``,
+            or ``"both"`` (self-trade).  Only present on trades returned by
+            account-scoped endpoints (e.g. ``get_trades(account=...)``).
+        timestamp: Trade execution timestamp (milliseconds since epoch).
+    """
+
     trade_id: str
     side: str
     total: str
     quantity: str
     price: str
-    timestamp: str
+    timestamp: int
+    trader_side: str | None = None
     maker: Identity | None = None
     taker: Identity | None = None
     market_id: Id | None = None
@@ -591,7 +605,8 @@ class Trade:
             total=str(d.get("total", "0")),
             quantity=str(d.get("quantity", "0")),
             price=str(d.get("price", "0")),
-            timestamp=str(d.get("timestamp", "0")),
+            timestamp=int(d.get("timestamp", 0)),
+            trader_side=d.get("trader_side"),
             maker=maker,
             taker=taker,
             market_id=_parse_id(d.get("market_id")),
@@ -615,6 +630,30 @@ class OrderBookBalance:
 
 @dataclass
 class Balance:
+    """Balance information for a trading account on a specific asset.
+
+    The balance model tracks funds across three locations:
+
+    - **trading_account_balance**: Funds sitting directly in the trading account
+      contract, ready to be allocated to any market.
+    - **total_unlocked**: The *total* available balance, i.e.
+      ``trading_account_balance`` **plus** unlocked amounts sitting in individual
+      order-book contracts (e.g. proceeds from filled orders not yet settled).
+      This is the correct value to use when computing how much you can trade.
+    - **total_locked**: Funds locked as collateral for currently open orders
+      across all order-book contracts.
+
+    .. warning::
+       ``total_unlocked`` already *includes* ``trading_account_balance``.
+       Do **not** add them together — that double-counts your funds.
+
+    Quick reference::
+
+        available_for_new_orders = total_unlocked   # correct
+        locked_in_open_orders   = total_locked
+        grand_total             = total_unlocked + total_locked
+    """
+
     order_books: dict[str, OrderBookBalance]
     total_locked: str
     total_unlocked: str
@@ -634,8 +673,27 @@ class Balance:
 
     @property
     def available(self) -> int:
-        """Total available balance for trading (trading_account_balance)."""
-        return int(self.trading_account_balance)
+        """Total balance available for placing new orders.
+
+        This equals ``total_unlocked``, which is the sum of:
+        - ``trading_account_balance`` (funds in the trading account), and
+        - unlocked amounts in each order-book contract (e.g. unsettled fills).
+
+        .. warning::
+           Do **not** manually add ``trading_account_balance + total_unlocked``;
+           that double-counts the trading account portion.
+        """
+        return int(self.total_unlocked)
+
+    @property
+    def locked(self) -> int:
+        """Total balance locked as collateral for open orders."""
+        return int(self.total_locked)
+
+    @property
+    def total(self) -> int:
+        """Grand total balance (available + locked in orders)."""
+        return int(self.total_unlocked) + int(self.total_locked)
 
 
 # ---------------------------------------------------------------------------
@@ -655,26 +713,33 @@ class DepthLevel:
 
 @dataclass
 class DepthSnapshot:
-    buys: list[DepthLevel]
-    sells: list[DepthLevel]
+    """Order book depth snapshot.
+
+    Attributes:
+        bids: Buy (bid) side levels, sorted by price descending.
+        asks: Sell (ask) side levels, sorted by price ascending.
+    """
+
+    bids: list[DepthLevel]
+    asks: list[DepthLevel]
     market_id: Id | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> DepthSnapshot:
         view = d.get("orders", d.get("view", d))
         return cls(
-            buys=[DepthLevel.from_dict(x) for x in view.get("buys", [])],
-            sells=[DepthLevel.from_dict(x) for x in view.get("sells", [])],
+            bids=[DepthLevel.from_dict(x) for x in view.get("buys", [])],
+            asks=[DepthLevel.from_dict(x) for x in view.get("sells", [])],
             market_id=_parse_id(d.get("market_id")),
         )
 
     @property
     def best_bid(self) -> DepthLevel | None:
-        return self.buys[0] if self.buys else None
+        return self.bids[0] if self.bids else None
 
     @property
     def best_ask(self) -> DepthLevel | None:
-        return self.sells[0] if self.sells else None
+        return self.asks[0] if self.asks else None
 
 
 @dataclass
@@ -694,8 +759,8 @@ class DepthUpdate:
         else:
             changes_data = d.get("changes", {})
             changes = DepthSnapshot(
-                buys=[DepthLevel.from_dict(x) for x in changes_data.get("buys", [])],
-                sells=[DepthLevel.from_dict(x) for x in changes_data.get("sells", [])],
+                bids=[DepthLevel.from_dict(x) for x in changes_data.get("buys", [])],
+                asks=[DepthLevel.from_dict(x) for x in changes_data.get("sells", [])],
             )
         return cls(
             changes=changes,

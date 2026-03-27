@@ -235,3 +235,9 @@ impl From<tokio_tungstenite::tungstenite::Error> for O2Error {
         O2Error::WebSocketError(err.to_string())
     }
 }
+
+impl From<std::convert::Infallible> for O2Error {
+    fn from(_: std::convert::Infallible) -> Self {
+        unreachable!()
+    }
+}

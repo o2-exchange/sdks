@@ -2,15 +2,23 @@
 
 Supports subscriptions for depth, orders, trades, balances, and nonce updates
 with auto-reconnect and exponential backoff.
+
+Lifecycle events (connected, disconnected, reconnecting, etc.) are available
+via ``stream_lifecycle()`` so callers can re-sync state from REST after a
+reconnect — critical for financial applications where missed messages can
+cause incorrect position tracking.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import enum
 import json
 import logging
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Any
 
 import websockets
 from websockets.asyncio.client import ClientConnection
@@ -27,6 +35,36 @@ from .models import (
 logger = logging.getLogger("o2_sdk.websocket")
 
 
+# ---------------------------------------------------------------------------
+# Lifecycle events
+# ---------------------------------------------------------------------------
+
+
+class ConnectionState(enum.Enum):
+    """WebSocket connection lifecycle states."""
+
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+    RECONNECTING = "reconnecting"
+    RECONNECTED = "reconnected"
+    CLOSED = "closed"  # terminal — max retries or explicit disconnect
+
+
+@dataclass(frozen=True)
+class ConnectionEvent:
+    """Emitted on WebSocket lifecycle transitions.
+
+    Attributes:
+        state: The new connection state.
+        attempt: Reconnect attempt number (0 when not reconnecting).
+        message: Human-readable description of what happened.
+    """
+
+    state: ConnectionState
+    attempt: int = 0
+    message: str = ""
+
+
 class O2WebSocket:
     """Async WebSocket client for O2 Exchange real-time data.
 
@@ -35,7 +73,15 @@ class O2WebSocket:
     - Subscription tracking and automatic re-subscribe on reconnect
     - Per-subscriber message queues for safe concurrent access
     - Heartbeat ping/pong to detect silent disconnections
+    - Lifecycle event channel for connection state awareness
     - Configurable max reconnect attempts
+
+    Financial safety:
+    After a reconnect the server replays the current order-book snapshot,
+    but in-flight messages during the disconnect window are lost.  Callers
+    should subscribe to ``stream_lifecycle()`` and re-sync critical state
+    (balances, open orders) from the REST API whenever they receive a
+    ``RECONNECTED`` event.
     """
 
     def __init__(
@@ -50,7 +96,7 @@ class O2WebSocket:
         self._subscriptions: list[dict] = []
         # Per-subscriber fan-out: each stream_*() call registers its own queue.
         # Key = action queue key (e.g. "depth", "orders"), value = list of queues.
-        self._subscriber_queues: dict[str, list[asyncio.Queue]] = {}
+        self._subscriber_queues: dict[str, list[asyncio.Queue[Any]]] = {}
         self._listener_task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
         self._connected = False
@@ -61,68 +107,89 @@ class O2WebSocket:
         self._pong_timeout = pong_timeout
         self._max_reconnect_attempts = max_reconnect_attempts
         self._reconnect_attempts = 0
-        self._last_pong: float = 0.0
+        self._close_event = asyncio.Event()
+
+    # ------------------------------------------------------------------
+    # Connection lifecycle
+    # ------------------------------------------------------------------
 
     async def connect(self) -> O2WebSocket:
         """Connect to the WebSocket endpoint."""
         self._should_run = True
+        self._close_event.clear()
         self._reconnect_attempts = 0
         await self._do_connect()
+        self._emit_lifecycle(ConnectionState.CONNECTED, message="Initial connection")
+        self._ensure_background_tasks()
         return self
 
     async def _do_connect(self) -> None:
-        try:
-            self._ws = await websockets.connect(self._config.ws_url)
-            self._connected = True
-            self._reconnect_delay = 1.0
-            self._reconnect_attempts = 0
-            self._last_pong = asyncio.get_event_loop().time()
-            logger.info("WebSocket connected to %s", self._config.ws_url)
+        self._ws = await websockets.connect(self._config.ws_url)
+        self._connected = True
+        self._reconnect_delay = 1.0
+        self._reconnect_attempts = 0
+        logger.info("WebSocket connected to %s", self._config.ws_url)
 
-            # Re-subscribe on reconnect
-            for sub in self._subscriptions:
-                await self._send(sub)
+        # Re-subscribe on reconnect
+        for sub in self._subscriptions:
+            await self._send(sub)
 
-            # Start listener
-            if self._listener_task is None or self._listener_task.done():
-                self._listener_task = asyncio.create_task(self._listen())
-
-            # Start ping task
-            if self._ping_task is None or self._ping_task.done():
-                self._ping_task = asyncio.create_task(self._ping_loop())
-        except Exception as e:
-            logger.error("WebSocket connection failed: %s", e)
-            if self._should_run:
-                await self._reconnect()
+    def _ensure_background_tasks(self) -> None:
+        """Start listener and ping tasks if they are not already running."""
+        if self._listener_task is None or self._listener_task.done():
+            self._listener_task = asyncio.create_task(self._listen())
+        if self._ping_task is None or self._ping_task.done():
+            self._ping_task = asyncio.create_task(self._ping_loop())
 
     async def _ping_loop(self) -> None:
-        """Send periodic pings and trigger reconnect on pong timeout."""
+        """Send periodic pings and trigger reconnect on pong timeout.
+
+        Liveness is determined by the WebSocket protocol-level pong response,
+        NOT by whether application data has arrived.  This is critical because
+        a subscription may legitimately receive no data for long periods (e.g.
+        ``stream_depth`` at precision 0 on a quiet market).  Reconnecting in
+        that case would be incorrect — the connection is alive, there's just
+        nothing to report.
+        """
         try:
             while self._should_run and self._connected:
                 await asyncio.sleep(self._ping_interval)
                 if not self._should_run or not self._connected:
                     return
 
-                # Check pong timeout
-                now = asyncio.get_event_loop().time()
-                if now - self._last_pong > self._pong_timeout:
-                    logger.warning("Pong timeout (%.1fs), triggering reconnect", self._pong_timeout)
+                if not self._ws:
+                    return
+
+                try:
+                    # ws.ping() returns a Future that resolves when the
+                    # protocol-level pong frame arrives.  If the server is
+                    # alive, this completes well within pong_timeout.
+                    pong_waiter = await self._ws.ping()
+                    await asyncio.wait_for(pong_waiter, timeout=self._pong_timeout)
+                    logger.debug("Ping/pong OK")
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "Pong timeout (%.1fs), triggering reconnect",
+                        self._pong_timeout,
+                    )
                     if self._ws:
                         await self._ws.close()
                     return
-
-                # Send ping
-                if self._ws:
-                    try:
-                        await self._ws.ping()
-                        logger.debug("Sent ping")
-                    except Exception:
-                        return
+                except Exception:
+                    # Connection error during ping — let listener handle it
+                    return
         except asyncio.CancelledError:
             return
 
     async def _reconnect(self) -> None:
+        """Reconnect with exponential backoff.
+
+        CancelledError is intentionally NOT caught here so that
+        ``disconnect()`` can interrupt a reconnect that's mid-backoff-sleep.
+        """
         self._connected = False
+        self._emit_lifecycle(ConnectionState.DISCONNECTED, message="Connection lost")
+
         while self._should_run:
             if (
                 self._max_reconnect_attempts > 0
@@ -133,55 +200,180 @@ class O2WebSocket:
                     self._max_reconnect_attempts,
                 )
                 self._should_run = False
+                self._close_event.set()
+                self._emit_lifecycle(
+                    ConnectionState.CLOSED,
+                    message=f"Max reconnect attempts ({self._max_reconnect_attempts}) exhausted",
+                )
                 self._signal_all_queues(None)
                 return
+
             self._reconnect_attempts += 1
+            self._emit_lifecycle(
+                ConnectionState.RECONNECTING,
+                attempt=self._reconnect_attempts,
+                message=f"Reconnecting in {self._reconnect_delay:.1f}s "
+                f"(attempt {self._reconnect_attempts})",
+            )
             logger.info(
                 "Reconnecting in %.1fs (attempt %d)...",
                 self._reconnect_delay,
                 self._reconnect_attempts,
             )
+            # CancelledError can interrupt this sleep — that's intentional.
             await asyncio.sleep(self._reconnect_delay)
             self._reconnect_delay = min(self._reconnect_delay * 2, self._max_reconnect_delay)
             try:
                 await self._do_connect()
+                # Restart ping task (listener is the caller, so it's still alive)
+                if self._ping_task is None or self._ping_task.done():
+                    self._ping_task = asyncio.create_task(self._ping_loop())
+                self._emit_lifecycle(
+                    ConnectionState.RECONNECTED,
+                    attempt=self._reconnect_attempts,
+                    message="Reconnected — consumers should re-sync from REST",
+                )
                 return
+            except asyncio.CancelledError:
+                raise  # Let disconnect() kill the reconnect loop
             except Exception as e:
                 logger.error("Reconnect failed: %s", e)
 
     async def disconnect(self) -> None:
-        """Disconnect from the WebSocket."""
+        """Disconnect from the WebSocket.
+
+        Designed to complete in bounded time even when the connection is in
+        a broken state.  The steps are ordered so that consumer generators
+        are unblocked as early as possible:
+
+        1. Signal shutdown (``_should_run = False``)
+        2. Signal all subscriber queues *first* — unblocks any consumer
+           sitting in ``queue.get()`` before we attempt the (potentially
+           slow) WS close handshake.
+        3. Cancel internal tasks with a timeout.
+        4. Close the WS connection with a timeout — a broken TCP connection
+           can hang for minutes without one.
+        """
         logger.info("WebSocket disconnecting")
         self._should_run = False
         self._connected = False
-        if self._ping_task and not self._ping_task.done():
-            self._ping_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._ping_task
-        if self._listener_task and not self._listener_task.done():
-            self._listener_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._listener_task
-        if self._ws:
-            await self._ws.close()
-            self._ws = None
-        # Signal all subscriber queues to stop
+
+        # Emit the terminal CLOSED event BEFORE setting _close_event, so
+        # stream_lifecycle() consumers see it before _wait_for_message()
+        # short-circuits them.  The close event + sentinel then unblock all
+        # generators (including lifecycle after it yields the CLOSED event).
+        self._emit_lifecycle(ConnectionState.CLOSED, message="Disconnected by client")
+        self._close_event.set()
         self._signal_all_queues(None)
+
+        # Cancel internal tasks with a bounded wait.  If _reconnect() is
+        # mid-backoff the cancel interrupts the sleep; the 5s timeout is
+        # a safety net in case CancelledError is unexpectedly suppressed.
+        for task_name, task in [
+            ("ping", self._ping_task),
+            ("listener", self._listener_task),
+        ]:
+            if task and not task.done():
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except (asyncio.CancelledError, asyncio.TimeoutError):
+                    logger.warning("WS %s task did not exit cleanly", task_name)
+
+        # Close the underlying WS connection.  A half-open TCP socket can
+        # hang for the OS keepalive timeout (minutes) without this guard.
+        if self._ws:
+            try:
+                await asyncio.wait_for(self._ws.close(), timeout=5.0)
+            except (asyncio.TimeoutError, Exception) as e:
+                logger.warning("WS close timed out or errored: %s", e)
+            self._ws = None
+
+    # ------------------------------------------------------------------
+    # Internal message routing
+    # ------------------------------------------------------------------
+
+    async def _wait_for_message(self, queue: asyncio.Queue[Any]) -> Any | None:
+        """Wait for the next queue message OR the close event, whichever first.
+
+        Returns the message, or ``None`` if the close event fired (shutdown)
+        AND no message was already queued.  When both are ready (e.g. the
+        lifecycle CLOSED event was pushed just before the close event was set),
+        the queued message wins so consumers don't miss terminal events.
+        """
+        # Fast path: drain any already-queued message before checking close.
+        if not queue.empty():
+            return queue.get_nowait()
+        if self._close_event.is_set():
+            return None
+
+        get_task = asyncio.ensure_future(queue.get())
+        close_task = asyncio.ensure_future(self._close_event.wait())
+        try:
+            done, pending = await asyncio.wait(
+                [get_task, close_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for p in pending:
+                p.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await p
+            # Prefer queued messages over close signal — ensures terminal
+            # events (like CLOSED) are delivered before the generator exits.
+            if get_task in done:
+                return get_task.result()
+            return None
+        except asyncio.CancelledError:
+            get_task.cancel()
+            close_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                _ = await get_task  # ensure task is finalized
+            with contextlib.suppress(asyncio.CancelledError):
+                _ = await close_task  # ensure task is finalized
+            raise
 
     def _signal_all_queues(self, sentinel: object) -> None:
         """Push a sentinel value to every subscriber queue.
 
-        Drains each queue first so the sentinel is never lost due to a full
-        queue — buffered data is worthless once shutdown is signalled.
+        Data-stream generators use ``_wait_for_message`` which races against
+        ``_close_event``, so the sentinel is belt-and-suspenders for them.
+        However ``stream_lifecycle`` uses raw ``queue.get()`` and **depends**
+        on the sentinel to exit.  If the queue is full we must make room —
+        dropping one stale event is acceptable to guarantee the sentinel
+        (and the CLOSED event before it) are delivered.
         """
         for queues in self._subscriber_queues.values():
             for q in queues:
-                while not q.empty():
-                    try:
+                try:
+                    q.put_nowait(sentinel)
+                except asyncio.QueueFull:
+                    # Drop oldest item to make room for the sentinel.
+                    with contextlib.suppress(asyncio.QueueEmpty):
                         q.get_nowait()
-                    except asyncio.QueueEmpty:
-                        break
-                q.put_nowait(sentinel)
+                    with contextlib.suppress(asyncio.QueueFull):
+                        q.put_nowait(sentinel)
+
+    def _emit_lifecycle(
+        self,
+        state: ConnectionState,
+        attempt: int = 0,
+        message: str = "",
+    ) -> None:
+        """Push a lifecycle event to all lifecycle subscribers."""
+        event = ConnectionEvent(state=state, attempt=attempt, message=message)
+        logger.info("WS lifecycle: %s — %s", state.value, message)
+        if "lifecycle" in self._subscriber_queues:
+            for q in self._subscriber_queues["lifecycle"]:
+                try:
+                    q.put_nowait(event)
+                except asyncio.QueueFull:
+                    # Drain and retry — lifecycle events must not be lost
+                    while not q.empty():
+                        try:
+                            q.get_nowait()
+                        except asyncio.QueueEmpty:
+                            break
+                    q.put_nowait(event)
 
     async def _send(self, message: dict) -> None:
         if self._ws:
@@ -189,12 +381,19 @@ class O2WebSocket:
             await self._ws.send(json.dumps(message))
 
     async def _listen(self) -> None:
+        """Read messages from the WebSocket and dispatch to subscriber queues.
+
+        On connection loss this method handles reconnection internally and
+        continues reading — it does NOT return after a reconnect, which was
+        the root cause of the "orphaned queue" hang in previous versions.
+        """
         try:
-            while self._should_run and self._ws:
+            while self._should_run:
+                if not self._ws or not self._connected:
+                    await asyncio.sleep(0.1)
+                    continue
                 try:
                     raw = await self._ws.recv()
-                    # Any data received counts as proof of liveness
-                    self._last_pong = asyncio.get_event_loop().time()
                     data = json.loads(raw)
                     action = data.get("action", "")
                     self._dispatch(action, data)
@@ -202,13 +401,21 @@ class O2WebSocket:
                     logger.warning("WebSocket connection closed")
                     if self._should_run:
                         await self._reconnect()
+                        # After reconnect, loop back to recv() on the new
+                        # connection instead of returning.  _do_connect()
+                        # already set self._ws to the new connection.
+                        continue
+                    return
+                except asyncio.CancelledError:
+                    return
+                except Exception as e:
+                    logger.error("WebSocket listener error: %s", e)
+                    if self._should_run:
+                        await self._reconnect()
+                        continue
                     return
         except asyncio.CancelledError:
             return
-        except Exception as e:
-            logger.error("WebSocket listener error: %s", e)
-            if self._should_run:
-                await self._reconnect()
 
     def _dispatch(self, action: str, data: dict) -> None:
         """Route messages to all subscriber queues for the matching action type."""
@@ -241,9 +448,9 @@ class O2WebSocket:
             return "nonce"
         return None
 
-    def _register_queue(self, key: str) -> asyncio.Queue:
+    def _register_queue(self, key: str) -> asyncio.Queue[Any]:
         """Create and register a new subscriber queue for the given action key."""
-        q: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        q: asyncio.Queue[Any] = asyncio.Queue(maxsize=1000)
         if key not in self._subscriber_queues:
             self._subscriber_queues[key] = []
         self._subscriber_queues[key].append(q)
@@ -262,25 +469,69 @@ class O2WebSocket:
         if sub not in self._subscriptions:
             self._subscriptions.append(sub)
 
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Subscription methods
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
+
+    async def stream_lifecycle(self) -> AsyncIterator[ConnectionEvent]:
+        """Stream WebSocket connection lifecycle events.
+
+        Yields ``ConnectionEvent`` objects whenever the connection state
+        changes.  Use this to detect reconnects and re-sync state from the
+        REST API — messages received during the disconnect window are lost.
+
+        Example::
+
+            async for event in ws.stream_lifecycle():
+                if event.state == ConnectionState.RECONNECTED:
+                    balances = await client.get_balances(account)
+                    orders = await client.get_orders(market, account)
+                    # ... rebuild local state ...
+                elif event.state == ConnectionState.CLOSED:
+                    break  # terminal, no more events
+        """
+        queue = self._register_queue("lifecycle")
+        try:
+            while self._should_run:
+                # Lifecycle uses raw queue.get() (not _wait_for_message)
+                # because it must receive the terminal CLOSED event before
+                # exiting.  The CLOSED event is pushed to the queue before
+                # _close_event is set, and _signal_all_queues(None) follows
+                # as the final sentinel.
+                msg = await queue.get()
+                if msg is None:
+                    return
+                yield msg
+        finally:
+            self._unregister_queue("lifecycle", queue)
 
     async def stream_depth(
-        self, market_id: str, precision: str = "10"
+        self, market_id: str, wire_precision: str = "10"
     ) -> AsyncIterator[DepthUpdate]:
-        """Subscribe to order book depth updates."""
+        """Subscribe to order book depth updates.
+
+        Args:
+            market_id: The market ID (hex string).
+            wire_precision: Wire-format precision value (``10^level``).
+                The caller (normally :meth:`O2Client.stream_depth`) converts
+                the user-facing 1--18 index to the wire value. Default ``"10"``
+                (finest level).
+
+        Note:
+            Prefer :meth:`O2Client.stream_depth` which validates precision
+            and resolves market pairs by name.
+        """
         sub = {
             "action": "subscribe_depth",
             "market_id": market_id,
-            "precision": precision,
+            "precision": wire_precision,
         }
         self._add_subscription(sub)
         await self._send(sub)
         queue = self._register_queue("depth")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 if msg.get("market_id") == market_id:
@@ -296,7 +547,7 @@ class O2WebSocket:
         queue = self._register_queue("orders")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield OrderUpdate.from_dict(msg)
@@ -311,7 +562,7 @@ class O2WebSocket:
         queue = self._register_queue("trades")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 if msg.get("market_id") == market_id:
@@ -327,7 +578,7 @@ class O2WebSocket:
         queue = self._register_queue("balances")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield BalanceUpdate.from_dict(msg)
@@ -342,16 +593,16 @@ class O2WebSocket:
         queue = self._register_queue("nonce")
         try:
             while self._should_run:
-                msg = await queue.get()
+                msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield NonceUpdate.from_dict(msg)
         finally:
             self._unregister_queue("nonce", queue)
 
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
     # Unsubscribe methods
-    # -----------------------------------------------------------------------
+    # ------------------------------------------------------------------
 
     async def unsubscribe_depth(self, market_id: str) -> None:
         await self._send({"action": "unsubscribe_depth", "market_id": market_id})

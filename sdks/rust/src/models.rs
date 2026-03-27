@@ -18,9 +18,12 @@ macro_rules! newtype_id {
         pub struct $name(String);
 
         impl $name {
-            pub fn new(s: impl Into<String>) -> Self {
+            /// Create without validation. For internal/serde use only.
+            pub(crate) fn new(s: impl Into<String>) -> Self {
                 Self(s.into())
             }
+
+            /// The underlying string value.
             pub fn as_str(&self) -> &str {
                 &self.0
             }
@@ -35,18 +38,6 @@ macro_rules! newtype_id {
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 f.write_str(&self.0)
-            }
-        }
-
-        impl From<String> for $name {
-            fn from(s: String) -> Self {
-                Self(s)
-            }
-        }
-
-        impl From<&str> for $name {
-            fn from(s: &str) -> Self {
-                Self(s.to_string())
             }
         }
 
@@ -71,10 +62,92 @@ macro_rules! newtype_id {
     };
 }
 
+/// Trait for types that can be validated and converted into a hex ID newtype.
+/// Implemented by `&str`, `String` (with hex validation) and the ID type itself (passthrough).
+pub trait IntoValidId<T> {
+    fn into_valid(self) -> Result<T, O2Error>;
+}
+
+fn validate_hex(type_name: &str, s: &str) -> Result<(), O2Error> {
+    let hex = s
+        .strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .unwrap_or(s);
+    if hex.is_empty() {
+        return Err(O2Error::Other(format!(
+            "{type_name}: requires a non-empty hex string, got {s:?}"
+        )));
+    }
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(O2Error::Other(format!(
+            "{type_name}: contains non-hex characters: {s:?}"
+        )));
+    }
+    Ok(())
+}
+
+/// Like `newtype_id!` but adds `IntoValidId` with hex validation for `&str`/`String`,
+/// and a passthrough for the type itself. Keeps infallible `From` for internal/serde use.
+macro_rules! hex_id {
+    ($(#[$meta:meta])* $name:ident) => {
+        newtype_id!($(#[$meta])* $name);
+
+        impl IntoValidId<$name> for &str {
+            fn into_valid(self) -> Result<$name, O2Error> {
+                validate_hex(stringify!($name), self)?;
+                Ok($name::new(self))
+            }
+        }
+
+        impl IntoValidId<$name> for String {
+            fn into_valid(self) -> Result<$name, O2Error> {
+                validate_hex(stringify!($name), &self)?;
+                Ok($name::new(self))
+            }
+        }
+
+        impl IntoValidId<$name> for $name {
+            fn into_valid(self) -> Result<$name, O2Error> {
+                Ok(self)
+            }
+        }
+
+        impl IntoValidId<$name> for &$name {
+            fn into_valid(self) -> Result<$name, O2Error> {
+                Ok(self.clone())
+            }
+        }
+    };
+}
+
 newtype_id!(
     /// A market symbol pair like "FUEL/USDC".
     MarketSymbol
 );
+
+impl IntoValidId<MarketSymbol> for &str {
+    fn into_valid(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+impl IntoValidId<MarketSymbol> for String {
+    fn into_valid(self) -> Result<MarketSymbol, O2Error> {
+        MarketSymbol::parse(self)
+    }
+}
+
+impl IntoValidId<MarketSymbol> for MarketSymbol {
+    fn into_valid(self) -> Result<MarketSymbol, O2Error> {
+        Ok(self)
+    }
+}
+
+impl IntoValidId<MarketSymbol> for &MarketSymbol {
+    fn into_valid(self) -> Result<MarketSymbol, O2Error> {
+        Ok(self.clone())
+    }
+}
 
 impl MarketSymbol {
     /// Parse and normalize a market symbol in `BASE/QUOTE` form.
@@ -155,27 +228,27 @@ impl IntoMarketSymbol for &String {
     }
 }
 
-newtype_id!(
+hex_id!(
     /// A hex contract ID.
     ContractId
 );
-newtype_id!(
+hex_id!(
     /// A hex market ID.
     MarketId
 );
-newtype_id!(
+hex_id!(
     /// A hex order ID.
     OrderId
 );
-newtype_id!(
+hex_id!(
     /// A trade identifier.
     TradeId
 );
-newtype_id!(
+hex_id!(
     /// A hex trade account ID.
     TradeAccountId
 );
-newtype_id!(
+hex_id!(
     /// A hex asset ID.
     AssetId
 );
@@ -1117,10 +1190,27 @@ pub struct OrdersResponse {
 // Trades
 // ---------------------------------------------------------------------------
 
+/// The querying account's role in a trade.
+///
+/// Only present on trades returned by account-scoped endpoints
+/// (e.g. `get_trades` with an `account` parameter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TraderSide {
+    Maker,
+    Taker,
+    Both,
+}
+
 /// A trade from the API.
+///
+/// The `side` field is the **maker's** order side — both maker and taker see
+/// the same value.  To determine your own direction, combine `side` with
+/// `trader_side`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trade {
     pub trade_id: TradeId,
+    /// The maker's order side (`Buy` or `Sell`).
     pub side: Side,
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub total: u128,
@@ -1128,8 +1218,12 @@ pub struct Trade {
     pub quantity: u64,
     #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub price: u64,
+    /// Trade execution timestamp (milliseconds since epoch).
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub timestamp: u128,
+    /// The querying account's role. Only present on account-scoped trade queries.
+    #[serde(default)]
+    pub trader_side: Option<TraderSide>,
     #[serde(default)]
     pub maker: Option<Identity>,
     #[serde(default)]
@@ -1160,15 +1254,69 @@ pub struct OrderBookBalance {
 }
 
 /// Balance response from GET /v1/balance.
+///
+/// The balance model tracks funds across three locations:
+///
+/// - **`trading_account_balance`** — funds sitting directly in the trading
+///   account contract, ready to be allocated to any market.
+/// - **`total_unlocked`** — the *total* available balance, i.e.
+///   `trading_account_balance` **plus** unlocked amounts sitting in individual
+///   order-book contracts (e.g. proceeds from filled orders not yet settled).
+///   **Use this when computing how much you can trade.**
+/// - **`total_locked`** — funds locked as collateral for currently open orders
+///   across all order-book contracts.
+///
+/// # Warning
+///
+/// `total_unlocked` already *includes* `trading_account_balance`.
+/// Do **not** add them together — that double-counts your funds.
+///
+/// ```text
+/// available_for_new_orders = total_unlocked           // correct
+/// locked_in_open_orders   = total_locked
+/// grand_total             = total_unlocked + total_locked
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BalanceResponse {
     pub order_books: HashMap<String, OrderBookBalance>,
+    /// Total balance locked as collateral for open orders (chain integer).
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub total_locked: u128,
+    /// Total available balance for trading (chain integer).
+    ///
+    /// This is `trading_account_balance` + unlocked amounts in each order-book
+    /// contract.  Use this value — not `trading_account_balance` alone — when
+    /// deciding how much you can spend on new orders.
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub total_unlocked: u128,
+    /// Balance sitting directly in the trading account contract (chain integer).
+    ///
+    /// This is a *subset* of `total_unlocked`. Do not add these two fields
+    /// together.
     #[serde(deserialize_with = "deserialize_string_or_u128")]
     pub trading_account_balance: u128,
+}
+
+impl BalanceResponse {
+    /// Total balance available for placing new orders.
+    ///
+    /// Equivalent to [`total_unlocked`](Self::total_unlocked).
+    #[inline]
+    pub fn available(&self) -> u128 {
+        self.total_unlocked
+    }
+
+    /// Total balance locked as collateral for open orders.
+    #[inline]
+    pub fn locked(&self) -> u128 {
+        self.total_locked
+    }
+
+    /// Grand total balance (available + locked in orders).
+    #[inline]
+    pub fn total(&self) -> u128 {
+        self.total_unlocked + self.total_locked
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1187,10 +1335,12 @@ pub struct DepthLevel {
 /// Depth snapshot from GET /v1/depth or WebSocket subscribe_depth.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthSnapshot {
-    #[serde(default)]
-    pub buys: Vec<DepthLevel>,
-    #[serde(default)]
-    pub sells: Vec<DepthLevel>,
+    /// Bid side of the order book, sorted by price descending.
+    #[serde(default, rename = "buys")]
+    pub bids: Vec<DepthLevel>,
+    /// Ask side of the order book, sorted by price ascending.
+    #[serde(default, rename = "sells")]
+    pub asks: Vec<DepthLevel>,
 }
 
 /// Depth update from WebSocket subscribe_depth_update.
@@ -1596,10 +1746,10 @@ mod tests {
 
     fn sample_market() -> Market {
         Market {
-            contract_id: ContractId::from(
+            contract_id: ContractId::new(
                 "0x1111111111111111111111111111111111111111111111111111111111111111",
             ),
-            market_id: MarketId::from(
+            market_id: MarketId::new(
                 "0x2222222222222222222222222222222222222222222222222222222222222222",
             ),
             whitelist_id: None,
@@ -1611,7 +1761,7 @@ mod tests {
             price_window: 0,
             base: MarketAsset {
                 symbol: "BASE".to_string(),
-                asset: AssetId::from(
+                asset: AssetId::new(
                     "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 ),
                 decimals: 9,
@@ -1619,7 +1769,7 @@ mod tests {
             },
             quote: MarketAsset {
                 symbol: "QUOTE".to_string(),
-                asset: AssetId::from(
+                asset: AssetId::new(
                     "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 ),
                 decimals: 9,
@@ -1661,7 +1811,7 @@ mod tests {
         let market_a = sample_market();
         let mut market_b = sample_market();
         market_b.market_id =
-            MarketId::from("0x3333333333333333333333333333333333333333333333333333333333333333");
+            MarketId::new("0x3333333333333333333333333333333333333333333333333333333333333333");
 
         let quantity = market_a
             .quantity("1.234")

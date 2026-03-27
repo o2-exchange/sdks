@@ -57,14 +57,14 @@ asyncio.run(main())
 | `batch_actions(actions, collect_orders=False, session=None)` | `Sequence[MarketActions \| MarketActionGroup]` | `ActionsResponse` | Submit low/high-level batch actions |
 | `get_markets()` | - | `list[Market]` | List all markets |
 | `get_market(symbol_pair)` | `"fFUEL/fUSDC"` | `Market` | Get specific market |
-| `get_depth(market, precision=10)` | - | `DepthSnapshot` | Order book depth |
+| `get_depth(market, precision=1)` | - | `DepthSnapshot` | Order book depth |
 | `get_trades(market, count=50)` | - | `list[Trade]` | Recent trades |
 | `get_bars(market, resolution, from_ts, to_ts)` | - | `list[Bar]` | OHLCV candles |
 | `get_ticker(market)` | - | `dict` | Ticker data |
 | `get_balances(account)` | `AccountInfo\|str` | `dict[str, Balance]` | Balances by symbol |
-| `get_orders(account, market, is_open=None, count=20)` | - | `list[Order]` | Order history |
+| `get_orders(market, account, is_open=None, count=20)` | - | `list[Order]` | Order history |
 | `get_order(market, order_id)` | - | `Order` | Single order |
-| `stream_depth(market, precision=10)` | - | `AsyncIterator[DepthUpdate]` | WS depth |
+| `stream_depth(market, precision=1)` | - | `AsyncIterator[DepthUpdate]` | WS depth |
 | `stream_orders(account)` | - | `AsyncIterator[OrderUpdate]` | WS orders |
 | `stream_trades(market)` | - | `AsyncIterator[TradeUpdate]` | WS trades |
 | `stream_balances(account)` | - | `AsyncIterator[BalanceUpdate]` | WS balances |
@@ -191,7 +191,7 @@ result = await client.create_order(
 ### 4. Real-Time Depth Monitoring
 
 ```python
-async for update in client.stream_depth("fFUEL/fUSDC", precision=10):
+async for update in client.stream_depth("fFUEL/fUSDC", precision=1):
     if update.changes.best_bid:
         print(f"Best bid: {update.changes.best_bid.price}")
 ```

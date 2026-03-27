@@ -44,6 +44,16 @@ docs-rust:
 integration sdk:
     just integration-{{ sdk }}
 
+# --- Release notes ---
+
+# Create a changeset describing your changes
+changeset:
+    knope document-change
+
+# Preview what the next release would look like (dry run)
+release-dry-run:
+    knope release --dry-run
+
 # --- Python ---
 lint-python:
     cd sdks/python && {{ ruff }} check src tests examples && {{ mypy }} src/o2_sdk

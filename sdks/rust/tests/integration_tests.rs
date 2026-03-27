@@ -420,12 +420,12 @@ async fn test_get_depth() {
 
     let depth = client
         .api
-        .get_depth(market.market_id.as_str(), 10)
+        .get_depth(market.market_id.as_str(), 10, None)
         .await
         .unwrap();
 
-    assert!(depth.buys.is_empty() || !depth.buys.is_empty());
-    assert!(depth.sells.is_empty() || !depth.sells.is_empty());
+    assert!(depth.bids.is_empty() || !depth.bids.is_empty());
+    assert!(depth.asks.is_empty() || !depth.asks.is_empty());
 }
 
 #[tokio::test]
@@ -436,7 +436,7 @@ async fn test_get_trades() {
 
     let trades = client
         .api
-        .get_trades(market.market_id.as_str(), "desc", 10, None, None)
+        .get_trades(market.market_id.as_str(), "desc", 10, None, None, None)
         .await
         .unwrap();
 
@@ -589,8 +589,12 @@ fn quote_step(market: &o2_sdk::Market) -> UnsignedDecimal {
 #[test]
 fn min_quantity_for_min_order_rounds_after_margin_to_step() {
     let market = o2_sdk::Market {
-        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001".into(),
-        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002".into(),
+        contract_id: "0x0000000000000000000000000000000000000000000000000000000000000001"
+            .into_valid()
+            .unwrap(),
+        market_id: "0x0000000000000000000000000000000000000000000000000000000000000002"
+            .into_valid()
+            .unwrap(),
         whitelist_id: None,
         blacklist_id: None,
         maker_fee: 0,
@@ -600,13 +604,17 @@ fn min_quantity_for_min_order_rounds_after_margin_to_step() {
         price_window: 0,
         base: o2_sdk::MarketAsset {
             symbol: "fETH".to_string(),
-            asset: "0x0000000000000000000000000000000000000000000000000000000000000003".into(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000003"
+                .into_valid()
+                .unwrap(),
             decimals: 9,
             max_precision: 3,
         },
         quote: o2_sdk::MarketAsset {
             symbol: "fUSDC".to_string(),
-            asset: "0x0000000000000000000000000000000000000000000000000000000000000004".into(),
+            asset: "0x0000000000000000000000000000000000000000000000000000000000000004"
+                .into_valid()
+                .unwrap(),
             decimals: 9,
             max_precision: 9,
         },
@@ -656,15 +664,18 @@ async fn conservative_post_only_buy_params(
     // Prefer a price one quote tick below best ask to keep the order post-only while
     // minimizing over-aggressive bids in a live book.
     let mut chosen = default_dec;
-    if let Ok(depth) = client.get_depth(market_pair, 10).await {
-        if let Some(best_ask) = depth.sells.first() {
+    // Use precision=1 (finest) to get accurate best ask/bid prices.
+    // Coarser levels aggregate prices into wide buckets, which can cause
+    // the chosen price to accidentally cross the actual best ask.
+    if let Ok(depth) = client.get_depth(market_pair, 1, None).await {
+        if let Some(best_ask) = depth.asks.first() {
             let best_ask_human = market.format_price(best_ask.price);
             let best_ask_dec = *best_ask_human.inner();
             let just_below_ask = floor_to_step(best_ask_dec - step_dec, step_dec);
             if just_below_ask > Decimal::ZERO {
                 chosen = just_below_ask;
             }
-        } else if let Some(best_bid) = depth.buys.first() {
+        } else if let Some(best_bid) = depth.bids.first() {
             let best_bid_human = market.format_price(best_bid.price);
             let best_bid_dec = *best_bid_human.inner();
             let bid_floor = floor_to_step(best_bid_dec, step_dec);
@@ -938,7 +949,7 @@ async fn test_websocket_depth() {
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let market = &markets[0];
-    let mut stream = client.stream_depth(&market.market_id, "10").await.unwrap();
+    let mut stream = client.stream_depth(&market.market_id, 1).await.unwrap();
 
     let update = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await;
 

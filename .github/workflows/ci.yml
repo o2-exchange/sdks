@@ -14,6 +14,32 @@ permissions:
   contents: read
 
 jobs:
+  # ── Changeset check ────────────────────────────────────────────────────────
+  changeset:
+    name: Changeset Required
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check for changeset
+        run: |
+          CHANGED=$(git diff --name-only origin/main...HEAD -- sdks/)
+          if [ -z "$CHANGED" ]; then
+            echo "No SDK changes — changeset not required"
+            exit 0
+          fi
+          CHANGESETS=$(git diff --name-only origin/main...HEAD -- .changeset/ | grep '\.md$' || true)
+          if [ -z "$CHANGESETS" ]; then
+            echo "::error::SDK files changed but no .changeset/*.md file found."
+            echo "::error::Run 'knope document-change' (or 'just changeset') to create one."
+            echo "::error::For changes that don't need release notes, create an empty changeset with no package entries."
+            exit 1
+          fi
+          echo "Found changeset(s): $CHANGESETS"
+
   # ── Justfile check ──────────────────────────────────────────────────────────
   justfile:
     name: Justfile Check
