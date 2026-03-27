@@ -198,13 +198,16 @@ with no package entries.
 
 1. **Changesets accumulate** — as PRs merge to `main`, their `.changeset/*.md`
    files collect in the repo
-2. **Release PR auto-created** — `prepare-release.yml` runs on every push to
-   `main`. If pending changesets exist, knope creates (or force-updates) a PR
-   from branch `release` → `main` with version bumps and changelog entries
-3. **Maintainer reviews and merges** the release PR
-4. **Maintainer manually triggers** the Release workflow:
+2. **`release` branch auto-pushed** — `prepare-release.yml` runs on every push
+   to `main`. If pending changesets exist, knope bumps versions, updates
+   changelogs, and force-pushes the `release` branch
+3. **Maintainer creates the release PR manually** (org policy blocks Actions
+   from creating PRs):
+   `gh pr create --base main --head release --title "chore: prepare release"`
+4. **Maintainer reviews and merges** the release PR
+5. **Maintainer manually triggers** the Release workflow:
    Actions → Release → "Run workflow" → select `main` branch
-5. **All in one run**: `knope release` creates GitHub Releases + tags, then
+6. **All in one run**: `knope release` creates GitHub Releases + tags, then
    publish jobs run in the same workflow → PyPI / npm / crates.io via OIDC
 
 ```bash
