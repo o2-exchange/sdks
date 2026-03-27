@@ -182,7 +182,10 @@ sdk-typescript: minor
 Added `trader_side` field to Trade model.
 ```
 
-Bump types: `major` (breaking), `minor` (feature), `patch` (fix).
+Bump types: `major`, `minor`, `patch`. Note: while version is 0.x,
+knope treats `major` as a minor bump (0.1.0 → 0.2.0) and `minor` as a
+patch bump (0.1.0 → 0.1.1). Use `major` for breaking/feature releases
+pre-1.0.
 
 ### CI enforcement
 
@@ -191,25 +194,31 @@ The `changeset` CI job checks this automatically. For changes that genuinely
 don't need release notes (CI config, docs typos), create an empty changeset
 with no package entries.
 
-### Release flow (automated via GitHub Actions)
+### Release flow
 
-Releases are fully automated with a human approval gate:
-
-1. **Changesets accumulate** — as PRs merge to `main`, their `.changeset/*.md` files collect
-2. **Release PR is created/updated** — `prepare-release.yml` runs on every push to `main`.
-   If pending changesets exist, knope creates (or force-updates) a single PR from branch
-   `release` → `main` with version bumps and changelog entries in the diff
-3. **Maintainer reviews and merges** — the PR diff shows exactly what versions will bump
-   and what changelog entries will be added. Merge when ready to ship.
-4. **Tags + GitHub Releases created** — `release.yml` detects the merged release PR and
-   runs `knope release`, which creates GitHub Releases (one per changed package).
-   This creates tags like `sdk-python/v0.2.0` on the remote.
-5. **Packages published** — the tags trigger the publish jobs in `release.yml`,
-   which publish to PyPI / npm / crates.io via OIDC.
+1. **Changesets accumulate** — as PRs merge to `main`, their `.changeset/*.md`
+   files collect in the repo
+2. **Release PR auto-created** — `prepare-release.yml` runs on every push to
+   `main`. If pending changesets exist, knope creates (or force-updates) a PR
+   from branch `release` → `main` with version bumps and changelog entries
+3. **Maintainer reviews and merges** the release PR
+4. **Maintainer manually triggers** the Release workflow:
+   Actions → Release → "Run workflow" → select `main` branch
+5. **All in one run**: `knope release` creates GitHub Releases + tags, then
+   publish jobs run in the same workflow → PyPI / npm / crates.io via OIDC
 
 ```bash
-just release-dry-run    # preview what would ship (local, read-only)
+knope prepare-release --dry-run --verbose  # preview version bumps + changelog
+knope release --dry-run --verbose          # preview what tags/releases would be created
 ```
+
+### Why release is a single workflow
+
+`github.token` events can't trigger other workflows (GitHub's anti-recursion
+guard). So we can't rely on tag-push to trigger separate publish jobs. Instead,
+the Release workflow does everything in one run: `knope release` creates tags
+and GitHub Releases, then the publish jobs run as dependent jobs (`needs:
+create-releases`) in the same workflow.
 
 ### Config
 
@@ -219,12 +228,12 @@ just release-dry-run    # preview what would ship (local, read-only)
 - `.github/workflows/prepare-release.yml` — creates/updates the release PR
 - `.github/workflows/release.yml` — creates GitHub Releases + publishes packages
 
-### GitHub token
+### Tag format
 
-The `prepare-release` and `release` workflows require a `PAT` secret (personal
-access token or fine-grained token) with `contents: write` and
-`pull-requests: write` permissions. The default `GITHUB_TOKEN` cannot trigger
-downstream workflows (tag-push → publish), so a PAT is needed.
+Knope uses `sdk-{language}/v{version}` tags (e.g., `sdk-python/v0.2.0`).
+The v0.1.0 releases used a different format (`python-v0.1.0`) before knope
+was adopted. Baseline tags in knope's format were created pointing to the
+same commit so knope has a reference point.
 
 ## Current Status (as of 2026-02-11)
 

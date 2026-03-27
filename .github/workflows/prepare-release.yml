@@ -19,7 +19,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.PAT }}
 
       - name: Configure Git
         run: |
@@ -33,5 +32,5 @@ jobs:
       - name: Prepare release
         run: knope prepare-release --verbose
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
         continue-on-error: true  # No-op if no pending changes
