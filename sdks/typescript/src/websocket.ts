@@ -537,13 +537,18 @@ export class O2WebSocket {
   private startPingInterval(): void {
     this.stopPingInterval();
     this.pingInterval = setInterval(() => {
-      if (this.ws && this.connected) {
-        // Trigger reconnect on stale connection by inactivity timeout.
-        // Uses message arrival time rather than protocol-level ping/pong
-        // for cross-platform compatibility (browser WebSocket has no .ping()).
-        if (this.lastMessage > 0 && Date.now() - this.lastMessage > this.pongTimeoutMs) {
-          this.ws.close();
-        }
+      if (!this.ws || !this.connected) return;
+
+      // Send an application-level PING. The server responds with PONG,
+      // which flows through the message handler and updates lastMessage.
+      // This works identically in Node.js and browsers — no feature
+      // detection or protocol-level ping/pong needed.
+      this.ws.send("PING");
+
+      // If no message (including PONG) has arrived within pongTimeoutMs,
+      // the connection is dead — close to trigger reconnect.
+      if (this.lastMessage > 0 && Date.now() - this.lastMessage > this.pongTimeoutMs) {
+        this.ws.close();
       }
     }, this.pingIntervalMs);
   }
