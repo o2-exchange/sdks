@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "o2-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for the O2 Exchange — a fully on-chain order book DEX on the Fuel Network"
 readme = "README.md"
 requires-python = ">=3.10"
