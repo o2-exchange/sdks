@@ -124,7 +124,7 @@ drops. This behavior is controlled by the `O2WebSocket` options:
 - **reconnect** — Enable auto-reconnect (default: `true`)
 - **maxReconnectAttempts** — Max reconnection attempts (default: `10`)
 - **reconnectDelayMs** — Base delay between reconnects (default: `1000ms`)
-- **pingIntervalMs** — Heartbeat interval (default: `30000ms`)
+- **pingIntervalMs** — Connection liveness check interval (default: `30000ms`)
 
 Reconnection uses exponential backoff with jitter to avoid thundering herd
 effects.

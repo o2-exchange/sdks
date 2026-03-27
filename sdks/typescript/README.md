@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/o2-exchange/sdks/actions/workflows/ci.yml"><img src="https://github.com/o2-exchange/sdks/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-18+-green.svg" alt="Node.js 18+"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/badge/node-22.4%2B-green.svg" alt="Node.js 22.4+"></a>
   <a href="../../LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache 2.0"></a>
 </p>
 
@@ -22,7 +22,9 @@
 npm install @o2exchange/sdk
 ```
 
-Requires **Node.js 18+**. Ships with dual ESM + CJS output.
+Requires **Node.js 22.4+** for native runtime WebSocket support.
+Also works in **Bun** and modern browsers.
+Ships with dual ESM + CJS output.
 
 ## Quick Start
 

@@ -176,6 +176,11 @@ export interface O2ClientOptions {
   config?: NetworkConfig;
   /** Markets cache TTL in milliseconds (default: `60_000`). */
   marketsCacheTtlMs?: number;
+  /**
+   * Optional WebSocket factory for custom runtimes/tests.
+   * Defaults to `globalThis.WebSocket`.
+   */
+  webSocketFactory?: (url: string) => WebSocket;
 }
 
 /**
@@ -227,6 +232,7 @@ export class O2Client {
   private marketsCacheTime = 0;
   private marketsRefreshPromise: Promise<MarketsResponse> | null = null;
   private readonly marketsCacheTtlMs: number;
+  private readonly webSocketFactory?: (url: string) => WebSocket;
   private _session: SessionState | null = null;
 
   constructor(optionsOrNetwork: O2ClientOptions | Network = {}) {
@@ -235,6 +241,7 @@ export class O2Client {
     this.config = options.config ?? getNetworkConfig(options.network ?? Network.TESTNET);
     this.api = new O2Api({ config: this.config });
     this.marketsCacheTtlMs = options.marketsCacheTtlMs ?? DEFAULT_MARKETS_CACHE_TTL_MS;
+    this.webSocketFactory = options.webSocketFactory;
   }
 
   /** The active trading session, or `null` if no session has been created. */
@@ -889,7 +896,10 @@ export class O2Client {
       this.wsClient = null;
     }
     if (!this.wsClient) {
-      this.wsClient = new O2WebSocket({ config: this.config });
+      this.wsClient = new O2WebSocket({
+        config: this.config,
+        webSocketFactory: this.webSocketFactory,
+      });
       await this.wsClient.connect();
     }
     return this.wsClient;
