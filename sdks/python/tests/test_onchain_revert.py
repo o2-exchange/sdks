@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import pytest
 
+from o2_sdk.api import _raise_api_error
 from o2_sdk.errors import OnChainRevert, raise_for_error
 from o2_sdk.onchain_revert import augment_revert_reason
 
@@ -259,3 +260,37 @@ def test_raise_for_error_no_revert_code_keeps_original_reason():
 def test_on_chain_revert_str_without_reason():
     err = OnChainRevert(message="raw msg", reason=None)
     assert str(err) == "On-chain revert: raw msg"
+
+
+def test_api_code_1000_with_reason_raises_on_chain_revert():
+    with pytest.raises(OnChainRevert) as exc_info:
+        _raise_api_error(
+            {
+                "code": 1000,
+                "message": "Failed to process transaction",
+                "reason": "Revert(18446744073709486080)",
+            }
+        )
+
+    err = exc_info.value
+    assert err.code == 1000
+    assert err.reason is not None
+    assert "FAILED_REQUIRE" in err.reason
+
+
+def test_api_code_1000_with_receipts_only_raises_on_chain_revert():
+    with pytest.raises(OnChainRevert) as exc_info:
+        _raise_api_error(
+            {
+                "code": 1000,
+                "message": "Internal error",
+                "reason": None,
+                "receipts": [{"note": 'Ok("InvalidNonce")'}],
+            }
+        )
+
+    err = exc_info.value
+    assert err.code == 1000
+    assert err.reason is not None
+    assert "InvalidNonce" in err.reason
+    assert err.receipts == [{"note": 'Ok("InvalidNonce")'}]

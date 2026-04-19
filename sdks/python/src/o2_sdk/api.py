@@ -39,6 +39,45 @@ from .models import (
 logger = logging.getLogger("o2_sdk.api")
 
 
+def _raise_api_error(data: dict[str, Any]) -> None:
+    """Raise the appropriate SDK exception for an HTTP error payload."""
+    code = data.get("code")
+    message = data.get("message") or data.get("error") or "Unknown error"
+    reason = data.get("reason")
+    receipts = data.get("receipts")
+
+    if code is not None:
+        from .errors import ERROR_CODE_MAP, OnChainRevert
+        from .onchain_revert import augment_revert_reason
+
+        error_cls = ERROR_CODE_MAP.get(code, O2Error)
+        has_onchain_evidence = (
+            receipts is not None
+            or (isinstance(reason, str) and reason.strip())
+            or (
+                isinstance(message, str)
+                and ("Revert" in message or "revert" in message or "Panic" in message)
+            )
+        )
+        if has_onchain_evidence:
+            augmented_reason = augment_revert_reason(message, reason, receipts)
+            raise OnChainRevert(
+                message=message,
+                code=code,
+                reason=augmented_reason,
+                receipts=receipts,
+            )
+        raise error_cls(
+            message=message,
+            code=code,
+            reason=reason,
+            receipts=receipts,
+        )
+
+    if ("message" in data or "error" in data) and "tx_id" not in data:
+        raise_for_error(data)
+
+
 class O2Api:
     """Low-level REST API client for the O2 Exchange."""
 
@@ -128,22 +167,7 @@ class O2Api:
                             elapsed_ms,
                             message,
                         )
-                        if code is not None:
-                            from .errors import ERROR_CODE_MAP
-
-                            error_cls = ERROR_CODE_MAP.get(code, O2Error)
-                            # Augment revert messages even on code-based errors —
-                            # the backend sometimes returns code=1000 (InternalError)
-                            # with the revert info buried in the message field.
-                            reason = data.get("reason")
-                            receipts = data.get("receipts")
-                            if "Revert" in message or "revert" in message or "Panic" in message:
-                                from .onchain_revert import augment_revert_reason
-
-                                message = augment_revert_reason(message, reason, receipts)
-                            raise error_cls(message=message, code=code)
-                        if ("message" in data or "error" in data) and "tx_id" not in data:
-                            raise_for_error(data)
+                        _raise_api_error(data)
                     else:
                         logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)
 
