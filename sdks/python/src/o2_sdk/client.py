@@ -831,11 +831,10 @@ class O2Client:
                 ``start_timestamp``. Strings are validated as hex.
         """
         market_obj = await self._resolve_market_like_async(market)
-        validated_tid = (
-            Id(start_trade_id)
-            if isinstance(start_trade_id, str) and not isinstance(start_trade_id, Id)
-            else start_trade_id
-        )
+        # Trade IDs returned by the API are composite cursor strings
+        # like `maker_leg/taker_leg`, not plain hex `Id`s. Pass them
+        # through unchanged for pagination.
+        validated_tid = start_trade_id
         if account is not None:
             if isinstance(account, str) and not isinstance(account, Id):
                 contract = Id(account)
