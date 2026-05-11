@@ -23,6 +23,7 @@ dev = [
     "pytest-timeout>=2.2",
     "ruff>=0.15.0",
     "mypy>=1.19.0",
+    "hypothesis>=6.140,<7",
 ]
 
 [tool.hatch.build.targets.wheel]
