@@ -61,8 +61,24 @@ class TestMarket:
 
     def test_format_price(self):
         m = Market.from_dict(self.MARKET_JSON)
-        assert m.format_price(100000000) == 0.1
-        assert m.format_price(1000000000) == 1.0
+        # format_price returns a Decimal to preserve full chain precision.
+        assert m.format_price(100000000) == Decimal("0.1")
+        assert m.format_price(1000000000) == Decimal("1")
+        assert isinstance(m.format_price(100000000), Decimal)
+
+    def test_format_price_preserves_precision(self):
+        """Float return would silently round; Decimal must keep every digit."""
+        # 18-decimal chain value that exceeds float53 mantissa precision.
+        m18 = Market.from_dict(
+            {
+                **self.MARKET_JSON,
+                "quote": {**self.MARKET_JSON["quote"], "decimals": 18, "max_precision": 18},
+            }
+        )
+        chain_value = 1_234_567_890_123_456_789  # 19 significant digits
+        assert m18.format_price(chain_value) == Decimal("1.234567890123456789")
+        # Confirm a naive float round-trip would lose precision here.
+        assert int(float(chain_value) / 1e18 * 1e18) != chain_value
 
     def test_scale_price(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -74,7 +90,8 @@ class TestMarket:
 
     def test_format_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
-        assert m.format_quantity(5000000000) == 5.0
+        assert m.format_quantity(5000000000) == Decimal("5")
+        assert isinstance(m.format_quantity(5000000000), Decimal)
 
     def test_scale_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -134,6 +151,24 @@ class TestMarket:
         # If price * quantity is not divisible by 10^base_decimals
         adjusted = m.adjust_quantity(100000000, 10000000000)
         assert adjusted == 10000000000  # already valid
+
+    def test_adjust_quantity_uses_exact_integer_math(self):
+        """Bug 5 regression: ``adjust_quantity`` must use integer ceiling
+        division. With these operands the prior ``math.ceil(remainder / price)``
+        path loses the last bit of ``remainder / price`` to float64 rounding
+        and returns a quantity one unit higher than the true ceiling."""
+        m18 = Market.from_dict(
+            {
+                **self.MARKET_JSON,
+                "base": {**self.MARKET_JSON["base"], "decimals": 18, "max_precision": 18},
+            }
+        )
+        # Solved so that (price * quantity) % 10**18 == 9*price + 1, a remainder
+        # whose ratio to ``price`` straddles a float64 ULP boundary: float gives
+        # ceil = 9, exact integer gives ceil = 10.
+        price = 12345678901234567
+        quantity = 702758491410958912
+        assert m18.adjust_quantity(price, quantity) == 702758491410958902
 
 
 class TestMarketsResponse:

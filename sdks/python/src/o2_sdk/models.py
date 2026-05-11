@@ -5,7 +5,6 @@ All API request/response types as dataclasses with JSON parsing helpers.
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
@@ -210,9 +209,14 @@ class Market:
     def pair(self) -> str:
         return f"{self.base.symbol}/{self.quote.symbol}"
 
-    def format_price(self, chain_value: int) -> float:
-        """Convert chain integer price to human-readable float."""
-        return float(chain_value / (10**self.quote.decimals))
+    def format_price(self, chain_value: int) -> Decimal:
+        """Convert chain integer price to a human-readable ``Decimal``.
+
+        Returns a ``Decimal`` to preserve full chain precision; cast with
+        ``float(...)`` if a Python float is required (precision may be lost
+        for large or high-decimal markets).
+        """
+        return Decimal(chain_value) / (Decimal(10) ** self.quote.decimals)
 
     def scale_price(self, human_value: NumericInput) -> int:
         """Convert human-readable price to chain integer, truncated to max_precision."""
@@ -225,9 +229,14 @@ class Market:
         truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)
         return int((scaled // truncate_factor) * truncate_factor)
 
-    def format_quantity(self, chain_value: int) -> float:
-        """Convert chain integer quantity to human-readable float."""
-        return float(chain_value / (10**self.base.decimals))
+    def format_quantity(self, chain_value: int) -> Decimal:
+        """Convert chain integer quantity to a human-readable ``Decimal``.
+
+        Returns a ``Decimal`` to preserve full chain precision; cast with
+        ``float(...)`` if a Python float is required (precision may be lost
+        for large or high-decimal markets).
+        """
+        return Decimal(chain_value) / (Decimal(10) ** self.base.decimals)
 
     def scale_quantity(self, human_value: NumericInput) -> int:
         """Convert human-readable quantity to chain integer, truncated to max_precision."""
@@ -290,7 +299,7 @@ class Market:
         remainder = (price * quantity) % base_factor
         if remainder == 0:
             return quantity
-        return int(quantity - math.ceil(remainder / price))
+        return int(quantity - (remainder + price - 1) // price)
 
 
 @dataclass

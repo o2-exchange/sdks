@@ -196,12 +196,14 @@ Market models
 
    .. method:: format_price(chain_value)
 
-      Convert an on-chain integer price back to a human-readable float.
+      Convert an on-chain integer price back to a human-readable
+      ``decimal.Decimal``. Cast with ``float(...)`` if a Python float is
+      required (precision may be lost for large or high-decimal markets).
 
       :param chain_value: The on-chain price integer.
       :type chain_value: int
       :returns: The human-readable price.
-      :rtype: float
+      :rtype: decimal.Decimal
 
    .. method:: scale_quantity(human_value)
 
@@ -214,12 +216,14 @@ Market models
 
    .. method:: format_quantity(chain_value)
 
-      Convert an on-chain integer quantity to a human-readable float.
+      Convert an on-chain integer quantity to a human-readable
+      ``decimal.Decimal``. Cast with ``float(...)`` if a Python float is
+      required (precision may be lost for large or high-decimal markets).
 
       :param chain_value: The on-chain quantity integer.
       :type chain_value: int
       :returns: The human-readable quantity.
-      :rtype: float
+      :rtype: decimal.Decimal
 
    .. method:: validate_order(price, quantity)
 
