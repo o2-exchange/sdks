@@ -146,29 +146,68 @@ class TestMarket:
             # Too small
             m.validate_order(100000000, 1000000000)
 
-    def test_adjust_quantity(self):
-        m = Market.from_dict(self.MARKET_JSON)
-        # If price * quantity is not divisible by 10^base_decimals
-        adjusted = m.adjust_quantity(100000000, 10000000000)
-        assert adjusted == 10000000000  # already valid
+    @staticmethod
+    def _assert_adjust_quantity_postcondition(
+        market: Market, price: int, quantity: int, adjusted: int
+    ) -> None:
+        from math import gcd
 
-    def test_adjust_quantity_uses_exact_integer_math(self):
-        """Bug 5 regression: ``adjust_quantity`` must use integer ceiling
-        division. With these operands the prior ``math.ceil(remainder / price)``
-        path loses the last bit of ``remainder / price`` to float64 rounding
-        and returns a quantity one unit higher than the true ceiling."""
+        base_factor = 10**market.base.decimals
+        assert 0 <= adjusted <= quantity
+        assert (price * adjusted) % base_factor == 0
+        # No larger valid quantity exists in ``(adjusted, quantity]``.
+        period = base_factor // gcd(price, base_factor)
+        assert quantity - adjusted < period
+
+    def test_adjust_quantity_passthrough_when_valid(self):
+        m = Market.from_dict(self.MARKET_JSON)
+        # Already a multiple of the period (price=10^8 ⇒ period=10).
+        adjusted = m.adjust_quantity(100000000, 10000000000)
+        assert adjusted == 10000000000
+        self._assert_adjust_quantity_postcondition(m, 100000000, 10000000000, adjusted)
+
+    def test_adjust_quantity_walks_to_period_boundary(self):
+        """When ``price`` is not coprime to ``base_factor`` the largest valid
+        quantity is the greatest multiple of ``base_factor / gcd(price, base)``
+        below the input."""
+        m = Market.from_dict(self.MARKET_JSON)
+        # price=300, base_factor=10^9 ⇒ gcd=100, period=10^7.
+        # Largest multiple of 10^7 ≤ 12_345_678 is 10_000_000.
+        adjusted = m.adjust_quantity(300, 12_345_678)
+        assert adjusted == 10_000_000
+        self._assert_adjust_quantity_postcondition(m, 300, 12_345_678, adjusted)
+
+    def test_adjust_quantity_returns_zero_when_input_below_period(self):
+        """No positive quantity below ``period`` satisfies FractionalPrice; the
+        function returns 0 rather than the legacy off-by-one neighbour."""
+        m = Market.from_dict(self.MARKET_JSON)
+        # price=300 ⇒ period=10^7. quantity=3_333_334 is below the first multiple.
+        adjusted = m.adjust_quantity(300, 3_333_334)
+        assert adjusted == 0
+        self._assert_adjust_quantity_postcondition(m, 300, 3_333_334, adjusted)
+
+    def test_adjust_quantity_coprime_price_forces_zero(self):
+        """When ``price`` is coprime to ``base_factor`` (e.g. an odd price on an
+        18-decimal market) the period equals ``base_factor`` and any quantity
+        below it must be reduced to 0."""
         m18 = Market.from_dict(
             {
                 **self.MARKET_JSON,
                 "base": {**self.MARKET_JSON["base"], "decimals": 18, "max_precision": 18},
             }
         )
-        # Solved so that (price * quantity) % 10**18 == 9*price + 1, a remainder
-        # whose ratio to ``price`` straddles a float64 ULP boundary: float gives
-        # ceil = 9, exact integer gives ceil = 10.
-        price = 12345678901234567
+        price = 12345678901234567  # odd, not divisible by 5 ⇒ gcd(price, 10^18) = 1
         quantity = 702758491410958912
-        assert m18.adjust_quantity(price, quantity) == 702758491410958902
+        adjusted = m18.adjust_quantity(price, quantity)
+        assert adjusted == 0
+        self._assert_adjust_quantity_postcondition(m18, price, quantity, adjusted)
+
+    def test_adjust_quantity_rejects_non_positive_price(self):
+        import pytest
+
+        m = Market.from_dict(self.MARKET_JSON)
+        with pytest.raises(ValueError, match="price must be positive"):
+            m.adjust_quantity(0, 1)
 
 
 class TestMarketsResponse:

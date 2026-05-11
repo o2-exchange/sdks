@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
+from math import gcd
 from typing import Any
 
 
@@ -294,12 +295,19 @@ class Market:
 
         Returns the largest quantity <= the input that satisfies
         (price * quantity) % 10^base_decimals == 0.
+
+        Valid quantities form an arithmetic progression with step
+        ``period = base_factor // gcd(price, base_factor)``; the largest such
+        value not exceeding ``quantity`` is ``(quantity // period) * period``.
+        Returns ``0`` when no positive multiple of ``period`` fits below
+        ``quantity`` (the caller must then raise the request to at least
+        ``period``).
         """
+        if price <= 0:
+            raise ValueError(f"price must be positive, got {price}")
         base_factor = 10**self.base.decimals
-        remainder = (price * quantity) % base_factor
-        if remainder == 0:
-            return quantity
-        return int(quantity - (remainder + price - 1) // price)
+        period = base_factor // gcd(price, base_factor)
+        return int((quantity // period) * period)
 
 
 @dataclass
