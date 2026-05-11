@@ -12,7 +12,7 @@ from decimal import Decimal
 from math import gcd
 
 import pytest
-from hypothesis import example, given, settings
+from hypothesis import assume, example, given, settings
 from hypothesis import strategies as st
 
 from o2_sdk.models import Market
@@ -41,10 +41,13 @@ from .strategies import (
 
 @given(st.data())
 def test_format_price_exactness(data: st.DataObject) -> None:
-    """`format_price(c) * 10^quote.decimals == Decimal(c)`."""
+    """`format_price(c) * 10^quote.decimals == Decimal(c)` and the return
+    type is always ``Decimal`` (Bug 4 regression: a float path would silently
+    lose precision for large chain values)."""
     market = data.draw(markets())
     chain = data.draw(arbitrary_chain_ints(market.quote))
     out = market.format_price(chain)
+    assert isinstance(out, Decimal)
     assert out * (Decimal(10) ** market.quote.decimals) == Decimal(chain)
 
 
@@ -53,22 +56,8 @@ def test_format_quantity_exactness(data: st.DataObject) -> None:
     market = data.draw(markets())
     chain = data.draw(arbitrary_chain_ints(market.base))
     out = market.format_quantity(chain)
+    assert isinstance(out, Decimal)
     assert out * (Decimal(10) ** market.base.decimals) == Decimal(chain)
-
-
-@given(markets())
-def test_format_price_returns_decimal(market: Market) -> None:
-    """``format_price`` must never route through ``float`` (Bug 4)."""
-    out = market.format_price(0)
-    assert isinstance(out, Decimal)
-    assert out == 0
-
-
-@given(markets())
-def test_format_quantity_returns_decimal(market: Market) -> None:
-    out = market.format_quantity(0)
-    assert isinstance(out, Decimal)
-    assert out == 0
 
 
 # ---------------------------------------------------------------------------
@@ -157,12 +146,22 @@ def test_scale_quantity_monotonic(data: st.DataObject) -> None:
 
 @given(st.data())
 def test_scale_price_numeric_input_invariance(data: st.DataObject) -> None:
-    """``Decimal`` and ``str`` numeric inputs produce identical chain values."""
+    """All ``NumericInput`` flavors that represent the same value produce the
+    same chain integer. Covers ``Decimal``, ``str``, ``int`` (when integral),
+    and ``float`` (when the value is exactly representable, so ``Decimal``
+    round-tripping through ``str`` is lossless)."""
     market = data.draw(markets())
     human = data.draw(aligned_human_decimals(market.quote))
     via_decimal = market.scale_price(human)
     via_str = market.scale_price(format(human, "f"))
     assert via_decimal == via_str
+    if human == human.to_integral_value():
+        assert market.scale_price(int(human)) == via_decimal
+    # Float path: ``_parse_human_numeric`` uses ``Decimal(str(value))``, so
+    # only fully float-exact values are guaranteed to round-trip.
+    as_float = float(human)
+    assume(Decimal(str(as_float)) == human)
+    assert market.scale_price(as_float) == via_decimal
 
 
 # ---------------------------------------------------------------------------
@@ -352,10 +351,7 @@ def test_pipeline_only_min_order_can_fail(data: st.DataObject) -> None:
 
     scaled_price = market.scale_price(human_price)
     scaled_quantity = market.scale_quantity(human_quantity)
-
-    if scaled_price <= 0:
-        # Pipeline requires a positive price for adjust_quantity.
-        return
+    assume(scaled_price > 0)
     adjusted_quantity = market.adjust_quantity(scaled_price, scaled_quantity)
     try:
         market.validate_order(scaled_price, adjusted_quantity)
@@ -372,8 +368,7 @@ def test_pipeline_no_silent_quantity_inflation(data: st.DataObject) -> None:
 
     scaled_price = market.scale_price(human_price)
     scaled_quantity = market.scale_quantity(human_quantity)
-    if scaled_price <= 0:
-        return
+    assume(scaled_price > 0)
     adjusted = market.adjust_quantity(scaled_price, scaled_quantity)
     assert adjusted <= scaled_quantity
 
@@ -387,8 +382,7 @@ def test_pipeline_no_silent_price_drift(data: st.DataObject) -> None:
 
     scaled_price = market.scale_price(human_price)
     scaled_quantity = market.scale_quantity(human_quantity)
-    if scaled_price <= 0:
-        return
+    assume(scaled_price > 0)
     _ = market.adjust_quantity(scaled_price, scaled_quantity)
     # Re-scaling must be deterministic.
     assert market.scale_price(human_price) == scaled_price
@@ -404,8 +398,6 @@ def test_pipeline_no_silent_price_drift(data: st.DataObject) -> None:
 # ---------------------------------------------------------------------------
 
 
-@example(0, 0)
-@example(0, 1)
 @example(1, 2**63)
 @example(2**63, 2**63)  # near the top of u64
 @example(7, 10**18)  # coprime price, max-decimal market
@@ -413,18 +405,24 @@ def test_pipeline_no_silent_price_drift(data: st.DataObject) -> None:
 @example(10**18 + 1, 1234)  # price > base_factor
 @settings(max_examples=10, deadline=None)
 @given(
-    st.integers(min_value=0, max_value=U64_MAX),
+    st.integers(min_value=1, max_value=U64_MAX),
     st.integers(min_value=0, max_value=U64_MAX),
 )
 def test_adjust_quantity_edge_cases(price: int, quantity: int) -> None:
     """High-decimal market with edge-case ``(price, quantity)`` operands."""
     market = _market_for(18, 18, 18, 18, min_order=0)
-    if price == 0:
-        with pytest.raises(ValueError):
-            market.adjust_quantity(price, quantity)
-        return
     adjusted = market.adjust_quantity(price, quantity)
     _assert_adjust_postcondition(market, price, quantity, adjusted)
+
+
+def test_adjust_quantity_rejects_zero_price_at_edges() -> None:
+    """Explicit cover for the ``price == 0`` rejection branch on a
+    high-decimal market — separated from the value-asserting edge-case test
+    because the two branches assert different things."""
+    market = _market_for(18, 18, 18, 18, min_order=0)
+    for quantity in (0, 1, U64_MAX):
+        with pytest.raises(ValueError, match="price must be positive"):
+            market.adjust_quantity(0, quantity)
 
 
 def test_decimals_zero_market_pipeline() -> None:

@@ -14,6 +14,7 @@ together with human/chain inputs that respect the contract invariants:
 from __future__ import annotations
 
 from decimal import Decimal
+from math import gcd
 from typing import Final
 
 from hypothesis import strategies as st
@@ -119,8 +120,14 @@ def aligned_human_decimals(draw: st.DrawFn, asset: MarketAsset) -> Decimal:
 @st.composite
 def unaligned_human_decimals(draw: st.DrawFn, asset: MarketAsset) -> Decimal:
     """A non-negative ``Decimal`` with up to ``decimals + 4`` fractional
-    digits. Roundtrip is lossy by design — exercises truncation."""
-    integer_part = draw(st.integers(min_value=0, max_value=int(HUMAN_MAGNITUDE_CAP)))
+    digits. Roundtrip is lossy by design — exercises truncation. Capped so
+    the scaled chain representation always fits in u64 (otherwise the
+    scaled output would not be submittable on-chain)."""
+    # ``scale_*`` multiplies by ``10**decimals`` and floors; clamp the integer
+    # part so the result stays under U64_MAX // 2 even at 18 decimals.
+    scale_factor = 10**asset.decimals
+    integer_max = min(int(HUMAN_MAGNITUDE_CAP), (U64_MAX // 2) // max(scale_factor, 1))
+    integer_part = draw(st.integers(min_value=0, max_value=max(integer_max, 0)))
     frac_digits = asset.decimals + 4
     frac_part = draw(st.integers(min_value=0, max_value=10**frac_digits - 1))
     return Decimal(integer_part) + Decimal(frac_part) / Decimal(10**frac_digits)
@@ -159,8 +166,6 @@ def valid_orders(draw: st.DrawFn, market: Market) -> tuple[int, int]:
     """A ``(price, quantity)`` pair guaranteed to satisfy PricePrecision and
     FractionalPrice. Used as a positive oracle for ``validate_order`` and as
     a feeder for the pipeline test."""
-    from math import gcd  # keep heavy import inside the strategy
-
     base_factor = 10**market.base.decimals
     price_step = 10 ** (market.quote.decimals - market.quote.max_precision)
     # Pick a price aligned to PricePrecision, bounded so price*quantity stays
@@ -190,8 +195,6 @@ def arbitrary_orders(draw: st.DrawFn, market: Market) -> tuple[int, int]:
 def near_period_quantities(draw: st.DrawFn, market: Market, price: int) -> int:
     """Generate ``quantity = k*period ± δ`` for small ``δ`` so we exercise the
     boundary cases of ``adjust_quantity``."""
-    from math import gcd
-
     base_factor = 10**market.base.decimals
     period = base_factor // gcd(max(price, 1), base_factor)
     # Cap k so k*period stays under u64.
