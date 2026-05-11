@@ -107,12 +107,9 @@ class TestMarket:
         assert m.scale_price(ChainInt(100000000)) == 100000000
         assert m.scale_quantity(ChainInt(5000000000)) == 5000000000
 
-    def test_scale_chain_int_rejects_bad_precision(self):
+    def test_scale_chain_int_quantity_allows_atomic_units(self):
         m = Market.from_dict(self.MARKET_JSON)
-        import pytest
-
-        with pytest.raises(ValueError, match="raw quantity precision"):
-            m.scale_quantity(ChainInt(5000000001))
+        assert m.scale_quantity(ChainInt(5000000001)) == 5000000001
 
     def test_validate_order_passes(self):
         m = Market.from_dict(self.MARKET_JSON)

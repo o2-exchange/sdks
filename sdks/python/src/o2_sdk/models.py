@@ -230,9 +230,13 @@ class Market:
         return float(chain_value / (10**self.base.decimals))
 
     def scale_quantity(self, human_value: NumericInput) -> int:
-        """Convert human-readable quantity to chain integer, truncated to max_precision."""
+        """Convert quantity to a chain integer.
+
+        Human-readable inputs are truncated to ``base.max_precision``.
+        ``ChainInt`` inputs are treated as already-scaled base units and pass
+        through unchanged.
+        """
         if isinstance(human_value, ChainInt):
-            self._validate_raw_quantity_precision(human_value.value)
             return human_value.value
         parsed = _parse_human_numeric(human_value, "quantity")
         scale_factor = Decimal(10) ** self.base.decimals
@@ -245,13 +249,6 @@ class Market:
         if value % truncate_factor != 0:
             raise ValueError(
                 f"Invalid raw price precision: {value} must be a multiple of {truncate_factor}"
-            )
-
-    def _validate_raw_quantity_precision(self, value: int) -> None:
-        truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
-        if value % truncate_factor != 0:
-            raise ValueError(
-                f"Invalid raw quantity precision: {value} must be a multiple of {truncate_factor}"
             )
 
     def validate_order(self, price: int, quantity: int) -> None:

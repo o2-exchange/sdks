@@ -272,35 +272,37 @@ describe("O2Client faucet top-up", () => {
 });
 
 describe("O2Client bigint precision", () => {
-  it("createOrder rejects bigint quantity that exceeds market max_precision", async () => {
+  it("createOrder accepts bigint quantity at atomic-unit precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());
 
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
 
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 100000000n, 123456789n)).rejects.toThrow(
-      "Quantity must be a multiple of 1000000",
-    );
-    expect(submitActionsSpy).not.toHaveBeenCalled();
+    await expect(client.createOrder("fFUEL/fUSDC", "buy", 1000000000n, 123456789n)).resolves.toBeTruthy();
+    expect(submitActionsSpy).toHaveBeenCalledOnce();
   });
 
-  it("batchActions rejects bigint quantity that exceeds market max_precision", async () => {
+  it("batchActions accepts bigint quantity at atomic-unit precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());
 
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
 
     await expect(
       client.batchActions([
         {
           market: "fFUEL/fUSDC",
-          actions: [{ type: "createOrder", side: "buy", price: 100000000n, quantity: 123456789n }],
+          actions: [{ type: "createOrder", side: "buy", price: 1000000000n, quantity: 123456789n }],
         },
       ]),
-    ).rejects.toThrow("Quantity must be a multiple of 1000000");
-    expect(submitActionsSpy).not.toHaveBeenCalled();
+    ).resolves.toBeTruthy();
+    expect(submitActionsSpy).toHaveBeenCalledOnce();
   });
 
   it("createOrder rejects bigint price that exceeds market max_precision", async () => {
