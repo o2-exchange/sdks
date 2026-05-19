@@ -127,6 +127,15 @@ class TestMarket:
         adjusted = m.adjust_quantity(100000000, 10000000000)
         assert adjusted == 10000000000  # already valid
 
+    def test_adjust_quantity_uses_fractional_price_quantum(self):
+        market_json = {
+            **self.MARKET_JSON,
+            "base": {**self.MARKET_JSON["base"], "decimals": 1, "max_precision": 1},
+            "quote": {**self.MARKET_JSON["quote"], "decimals": 1, "max_precision": 1},
+        }
+        m = Market.from_dict(market_json)
+        assert m.adjust_quantity(6, 7) == 5
+
 
 class TestMarketsResponse:
     def test_from_dict(self):

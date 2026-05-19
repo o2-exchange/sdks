@@ -302,7 +302,9 @@ describe("O2Client bigint precision", () => {
       tx_id: `0x${"bb".repeat(32)}`,
     } as never);
 
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 1000000000n, 123456789n)).resolves.toBeTruthy();
+    await expect(
+      client.createOrder("fFUEL/fUSDC", "buy", 1000000000n, 123456789n),
+    ).resolves.toBeTruthy();
     expect(submitActionsSpy).toHaveBeenCalledOnce();
   });
 

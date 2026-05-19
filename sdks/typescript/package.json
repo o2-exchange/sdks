@@ -34,7 +34,7 @@
     "test:playwright:integration": "node tests/browser/playwright-integration.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "biome check src tests examples && tsc --noEmit",
-    "format": "biome format --write src tests examples",
+    "format": "biome check --write src tests examples",
     "format:check": "biome ci --linter-enabled=false --assist-enabled=false src tests examples",
     "docs": "typedoc",
     "docs:watch": "typedoc --watch"

@@ -282,10 +282,8 @@ class Market:
         (price * quantity) % 10^base_decimals == 0.
         """
         base_factor = 10**self.base.decimals
-        remainder = (price * quantity) % base_factor
-        if remainder == 0:
-            return quantity
-        return int(quantity - math.ceil(remainder / price))
+        quantum = base_factor // math.gcd(price, base_factor)
+        return int(quantity - (quantity % quantum))
 
 
 @dataclass

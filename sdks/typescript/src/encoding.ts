@@ -526,7 +526,7 @@ export function adjustQuantityForFractionalPrice(
   baseDecimals: number,
 ): bigint {
   // In the contracts, base quantity and price are expressed with the same amount of decimals
-  const factor = 10n**(BigInt(baseDecimals));
+  const factor = 10n ** BigInt(baseDecimals);
   const quantum = factor / gcd(price, factor);
   return quantity - (quantity % quantum);
 }
