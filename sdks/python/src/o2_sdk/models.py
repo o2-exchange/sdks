@@ -232,7 +232,7 @@ class Market:
     def scale_quantity(self, human_value: NumericInput) -> int:
         """Convert quantity to a chain integer.
 
-        Human-readable inputs are truncated to ``base.max_precision``.
+        Human-readable inputs are scaled to atomic base units.
         ``ChainInt`` inputs are treated as already-scaled base units and pass
         through unchanged.
         """
@@ -240,9 +240,7 @@ class Market:
             return human_value.value
         parsed = _parse_human_numeric(human_value, "quantity")
         scale_factor = Decimal(10) ** self.base.decimals
-        scaled = int((parsed * scale_factor).to_integral_value(rounding=ROUND_DOWN))
-        truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
-        return int((scaled // truncate_factor) * truncate_factor)
+        return int((parsed * scale_factor).to_integral_value(rounding=ROUND_DOWN))
 
     def _validate_raw_price_precision(self, value: int) -> None:
         truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)

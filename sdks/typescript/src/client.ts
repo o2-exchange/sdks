@@ -45,8 +45,8 @@ import {
   buildWithdrawSigningBytes,
   type ContractCall,
   type MarketInfo,
+  scaleDecimalString,
   scalePriceString,
-  scaleQuantityString,
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
@@ -1195,7 +1195,7 @@ export class O2Client {
    *
    * Bigint prices are validated against quote precision.
    * Bigint quantities are treated as already-scaled base units and pass through unchanged.
-   * String quantities still follow the SDK's decimal scaling rules.
+   * String quantities follow the SDK's decimal scaling rules.
    */
   public normalizeCreateOrderValues(
     market: Market,
@@ -1223,11 +1223,7 @@ export class O2Client {
     if (typeof normalizedQuantity === "bigint") {
       scaledQuantity = normalizedQuantity;
     } else {
-      scaledQuantity = scaleQuantityString(
-        normalizedQuantity,
-        market.base.decimals,
-        market.base.max_precision,
-      );
+      scaledQuantity = scaleDecimalString(normalizedQuantity, market.base.decimals);
     }
 
     if (!validateFractionalPrice(scaledPrice, scaledQuantity, market.base.decimals)) {

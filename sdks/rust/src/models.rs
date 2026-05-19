@@ -568,7 +568,6 @@ pub struct Quantity {
     value: UnsignedDecimal,
     market_id: MarketId,
     base_decimals: u32,
-    base_max_precision: u32,
 }
 
 impl Quantity {
@@ -810,20 +809,12 @@ impl Market {
 
     /// Build a typed, market-bound quantity from an `UnsignedDecimal`.
     pub fn quantity_from_decimal(&self, value: UnsignedDecimal) -> Result<Quantity, O2Error> {
-        let scale = Self::decimal_scale(&value);
-        if scale > self.base.max_precision {
-            return Err(O2Error::InvalidOrderParams(format!(
-                "Quantity precision {} exceeds max {} for market {}",
-                scale, self.base.max_precision, self.market_id
-            )));
-        }
         // Ensure value is representable in chain units for this market.
         let _ = self.scale_quantity(&value)?;
         Ok(Quantity {
             value,
             market_id: self.market_id.clone(),
             base_decimals: self.base.decimals,
-            base_max_precision: self.base.max_precision,
         })
     }
 
@@ -843,10 +834,7 @@ impl Market {
 
     /// Validate that a `Quantity` wrapper is compatible with this market.
     pub fn validate_quantity_binding(&self, quantity: &Quantity) -> Result<(), O2Error> {
-        if quantity.market_id != self.market_id
-            || quantity.base_decimals != self.base.decimals
-            || quantity.base_max_precision != self.base.max_precision
-        {
+        if quantity.market_id != self.market_id || quantity.base_decimals != self.base.decimals {
             return Err(O2Error::Other(format!(
                 "Quantity wrapper is stale or bound to a different market (expected {}, got {})",
                 self.market_id, quantity.market_id
@@ -913,23 +901,17 @@ impl Market {
         UnsignedDecimal::new(d).unwrap()
     }
 
-    /// Convert a human-readable quantity to chain-scaled integer, truncated to max_precision.
+    /// Convert a human-readable quantity to chain-scaled integer in atomic base units.
     pub fn scale_quantity(&self, human_value: &UnsignedDecimal) -> Result<u64, O2Error> {
         let factor_u64 = Self::checked_pow_u64(self.base.decimals, "base.decimals")?;
         let factor = Decimal::from(factor_u64);
         let scaled_str = (*human_value.inner() * factor).floor().to_string();
-        let scaled = scaled_str.parse::<u64>().map_err(|e| {
+        scaled_str.parse::<u64>().map_err(|e| {
             O2Error::Other(format!(
                 "Failed to scale quantity '{}' into u64: {e}",
                 human_value
             ))
-        })?;
-        let truncate_factor = Self::checked_truncate_factor(
-            self.base.decimals,
-            self.base.max_precision,
-            "base precision",
-        )?;
-        Ok((scaled / truncate_factor) * truncate_factor)
+        })
     }
 
     /// The symbol pair, e.g. "FUEL/USDC".
@@ -1798,12 +1780,12 @@ mod tests {
     }
 
     #[test]
-    fn market_quantity_rejects_excess_precision() {
+    fn market_quantity_accepts_atomic_precision() {
         let market = sample_market();
-        let err = market
+        let quantity = market
             .quantity("1.2345")
-            .expect_err("quantity precision should be rejected");
-        assert!(matches!(err, O2Error::InvalidOrderParams(_)));
+            .expect("quantity precision should be scaled to atomic units");
+        assert_eq!(quantity.value(), "1.2345".parse().unwrap());
     }
 
     #[test]

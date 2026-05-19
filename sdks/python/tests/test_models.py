@@ -78,20 +78,15 @@ class TestMarket:
 
     def test_scale_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
-        # base decimals=9, max_precision=3 -> truncate_factor=10^6
         result = m.scale_quantity(5.0)
         assert result == 5000000000
         assert m.scale_quantity("5.0") == 5000000000
         assert m.scale_quantity(Decimal("5.123")) == 5123000000
 
-    def test_scale_quantity_truncation(self):
+    def test_scale_quantity_preserves_atomic_precision(self):
         m = Market.from_dict(self.MARKET_JSON)
-        # 5.1234567 with max_precision=3 should truncate
         result = m.scale_quantity(5.1234567)
-        # Truncate factor = 10^6
-        # 5.1234567 * 10^9 = 5123456700
-        # floor(5123456700 / 1000000) * 1000000 = 5123000000
-        assert result == 5123000000
+        assert result == 5123456700
 
     def test_scale_rejects_negative_or_invalid(self):
         m = Market.from_dict(self.MARKET_JSON)
