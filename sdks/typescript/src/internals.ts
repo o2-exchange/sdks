@@ -24,6 +24,7 @@ export {
 } from "./crypto.js";
 // ── Encoding ──────────────────────────────────────────────────────
 export {
+  adjustQuantityForFractionalPrice,
   type ActionJSON,
   actionToCall,
   buildActionsSigningBytes,

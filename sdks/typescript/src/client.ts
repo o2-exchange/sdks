@@ -40,6 +40,7 @@ import {
 import {
   type ActionJSON,
   actionToCall,
+  adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
@@ -1227,13 +1228,11 @@ export class O2Client {
     }
 
     if (!validateFractionalPrice(scaledPrice, scaledQuantity, market.base.decimals)) {
-      const factor = BigInt(10 ** market.base.decimals);
-      const product = scaledPrice * scaledQuantity;
-      const remainder = product % factor;
-      if (remainder !== 0n) {
-        const adjustedProduct = product - remainder;
-        scaledQuantity = adjustedProduct / scaledPrice;
-      }
+      scaledQuantity = adjustQuantityForFractionalPrice(
+        scaledPrice,
+        scaledQuantity,
+        market.base.decimals,
+      );
     }
 
     if (!validateMinOrder(scaledPrice, scaledQuantity, market.base.decimals, market.min_order)) {

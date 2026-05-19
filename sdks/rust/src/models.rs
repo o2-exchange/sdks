@@ -920,6 +920,7 @@ impl Market {
     }
 
     /// Adjust quantity downward so that `(price * quantity) % 10^base_decimals == 0`.
+    /// Rounds down by finding a valid quantum using euclidean GCD
     /// Returns the original quantity if already valid.
     pub fn adjust_quantity(&self, price: u64, quantity: u64) -> Result<u64, O2Error> {
         if price == 0 {
@@ -928,18 +929,15 @@ impl Market {
             ));
         }
         let base_factor = Self::checked_pow_u128(self.base.decimals, "base.decimals")?;
-        let product = price as u128 * quantity as u128;
-        let remainder = product % base_factor;
-        if remainder == 0 {
-            return Ok(quantity);
+        let mut a = price as u128; // this will end up being the GCD
+        let mut b = base_factor;
+        while b != 0 {
+            let next = b;
+            b = a % b;
+            a = next;
         }
-        let adjusted_product = product - remainder;
-        let adjusted = adjusted_product / price as u128;
-        if adjusted > u64::MAX as u128 {
-            return Err(O2Error::InvalidOrderParams(
-                "Adjusted quantity exceeds u64 range".into(),
-            ));
-        }
+        let quantum = base_factor / a;
+        let adjusted = (quantity as u128 / quantum) * quantum;
         Ok(adjusted as u64)
     }
 
