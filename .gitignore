@@ -12,6 +12,7 @@ htmlcov/
 node_modules/
 dist/
 *.tsbuildinfo
+coverage
 
 # Rust
 target/

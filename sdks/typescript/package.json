@@ -40,11 +40,12 @@
     "docs:watch": "typedoc --watch"
   },
   "dependencies": {
-    "@noble/secp256k1": "^3.0.0",
-    "@noble/hashes": "^2.0.0"
+    "@noble/hashes": "^2.0.0",
+    "@noble/secp256k1": "^3.0.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.3.0",
+    "@vitest/coverage-v8": "^4.0.18",
     "tsup": "^8.3.0",
     "typedoc": "^0.27.0",
     "typescript": "^5.7.0",
