@@ -26,6 +26,7 @@ export {
 export {
   type ActionJSON,
   actionToCall,
+  adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,

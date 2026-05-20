@@ -54,6 +54,22 @@ const LOW_PRECISION_MARKET: Market = {
   },
 };
 
+const FRACTIONAL_PRICE_MARKET: Market = {
+  ...MARKET,
+  market_id: marketId(`0x${"cd".repeat(32)}`),
+  min_order: 1n,
+  base: {
+    ...MARKET.base,
+    decimals: 1,
+    max_precision: 1,
+  },
+  quote: {
+    ...MARKET.quote,
+    decimals: 1,
+    max_precision: 1,
+  },
+};
+
 const MARKETS_RESPONSE: MarketsResponse = {
   books_registry_id: contractId(`0x${"88".repeat(32)}`),
   accounts_registry_id: contractId(`0x${"99".repeat(32)}`),
@@ -66,6 +82,11 @@ const MARKETS_RESPONSE: MarketsResponse = {
 const LOW_PRECISION_MARKETS_RESPONSE: MarketsResponse = {
   ...MARKETS_RESPONSE,
   markets: [LOW_PRECISION_MARKET],
+};
+
+const FRACTIONAL_PRICE_MARKETS_RESPONSE: MarketsResponse = {
+  ...MARKETS_RESPONSE,
+  markets: [FRACTIONAL_PRICE_MARKET],
 };
 
 function decodeNonceFromSigningBytes(bytes: Uint8Array): bigint {
@@ -272,35 +293,39 @@ describe("O2Client faucet top-up", () => {
 });
 
 describe("O2Client bigint precision", () => {
-  it("createOrder rejects bigint quantity that exceeds market max_precision", async () => {
+  it("createOrder accepts bigint quantity at atomic-unit precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());
 
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
 
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 100000000n, 123456789n)).rejects.toThrow(
-      "Quantity must be a multiple of 1000000",
-    );
-    expect(submitActionsSpy).not.toHaveBeenCalled();
+    await expect(
+      client.createOrder("fFUEL/fUSDC", "buy", 1000000000n, 123456789n),
+    ).resolves.toBeTruthy();
+    expect(submitActionsSpy).toHaveBeenCalledOnce();
   });
 
-  it("batchActions rejects bigint quantity that exceeds market max_precision", async () => {
+  it("batchActions accepts bigint quantity at atomic-unit precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());
 
     vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
 
     await expect(
       client.batchActions([
         {
           market: "fFUEL/fUSDC",
-          actions: [{ type: "createOrder", side: "buy", price: 100000000n, quantity: 123456789n }],
+          actions: [{ type: "createOrder", side: "buy", price: 1000000000n, quantity: 123456789n }],
         },
       ]),
-    ).rejects.toThrow("Quantity must be a multiple of 1000000");
-    expect(submitActionsSpy).not.toHaveBeenCalled();
+    ).resolves.toBeTruthy();
+    expect(submitActionsSpy).toHaveBeenCalledOnce();
   });
 
   it("createOrder rejects bigint price that exceeds market max_precision", async () => {
@@ -332,6 +357,77 @@ describe("O2Client bigint precision", () => {
       ]),
     ).rejects.toThrow("Price must be a multiple of 1000000");
     expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("O2Client fractional price adjustment", () => {
+  it("createOrder rounds quantity down to the valid fractional-price quantum", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(FRACTIONAL_PRICE_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await expect(client.createOrder("fFUEL/fUSDC", "buy", 6n, 7n)).resolves.toBeTruthy();
+
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: FRACTIONAL_PRICE_MARKET.market_id,
+            actions: expect.arrayContaining([
+              expect.objectContaining({
+                CreateOrder: expect.objectContaining({
+                  price: "6",
+                  quantity: "5",
+                }),
+              }),
+            ]),
+          },
+        ],
+      }),
+    );
+  });
+
+  it("batchActions applies the same fractional-price rounding as createOrder", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(FRACTIONAL_PRICE_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await expect(
+      client.batchActions([
+        {
+          market: "fFUEL/fUSDC",
+          actions: [{ type: "createOrder", side: "buy", price: 6n, quantity: 7n }],
+        },
+      ]),
+    ).resolves.toBeTruthy();
+
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: FRACTIONAL_PRICE_MARKET.market_id,
+            actions: [
+              expect.objectContaining({
+                CreateOrder: expect.objectContaining({
+                  price: "6",
+                  quantity: "5",
+                }),
+              }),
+            ],
+          },
+        ],
+      }),
+    );
   });
 });
 

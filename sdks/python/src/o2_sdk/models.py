@@ -230,28 +230,23 @@ class Market:
         return float(chain_value / (10**self.base.decimals))
 
     def scale_quantity(self, human_value: NumericInput) -> int:
-        """Convert human-readable quantity to chain integer, truncated to max_precision."""
+        """Convert quantity to a chain integer.
+
+        Human-readable inputs are scaled to atomic base units.
+        ``ChainInt`` inputs are treated as already-scaled base units and pass
+        through unchanged.
+        """
         if isinstance(human_value, ChainInt):
-            self._validate_raw_quantity_precision(human_value.value)
             return human_value.value
         parsed = _parse_human_numeric(human_value, "quantity")
         scale_factor = Decimal(10) ** self.base.decimals
-        scaled = int((parsed * scale_factor).to_integral_value(rounding=ROUND_DOWN))
-        truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
-        return int((scaled // truncate_factor) * truncate_factor)
+        return int((parsed * scale_factor).to_integral_value(rounding=ROUND_DOWN))
 
     def _validate_raw_price_precision(self, value: int) -> None:
         truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)
         if value % truncate_factor != 0:
             raise ValueError(
                 f"Invalid raw price precision: {value} must be a multiple of {truncate_factor}"
-            )
-
-    def _validate_raw_quantity_precision(self, value: int) -> None:
-        truncate_factor = 10 ** (self.base.decimals - self.base.max_precision)
-        if value % truncate_factor != 0:
-            raise ValueError(
-                f"Invalid raw quantity precision: {value} must be a multiple of {truncate_factor}"
             )
 
     def validate_order(self, price: int, quantity: int) -> None:
@@ -287,10 +282,8 @@ class Market:
         (price * quantity) % 10^base_decimals == 0.
         """
         base_factor = 10**self.base.decimals
-        remainder = (price * quantity) % base_factor
-        if remainder == 0:
-            return quantity
-        return int(quantity - math.ceil(remainder / price))
+        quantum = base_factor // math.gcd(price, base_factor)
+        return int(quantity - (quantity % quantum))
 
 
 @dataclass

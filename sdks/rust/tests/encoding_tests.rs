@@ -492,6 +492,18 @@ fn test_adjust_quantity_needs_adjustment() {
     assert_eq!(adjusted, 2);
 }
 
+#[test]
+fn test_adjust_quantity_rounds_to_fractional_price_quantum() {
+    let mut market = test_market();
+    market.base.decimals = 1;
+    market.base.max_precision = 1;
+    market.quote.decimals = 1;
+    market.quote.max_precision = 1;
+
+    let adjusted = market.adjust_quantity(6, 7).unwrap();
+    assert_eq!(adjusted, 5);
+}
+
 // ---------------------------------------------------------------------------
 // OrderType::to_encoding tests
 // ---------------------------------------------------------------------------

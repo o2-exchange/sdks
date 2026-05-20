@@ -175,21 +175,41 @@ async def test_batch_actions_accepts_chain_int(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_batch_actions_rejects_bad_chain_int_precision():
+async def test_batch_actions_accepts_atomic_chain_int_quantity():
     client = O2Client()
     market = _test_market()
     session = _test_session()
     client._markets_cache = _test_markets_response(market)
     client._nonce_cache[session.trade_account_id] = 1
 
+    captured: dict = {}
+
+    async def fake_submit_actions(_owner: str, request: dict) -> ActionsResponse:
+        captured["request"] = request
+        return ActionsResponse.from_dict({"tx_id": "0x" + "bb" * 32})
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "o2_sdk.client.action_to_call",
+        lambda _action, _market_info: {"contract_id": b"", "asset_id": b"", "amount": 0},
+    )
+    monkeypatch.setattr("o2_sdk.client.build_actions_signing_bytes", lambda _nonce, _calls: b"x")
+    monkeypatch.setattr("o2_sdk.client.raw_sign", lambda _key, _payload: b"\x99" * 64)
+    monkeypatch.setattr(client.api, "submit_actions", fake_submit_actions)
+
     group = (
         client.actions_for(market)
-        .create_order(OrderSide.BUY, ChainInt(100000000), ChainInt(5000000001))
+        .create_order(OrderSide.BUY, ChainInt(1000000000), ChainInt(5000000001))
         .build()
     )
 
-    with pytest.raises(O2Error, match="raw quantity precision"):
-        await client._normalize_market_actions(session, [group])
+    try:
+        await client.batch_actions([group], session=session)
+    finally:
+        monkeypatch.undo()
+
+    create_order = captured["request"]["actions"][0]["actions"][0]["CreateOrder"]
+    assert create_order["quantity"] == "5000000001"
 
 
 @pytest.mark.asyncio

@@ -78,20 +78,15 @@ class TestMarket:
 
     def test_scale_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
-        # base decimals=9, max_precision=3 -> truncate_factor=10^6
         result = m.scale_quantity(5.0)
         assert result == 5000000000
         assert m.scale_quantity("5.0") == 5000000000
         assert m.scale_quantity(Decimal("5.123")) == 5123000000
 
-    def test_scale_quantity_truncation(self):
+    def test_scale_quantity_preserves_atomic_precision(self):
         m = Market.from_dict(self.MARKET_JSON)
-        # 5.1234567 with max_precision=3 should truncate
         result = m.scale_quantity(5.1234567)
-        # Truncate factor = 10^6
-        # 5.1234567 * 10^9 = 5123456700
-        # floor(5123456700 / 1000000) * 1000000 = 5123000000
-        assert result == 5123000000
+        assert result == 5123456700
 
     def test_scale_rejects_negative_or_invalid(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -107,12 +102,9 @@ class TestMarket:
         assert m.scale_price(ChainInt(100000000)) == 100000000
         assert m.scale_quantity(ChainInt(5000000000)) == 5000000000
 
-    def test_scale_chain_int_rejects_bad_precision(self):
+    def test_scale_chain_int_quantity_allows_atomic_units(self):
         m = Market.from_dict(self.MARKET_JSON)
-        import pytest
-
-        with pytest.raises(ValueError, match="raw quantity precision"):
-            m.scale_quantity(ChainInt(5000000001))
+        assert m.scale_quantity(ChainInt(5000000001)) == 5000000001
 
     def test_validate_order_passes(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -134,6 +126,15 @@ class TestMarket:
         # If price * quantity is not divisible by 10^base_decimals
         adjusted = m.adjust_quantity(100000000, 10000000000)
         assert adjusted == 10000000000  # already valid
+
+    def test_adjust_quantity_uses_fractional_price_quantum(self):
+        market_json = {
+            **self.MARKET_JSON,
+            "base": {**self.MARKET_JSON["base"], "decimals": 1, "max_precision": 1},
+            "quote": {**self.MARKET_JSON["quote"], "decimals": 1, "max_precision": 1},
+        }
+        m = Market.from_dict(market_json)
+        assert m.adjust_quantity(6, 7) == 5
 
 
 class TestMarketsResponse:

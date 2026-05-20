@@ -506,6 +506,31 @@ export function validateFractionalPrice(
   return (price * quantity) % BigInt(10 ** baseDecimals) === 0n;
 }
 
+function gcd(a: bigint, b: bigint): bigint {
+  a = a < 0n ? -a : a;
+  b = b < 0n ? -b : b;
+  while (b !== 0n) {
+    const next = b;
+    b = a % b;
+    a = next;
+  }
+  return a;
+}
+
+/**
+ * Return the largest quantity <= input that satisfies FractionalPrice.
+ */
+export function adjustQuantityForFractionalPrice(
+  price: bigint,
+  quantity: bigint,
+  baseDecimals: number,
+): bigint {
+  // In the contracts, base quantity and price are expressed with the same amount of decimals
+  const factor = 10n ** BigInt(baseDecimals);
+  const quantum = factor / gcd(price, factor);
+  return quantity - (quantity % quantum);
+}
+
 /**
  * Validate min_order: (price * quantity) / 10^base_decimals >= min_order.
  */

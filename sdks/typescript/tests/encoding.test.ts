@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
@@ -365,6 +366,11 @@ describe("Encoding Module", () => {
 
       // (100000001 * 1) % 10^9 != 0 -> invalid
       expect(validateFractionalPrice(100000001n, 1n, 9)).toBe(false);
+    });
+
+    it("adjustQuantityForFractionalPrice rounds down to the valid quantity quantum", () => {
+      expect(adjustQuantityForFractionalPrice(6n, 7n, 1)).toBe(5n);
+      expect(adjustQuantityForFractionalPrice(100000000n, 5000000000n, 9)).toBe(5000000000n);
     });
 
     it("validateMinOrder checks minimum value", () => {

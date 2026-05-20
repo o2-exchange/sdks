@@ -40,13 +40,14 @@ import {
 import {
   type ActionJSON,
   actionToCall,
+  adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
   type ContractCall,
   type MarketInfo,
+  scaleDecimalString,
   scalePriceString,
-  scaleQuantityString,
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
@@ -518,55 +519,13 @@ export class O2Client {
 
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
-
-    // Scale price and quantity based on type
-    let scaledPrice: bigint;
-    let scaledQuantity: bigint;
-
-    const normalizedPrice = ensureNumeric(price, "price");
-    if (typeof normalizedPrice === "bigint") {
-      scaledPrice = normalizedPrice;
-      this.ensureBigIntPricePrecision(scaledPrice, resolved);
-    } else {
-      scaledPrice = scalePriceString(
-        normalizedPrice,
-        resolved.quote.decimals,
-        resolved.quote.max_precision,
-      );
-    }
-
-    const normalizedQuantity = ensureNumeric(quantity, "quantity");
-    if (typeof normalizedQuantity === "bigint") {
-      scaledQuantity = normalizedQuantity;
-      this.ensureBigIntQuantityPrecision(scaledQuantity, resolved);
-    } else {
-      scaledQuantity = scaleQuantityString(
-        normalizedQuantity,
-        resolved.base.decimals,
-        resolved.base.max_precision,
-      );
-    }
-
-    // Auto-adjust quantity to satisfy FractionalPrice constraint
-    if (!validateFractionalPrice(scaledPrice, scaledQuantity, resolved.base.decimals)) {
-      const factor = BigInt(10 ** resolved.base.decimals);
-      const product = scaledPrice * scaledQuantity;
-      const remainder = product % factor;
-      if (remainder !== 0n) {
-        const adjustedProduct = product - remainder;
-        scaledQuantity = adjustedProduct / scaledPrice;
-      }
-    }
-
-    // Validate min_order
-    if (
-      !validateMinOrder(scaledPrice, scaledQuantity, resolved.base.decimals, resolved.min_order)
-    ) {
-      throw new O2Error(
-        `Order value below min_order. ` +
-          `(price * quantity) / 10^${resolved.base.decimals} must be >= ${resolved.min_order}`,
-      );
-    }
+    const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+      resolved,
+      price,
+      quantity,
+      "price",
+      "quantity",
+    );
 
     // Build actions
     const actions: ActionPayload[] = [];
@@ -1215,24 +1174,6 @@ export class O2Client {
   }
 
   /**
-   * Validate bigint quantities against the market precision step.
-   *
-   * Bigint quantities are treated as already-scaled chain integers.
-   * They must still align to `max_precision` to avoid on-chain rejects.
-   */
-  private ensureBigIntQuantityPrecision(quantity: bigint, market: Market): void {
-    const precisionDelta = market.base.decimals - market.base.max_precision;
-    const quantityStep = precisionDelta <= 0 ? 1n : BigInt(10 ** precisionDelta);
-    if (quantity % quantityStep !== 0n) {
-      throw new O2Error(
-        `Invalid bigint quantity precision for ${market.base.symbol}/${market.quote.symbol}. ` +
-          `Quantity must be a multiple of ${quantityStep.toString()}. ` +
-          `Pass quantity as a decimal string to auto-scale.`,
-      );
-    }
-  }
-
-  /**
    * Validate bigint prices against the market precision step.
    *
    * Bigint prices are treated as already-scaled chain integers.
@@ -1250,58 +1191,72 @@ export class O2Client {
     }
   }
 
+  /**
+   * Normalize order price/quantity inputs to chain integers.
+   *
+   * Bigint prices are validated against quote precision.
+   * Bigint quantities are treated as already-scaled base units and pass through unchanged.
+   * String quantities follow the SDK's decimal scaling rules.
+   */
+  public normalizeCreateOrderValues(
+    market: Market,
+    price: Numeric,
+    quantity: Numeric,
+    priceFieldName: string,
+    quantityFieldName: string,
+  ): { scaledPrice: bigint; scaledQuantity: bigint } {
+    let scaledPrice: bigint;
+    let scaledQuantity: bigint;
+
+    const normalizedPrice = ensureNumeric(price, priceFieldName);
+    if (typeof normalizedPrice === "bigint") {
+      scaledPrice = normalizedPrice;
+      this.ensureBigIntPricePrecision(scaledPrice, market);
+    } else {
+      scaledPrice = scalePriceString(
+        normalizedPrice,
+        market.quote.decimals,
+        market.quote.max_precision,
+      );
+    }
+
+    const normalizedQuantity = ensureNumeric(quantity, quantityFieldName);
+    if (typeof normalizedQuantity === "bigint") {
+      scaledQuantity = normalizedQuantity;
+    } else {
+      scaledQuantity = scaleDecimalString(normalizedQuantity, market.base.decimals);
+    }
+
+    if (!validateFractionalPrice(scaledPrice, scaledQuantity, market.base.decimals)) {
+      scaledQuantity = adjustQuantityForFractionalPrice(
+        scaledPrice,
+        scaledQuantity,
+        market.base.decimals,
+      );
+    }
+
+    if (!validateMinOrder(scaledPrice, scaledQuantity, market.base.decimals, market.min_order)) {
+      throw new O2Error(
+        `Order value below min_order. ` +
+          `(price * quantity) / 10^${market.base.decimals} must be >= ${market.min_order}`,
+      );
+    }
+
+    return { scaledPrice, scaledQuantity };
+  }
+
   /** Convert a type-safe Action to the wire-format ActionPayload. */
   private actionToPayload(action: Action, market: Market): ActionPayload {
     const session = this.ensureSession();
     switch (action.type) {
       case "createOrder": {
-        let scaledPrice: bigint;
-        let scaledQuantity: bigint;
-
-        const normalizedPrice = ensureNumeric(action.price, "action.price");
-        if (typeof normalizedPrice === "bigint") {
-          scaledPrice = normalizedPrice;
-          this.ensureBigIntPricePrecision(scaledPrice, market);
-        } else {
-          scaledPrice = scalePriceString(
-            normalizedPrice,
-            market.quote.decimals,
-            market.quote.max_precision,
-          );
-        }
-
-        const normalizedQuantity = ensureNumeric(action.quantity, "action.quantity");
-        if (typeof normalizedQuantity === "bigint") {
-          scaledQuantity = normalizedQuantity;
-          this.ensureBigIntQuantityPrecision(scaledQuantity, market);
-        } else {
-          scaledQuantity = scaleQuantityString(
-            normalizedQuantity,
-            market.base.decimals,
-            market.base.max_precision,
-          );
-        }
-
-        // Auto-adjust quantity for FractionalPrice
-        if (!validateFractionalPrice(scaledPrice, scaledQuantity, market.base.decimals)) {
-          const factor = BigInt(10 ** market.base.decimals);
-          const product = scaledPrice * scaledQuantity;
-          const remainder = product % factor;
-          if (remainder !== 0n) {
-            const adjustedProduct = product - remainder;
-            scaledQuantity = adjustedProduct / scaledPrice;
-          }
-        }
-
-        // Validate min_order
-        if (
-          !validateMinOrder(scaledPrice, scaledQuantity, market.base.decimals, market.min_order)
-        ) {
-          throw new O2Error(
-            `Order value below min_order. ` +
-              `(price * quantity) / 10^${market.base.decimals} must be >= ${market.min_order}`,
-          );
-        }
+        const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+          market,
+          action.price,
+          action.quantity,
+          "action.price",
+          "action.quantity",
+        );
 
         return {
           CreateOrder: {
