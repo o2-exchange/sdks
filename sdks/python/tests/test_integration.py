@@ -365,7 +365,7 @@ async def _conservative_post_only_buy_price(client, market):
         # the chosen price to accidentally cross the actual best ask.
         depth = await client.get_depth(market.pair, precision=1)
         if depth.best_ask:
-            best_ask = market.format_price(int(depth.best_ask.price))
+            best_ask = float(market.format_price(int(depth.best_ask.price)))
             return max(price_step, best_ask - price_step)
     except Exception as ex:
         # Depth fetch failures are non-fatal; fall back to a conservative price.

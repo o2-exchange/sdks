@@ -58,7 +58,7 @@ async def main():
             if not best_ask:
                 continue
 
-            ask_price = market.format_price(int(best_ask.price))
+            ask_price = float(market.format_price(int(best_ask.price)))
             logger.debug("Best ask: %.6f", ask_price)
 
             if ask_price <= BUY_BELOW_PRICE:
@@ -67,7 +67,7 @@ async def main():
                 max_price = ask_price * (1 + SLIPPAGE_PCT)
                 quantity = min(
                     MAX_QUANTITY,
-                    market.format_quantity(int(best_ask.quantity)),
+                    float(market.format_quantity(int(best_ask.quantity))),
                 )
 
                 try:

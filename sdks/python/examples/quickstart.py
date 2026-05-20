@@ -43,7 +43,7 @@ async def main():
 
     # 6. Place a spot buy order using high-level create_order
     depth = await client.get_depth(market.pair, precision=1)
-    price = market.format_price(int(depth.best_ask.price)) * 0.5 if depth.best_ask else 0.01
+    price = float(market.format_price(int(depth.best_ask.price))) * 0.5 if depth.best_ask else 0.01
 
     quantity = max(
         int(market.min_order) / market.scale_price(price) * 1.1,

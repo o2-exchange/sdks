@@ -90,8 +90,8 @@ async def main():
                 try:
                     depth = await client.get_depth(market.pair, precision=1)
                     if depth.best_bid and depth.best_ask:
-                        bid = market.format_price(int(depth.best_bid.price))
-                        ask = market.format_price(int(depth.best_ask.price))
+                        bid = float(market.format_price(int(depth.best_bid.price)))
+                        ask = float(market.format_price(int(depth.best_ask.price)))
                         ref_price = (bid + ask) / 2
                         logger.info("Mid price: %.6f", ref_price)
                 except Exception:

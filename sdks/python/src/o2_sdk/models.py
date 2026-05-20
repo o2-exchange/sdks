@@ -5,11 +5,11 @@ All API request/response types as dataclasses with JSON parsing helpers.
 
 from __future__ import annotations
 
-import math
 import time
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
+from math import gcd
 from typing import Any
 
 
@@ -210,9 +210,14 @@ class Market:
     def pair(self) -> str:
         return f"{self.base.symbol}/{self.quote.symbol}"
 
-    def format_price(self, chain_value: int) -> float:
-        """Convert chain integer price to human-readable float."""
-        return float(chain_value / (10**self.quote.decimals))
+    def format_price(self, chain_value: int) -> Decimal:
+        """Convert chain integer price to a human-readable ``Decimal``.
+
+        Returns a ``Decimal`` to preserve full chain precision; cast with
+        ``float(...)`` if a Python float is required (precision may be lost
+        for large or high-decimal markets).
+        """
+        return Decimal(chain_value) / (Decimal(10) ** self.quote.decimals)
 
     def scale_price(self, human_value: NumericInput) -> int:
         """Convert human-readable price to chain integer, truncated to max_precision."""
@@ -225,9 +230,14 @@ class Market:
         truncate_factor = 10 ** (self.quote.decimals - self.quote.max_precision)
         return int((scaled // truncate_factor) * truncate_factor)
 
-    def format_quantity(self, chain_value: int) -> float:
-        """Convert chain integer quantity to human-readable float."""
-        return float(chain_value / (10**self.base.decimals))
+    def format_quantity(self, chain_value: int) -> Decimal:
+        """Convert chain integer quantity to a human-readable ``Decimal``.
+
+        Returns a ``Decimal`` to preserve full chain precision; cast with
+        ``float(...)`` if a Python float is required (precision may be lost
+        for large or high-decimal markets).
+        """
+        return Decimal(chain_value) / (Decimal(10) ** self.base.decimals)
 
     def scale_quantity(self, human_value: NumericInput) -> int:
         """Convert human-readable quantity to chain integer, truncated to max_precision."""
@@ -285,12 +295,19 @@ class Market:
 
         Returns the largest quantity <= the input that satisfies
         (price * quantity) % 10^base_decimals == 0.
+
+        Valid quantities form an arithmetic progression with step
+        ``period = base_factor // gcd(price, base_factor)``; the largest such
+        value not exceeding ``quantity`` is ``(quantity // period) * period``.
+        Returns ``0`` when no positive multiple of ``period`` fits below
+        ``quantity`` (the caller must then raise the request to at least
+        ``period``).
         """
+        if price <= 0:
+            raise ValueError(f"price must be positive, got {price}")
         base_factor = 10**self.base.decimals
-        remainder = (price * quantity) % base_factor
-        if remainder == 0:
-            return quantity
-        return int(quantity - math.ceil(remainder / price))
+        period = base_factor // gcd(price, base_factor)
+        return int((quantity // period) * period)
 
 
 @dataclass

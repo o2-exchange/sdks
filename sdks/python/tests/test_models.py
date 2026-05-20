@@ -61,8 +61,24 @@ class TestMarket:
 
     def test_format_price(self):
         m = Market.from_dict(self.MARKET_JSON)
-        assert m.format_price(100000000) == 0.1
-        assert m.format_price(1000000000) == 1.0
+        # format_price returns a Decimal to preserve full chain precision.
+        assert m.format_price(100000000) == Decimal("0.1")
+        assert m.format_price(1000000000) == Decimal("1")
+        assert isinstance(m.format_price(100000000), Decimal)
+
+    def test_format_price_preserves_precision(self):
+        """Float return would silently round; Decimal must keep every digit."""
+        # 18-decimal chain value that exceeds float53 mantissa precision.
+        m18 = Market.from_dict(
+            {
+                **self.MARKET_JSON,
+                "quote": {**self.MARKET_JSON["quote"], "decimals": 18, "max_precision": 18},
+            }
+        )
+        chain_value = 1_234_567_890_123_456_789  # 19 significant digits
+        assert m18.format_price(chain_value) == Decimal("1.234567890123456789")
+        # Confirm a naive float round-trip would lose precision here.
+        assert int(float(chain_value) / 1e18 * 1e18) != chain_value
 
     def test_scale_price(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -74,7 +90,8 @@ class TestMarket:
 
     def test_format_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
-        assert m.format_quantity(5000000000) == 5.0
+        assert m.format_quantity(5000000000) == Decimal("5")
+        assert isinstance(m.format_quantity(5000000000), Decimal)
 
     def test_scale_quantity(self):
         m = Market.from_dict(self.MARKET_JSON)
@@ -129,11 +146,68 @@ class TestMarket:
             # Too small
             m.validate_order(100000000, 1000000000)
 
-    def test_adjust_quantity(self):
+    @staticmethod
+    def _assert_adjust_quantity_postcondition(
+        market: Market, price: int, quantity: int, adjusted: int
+    ) -> None:
+        from math import gcd
+
+        base_factor = 10**market.base.decimals
+        assert 0 <= adjusted <= quantity
+        assert (price * adjusted) % base_factor == 0
+        # No larger valid quantity exists in ``(adjusted, quantity]``.
+        period = base_factor // gcd(price, base_factor)
+        assert quantity - adjusted < period
+
+    def test_adjust_quantity_passthrough_when_valid(self):
         m = Market.from_dict(self.MARKET_JSON)
-        # If price * quantity is not divisible by 10^base_decimals
+        # Already a multiple of the period (price=10^8 ⇒ period=10).
         adjusted = m.adjust_quantity(100000000, 10000000000)
-        assert adjusted == 10000000000  # already valid
+        assert adjusted == 10000000000
+        self._assert_adjust_quantity_postcondition(m, 100000000, 10000000000, adjusted)
+
+    def test_adjust_quantity_walks_to_period_boundary(self):
+        """When ``price`` is not coprime to ``base_factor`` the largest valid
+        quantity is the greatest multiple of ``base_factor / gcd(price, base)``
+        below the input."""
+        m = Market.from_dict(self.MARKET_JSON)
+        # price=300, base_factor=10^9 ⇒ gcd=100, period=10^7.
+        # Largest multiple of 10^7 ≤ 12_345_678 is 10_000_000.
+        adjusted = m.adjust_quantity(300, 12_345_678)
+        assert adjusted == 10_000_000
+        self._assert_adjust_quantity_postcondition(m, 300, 12_345_678, adjusted)
+
+    def test_adjust_quantity_returns_zero_when_input_below_period(self):
+        """No positive quantity below ``period`` satisfies FractionalPrice; the
+        function returns 0 rather than the legacy off-by-one neighbour."""
+        m = Market.from_dict(self.MARKET_JSON)
+        # price=300 ⇒ period=10^7. quantity=3_333_334 is below the first multiple.
+        adjusted = m.adjust_quantity(300, 3_333_334)
+        assert adjusted == 0
+        self._assert_adjust_quantity_postcondition(m, 300, 3_333_334, adjusted)
+
+    def test_adjust_quantity_coprime_price_forces_zero(self):
+        """When ``price`` is coprime to ``base_factor`` (e.g. an odd price on an
+        18-decimal market) the period equals ``base_factor`` and any quantity
+        below it must be reduced to 0."""
+        m18 = Market.from_dict(
+            {
+                **self.MARKET_JSON,
+                "base": {**self.MARKET_JSON["base"], "decimals": 18, "max_precision": 18},
+            }
+        )
+        price = 12345678901234567  # odd, not divisible by 5 ⇒ gcd(price, 10^18) = 1
+        quantity = 702758491410958912
+        adjusted = m18.adjust_quantity(price, quantity)
+        assert adjusted == 0
+        self._assert_adjust_quantity_postcondition(m18, price, quantity, adjusted)
+
+    def test_adjust_quantity_rejects_non_positive_price(self):
+        import pytest
+
+        m = Market.from_dict(self.MARKET_JSON)
+        with pytest.raises(ValueError, match="price must be positive"):
+            m.adjust_quantity(0, 1)
 
 
 class TestMarketsResponse:
