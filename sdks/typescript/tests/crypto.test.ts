@@ -189,6 +189,20 @@ describe("Crypto Module", () => {
       expect(sig).toBe(callbackSig);
     });
 
+    it("ExternalSigner supports async digest callbacks", async () => {
+      const callbackSig = new Uint8Array(64).fill(0x6c);
+      const signDigest = vi.fn(async (_digest: Uint8Array) => callbackSig);
+      const signer = new ExternalSigner("0x1234", signDigest);
+      const message = new TextEncoder().encode("external fuel async");
+
+      const sig = await signer.personalSign(message);
+
+      expect(signer.b256Address).toBe("0x1234");
+      expect(signDigest).toHaveBeenCalledTimes(1);
+      expect(signDigest.mock.calls[0][0]).toEqual(fuelPersonalSignDigest(message));
+      expect(sig).toBe(callbackSig);
+    });
+
     it("ExternalEvmSigner computes EVM digest and delegates to callback", () => {
       const callbackSig = new Uint8Array(64).fill(0x7b);
       const signDigest = vi.fn((_digest: Uint8Array) => callbackSig);
@@ -196,6 +210,21 @@ describe("Crypto Module", () => {
       const message = new TextEncoder().encode("external evm");
 
       const sig = signer.personalSign(message);
+
+      expect(signer.b256Address).toBe("0x5678");
+      expect(signer.evmAddress).toBe("0xabcd");
+      expect(signDigest).toHaveBeenCalledTimes(1);
+      expect(signDigest.mock.calls[0][0]).toEqual(evmPersonalSignDigest(message));
+      expect(sig).toBe(callbackSig);
+    });
+
+    it("ExternalEvmSigner supports async digest callbacks", async () => {
+      const callbackSig = new Uint8Array(64).fill(0x8d);
+      const signDigest = vi.fn(async (_digest: Uint8Array) => callbackSig);
+      const signer = new ExternalEvmSigner("0x5678", "0xabcd", signDigest);
+      const message = new TextEncoder().encode("external evm async");
+
+      const sig = await signer.personalSign(message);
 
       expect(signer.b256Address).toBe("0x5678");
       expect(signer.evmAddress).toBe("0xabcd");

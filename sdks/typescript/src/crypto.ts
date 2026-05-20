@@ -74,7 +74,7 @@ export interface Signer {
    * @param message - The raw message bytes to sign.
    * @returns A 64-byte Fuel compact signature.
    */
-  personalSign(message: Uint8Array): Uint8Array;
+  personalSign(message: Uint8Array): Uint8Array | Promise<Uint8Array>;
 }
 
 /**
@@ -86,7 +86,9 @@ export interface Signer {
  * Use {@link toFuelCompactSignature} to convert standard `(r, s, recoveryId)`
  * components to the expected format.
  */
-export type SignDigestFn = (digest: Uint8Array) => Uint8Array;
+export type SignDigestSyncFn = (digest: Uint8Array) => Uint8Array;
+export type SignDigestAsyncFn = (digest: Uint8Array) => Promise<Uint8Array>;
+export type SignDigestFn = SignDigestSyncFn | SignDigestAsyncFn;
 
 /**
  * A Fuel-native secp256k1 wallet.
@@ -345,7 +347,7 @@ export class ExternalSigner implements Signer {
    * Computes `SHA-256("\x19Fuel Signed Message:\n" + len + message)` and
    * passes the 32-byte digest to the `signDigest` callback.
    */
-  personalSign(message: Uint8Array): Uint8Array {
+  personalSign(message: Uint8Array) {
     const digest = fuelPersonalSignDigest(message);
     return this.signDigest(digest);
   }
@@ -396,7 +398,7 @@ export class ExternalEvmSigner implements Signer {
    * Computes `keccak256("\x19Ethereum Signed Message:\n" + len + message)` and
    * passes the 32-byte digest to the `signDigest` callback.
    */
-  personalSign(message: Uint8Array): Uint8Array {
+  personalSign(message: Uint8Array) {
     const digest = evmPersonalSignDigest(message);
     return this.signDigest(digest);
   }

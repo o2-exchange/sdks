@@ -39,6 +39,7 @@ const MARKET: Market = {
     decimals: 9,
     max_precision: 9,
   },
+  pair: "",
 };
 
 const LOW_PRECISION_MARKET: Market = {
@@ -94,8 +95,20 @@ function decodeNonceFromSigningBytes(bytes: Uint8Array): bigint {
   return view.getBigUint64(0, false);
 }
 
-function makeSigner() {
+function withSyncSigner() {
   const personalSign = vi.fn((message: Uint8Array) => {
+    void message;
+    return new Uint8Array(64);
+  });
+  const signer: Signer = {
+    b256Address: OWNER,
+    personalSign,
+  };
+  return { signer, personalSign };
+}
+
+function withAsyncSigner() {
+  const personalSign = vi.fn(async (message: Uint8Array) => {
     void message;
     return new Uint8Array(64);
   });
@@ -118,178 +131,268 @@ function makeSession() {
   };
 }
 
-describe("O2Client nonce sourcing", () => {
-  it("createSession fetches nonce by tradeAccountId when owner lookup omits trade_account", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    const { signer, personalSign } = makeSigner();
+describe("O2Client sign paths", () => {
+  for (const makeSigner of [withSyncSigner, withAsyncSigner]) {
+    describe(makeSigner.name, () => {
+      describe("O2Client nonce sourcing", () => {
+        it("createSession fetches nonce by tradeAccountId when owner lookup omits trade_account", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer, personalSign } = makeSigner();
 
-    const ownerLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: null,
-      session: null,
-    };
-    const nonceLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: {
-        last_modification: 0,
-        nonce: 42n,
-        owner: { Address: OWNER },
-      },
-      session: null,
-    };
+          const ownerLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: null,
+            session: null,
+          };
+          const nonceLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: {
+              last_modification: 0,
+              nonce: 42n,
+              owner: { Address: OWNER },
+            },
+            session: null,
+          };
 
-    const getAccountSpy = vi
-      .spyOn(client.api, "getAccount")
-      .mockResolvedValueOnce(ownerLookup)
-      .mockResolvedValueOnce(nonceLookup);
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const createSessionSpy = vi
-      .spyOn(client.api, "createSession")
-      .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.createSession>>);
+          const getAccountSpy = vi
+            .spyOn(client.api, "getAccount")
+            .mockResolvedValueOnce(ownerLookup)
+            .mockResolvedValueOnce(nonceLookup);
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const createSessionSpy = vi
+            .spyOn(client.api, "createSession")
+            .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.createSession>>);
 
-    const session = await client.createSession(signer, [MARKET], 1);
+          const session = await client.createSession(signer, [MARKET], 1);
 
-    expect(getAccountSpy).toHaveBeenNthCalledWith(1, { owner: OWNER });
-    expect(getAccountSpy).toHaveBeenNthCalledWith(2, { tradeAccountId: TRADE_ACCOUNT_ID });
-    expect(createSessionSpy).toHaveBeenCalledWith(
-      OWNER,
-      expect.objectContaining({
-        contract_id: TRADE_ACCOUNT_ID,
-        contract_ids: [MARKET_CONTRACT_ID],
-        nonce: "42",
-      }),
-    );
-    expect(personalSign).toHaveBeenCalledTimes(1);
-    expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(42n);
-    expect(session.nonce).toBe(43n);
-  });
+          expect(getAccountSpy).toHaveBeenNthCalledWith(1, { owner: OWNER });
+          expect(getAccountSpy).toHaveBeenNthCalledWith(2, { tradeAccountId: TRADE_ACCOUNT_ID });
+          expect(createSessionSpy).toHaveBeenCalledWith(
+            OWNER,
+            expect.objectContaining({
+              contract_id: TRADE_ACCOUNT_ID,
+              contract_ids: [MARKET_CONTRACT_ID],
+              nonce: "42",
+            }),
+          );
+          expect(personalSign).toHaveBeenCalledTimes(1);
+          expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(42n);
+          expect(session.nonce).toBe(43n);
+        });
 
-  it("withdraw fetches nonce by tradeAccountId when owner lookup omits trade_account", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    const { signer, personalSign } = makeSigner();
+        it("withdraw fetches nonce by tradeAccountId when owner lookup omits trade_account", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer, personalSign } = makeSigner();
 
-    const ownerLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: null,
-      session: null,
-    };
-    const nonceLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: {
-        last_modification: 0,
-        nonce: 99n,
-        owner: { Address: OWNER },
-      },
-      session: null,
-    };
+          const ownerLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: null,
+            session: null,
+          };
+          const nonceLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: {
+              last_modification: 0,
+              nonce: 99n,
+              owner: { Address: OWNER },
+            },
+            session: null,
+          };
 
-    const getAccountSpy = vi
-      .spyOn(client.api, "getAccount")
-      .mockResolvedValueOnce(ownerLookup)
-      .mockResolvedValueOnce(nonceLookup);
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const withdrawSpy = vi
-      .spyOn(client.api, "withdraw")
-      .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.withdraw>>);
+          const getAccountSpy = vi
+            .spyOn(client.api, "getAccount")
+            .mockResolvedValueOnce(ownerLookup)
+            .mockResolvedValueOnce(nonceLookup);
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const withdrawSpy = vi
+            .spyOn(client.api, "withdraw")
+            .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.withdraw>>);
 
-    await client.withdraw(signer, BASE_ASSET_ID, 123n, DESTINATION);
+          await client.withdraw(signer, BASE_ASSET_ID, 123n, DESTINATION);
 
-    expect(getAccountSpy).toHaveBeenNthCalledWith(1, { owner: OWNER });
-    expect(getAccountSpy).toHaveBeenNthCalledWith(2, { tradeAccountId: TRADE_ACCOUNT_ID });
-    expect(withdrawSpy).toHaveBeenCalledWith(
-      OWNER,
-      expect.objectContaining({
-        trade_account_id: TRADE_ACCOUNT_ID,
-        nonce: "99",
-        to: { Address: DESTINATION },
-        asset_id: BASE_ASSET_ID,
-        amount: "123",
-      }),
-    );
-    expect(personalSign).toHaveBeenCalledTimes(1);
-    expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(99n);
-  });
+          expect(getAccountSpy).toHaveBeenNthCalledWith(1, { owner: OWNER });
+          expect(getAccountSpy).toHaveBeenNthCalledWith(2, { tradeAccountId: TRADE_ACCOUNT_ID });
+          expect(withdrawSpy).toHaveBeenCalledWith(
+            OWNER,
+            expect.objectContaining({
+              trade_account_id: TRADE_ACCOUNT_ID,
+              nonce: "99",
+              to: { Address: DESTINATION },
+              asset_id: BASE_ASSET_ID,
+              amount: "123",
+            }),
+          );
+          expect(personalSign).toHaveBeenCalledTimes(1);
+          expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(99n);
+        });
 
-  it("withdraw resolves mixed-case asset IDs and scales string amounts", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    const { signer, personalSign } = makeSigner();
+        it("withdraw resolves mixed-case asset IDs and scales string amounts", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer, personalSign } = makeSigner();
 
-    const ownerLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: null,
-      session: null,
-    };
-    const nonceLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: {
-        last_modification: 0,
-        nonce: 7n,
-        owner: { Address: OWNER },
-      },
-      session: null,
-    };
+          const ownerLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: null,
+            session: null,
+          };
+          const nonceLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: {
+              last_modification: 0,
+              nonce: 7n,
+              owner: { Address: OWNER },
+            },
+            session: null,
+          };
 
-    vi.spyOn(client.api, "getAccount")
-      .mockResolvedValueOnce(ownerLookup)
-      .mockResolvedValueOnce(nonceLookup);
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const withdrawSpy = vi
-      .spyOn(client.api, "withdraw")
-      .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.withdraw>>);
+          vi.spyOn(client.api, "getAccount")
+            .mockResolvedValueOnce(ownerLookup)
+            .mockResolvedValueOnce(nonceLookup);
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const withdrawSpy = vi
+            .spyOn(client.api, "withdraw")
+            .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.withdraw>>);
 
-    const uppercaseAssetId = `0x${BASE_ASSET_ID.slice(2).toUpperCase()}`;
-    await client.withdraw(signer, uppercaseAssetId, "1.25", DESTINATION);
+          const uppercaseAssetId = `0x${BASE_ASSET_ID.slice(2).toUpperCase()}`;
+          await client.withdraw(signer, uppercaseAssetId, "1.25", DESTINATION);
 
-    expect(withdrawSpy).toHaveBeenCalledWith(
-      OWNER,
-      expect.objectContaining({
-        trade_account_id: TRADE_ACCOUNT_ID,
-        nonce: "7",
-        to: { Address: DESTINATION },
-        asset_id: BASE_ASSET_ID,
-        amount: "1250000000",
-      }),
-    );
-    expect(personalSign).toHaveBeenCalledTimes(1);
-    expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(7n);
-  });
-});
+          expect(withdrawSpy).toHaveBeenCalledWith(
+            OWNER,
+            expect.objectContaining({
+              trade_account_id: TRADE_ACCOUNT_ID,
+              nonce: "7",
+              to: { Address: DESTINATION },
+              asset_id: BASE_ASSET_ID,
+              amount: "1250000000",
+            }),
+          );
+          expect(personalSign).toHaveBeenCalledTimes(1);
+          expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(7n);
+        });
+      });
 
-describe("O2Client faucet top-up", () => {
-  it("topUpFromFaucet resolves trade account by owner and mints to contract", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    const { signer } = makeSigner();
+      describe("O2Client faucet top-up", () => {
+        it("topUpFromFaucet resolves trade account by owner and mints to contract", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer } = makeSigner();
 
-    vi.spyOn(client.api, "getAccount").mockResolvedValue({
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: null,
-      session: null,
+          vi.spyOn(client.api, "getAccount").mockResolvedValue({
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: null,
+            session: null,
+          });
+          const mintSpy = vi.spyOn(client.api, "mintToContract").mockResolvedValue({
+            message: "Minted test assets to contract",
+          });
+
+          const res = await client.topUpFromFaucet(signer);
+
+          expect(res.error).toBeUndefined();
+          expect(res.message).toBeTruthy();
+          expect(mintSpy).toHaveBeenCalledWith(TRADE_ACCOUNT_ID);
+        });
+
+        it("topUpFromFaucet throws when no trade account exists for owner", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer } = makeSigner();
+
+          vi.spyOn(client.api, "getAccount").mockResolvedValue({
+            trade_account_id: undefined,
+            trade_account: null,
+            session: null,
+          } as unknown as AccountInfo);
+          const mintSpy = vi.spyOn(client.api, "mintToContract");
+
+          await expect(client.topUpFromFaucet(signer)).rejects.toThrow("Call setupAccount() first");
+          expect(mintSpy).not.toHaveBeenCalled();
+        });
+      });
+
+      describe("O2Client runtime numeric guards", () => {
+        it("createOrder rejects JS number price with a controlled O2Error", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          client.setSession(makeSession());
+
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+          await expect(client.createOrder("fFUEL/fUSDC", "buy", 1 as any, "1")).rejects.toThrow(
+            "Invalid price type: expected string or bigint, got number",
+          );
+          expect(submitActionsSpy).not.toHaveBeenCalled();
+        });
+
+        it("batchActions rejects JS number action quantity with a controlled O2Error", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          client.setSession(makeSession());
+
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+          await expect(
+            client.batchActions([
+              {
+                market: "fFUEL/fUSDC",
+                actions: [{ type: "createOrder", side: "buy", price: "1", quantity: 1 as any }],
+              },
+            ]),
+          ).rejects.toThrow("Invalid action.quantity type: expected string or bigint, got number");
+          expect(submitActionsSpy).not.toHaveBeenCalled();
+        });
+
+        it("createOrder rejects JS number orderType price with a controlled O2Error", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          client.setSession(makeSession());
+
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+          await expect(
+            client.createOrder("fFUEL/fUSDC", "buy", "1", "1", {
+              orderType: {
+                BoundedMarket: { max_price: 1 as any, min_price: "0" },
+              },
+            }),
+          ).rejects.toThrow(
+            "Invalid orderType.BoundedMarket.max_price type: expected string or bigint",
+          );
+          expect(submitActionsSpy).not.toHaveBeenCalled();
+        });
+
+        it("withdraw rejects JS number amount with a controlled O2Error", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer, personalSign } = makeSigner();
+
+          const ownerLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: null,
+            session: null,
+          };
+          const nonceLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: {
+              last_modification: 0,
+              nonce: 5n,
+              owner: { Address: OWNER },
+            },
+            session: null,
+          };
+
+          vi.spyOn(client.api, "getAccount")
+            .mockResolvedValueOnce(ownerLookup)
+            .mockResolvedValueOnce(nonceLookup);
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const withdrawSpy = vi.spyOn(client.api, "withdraw");
+
+          await expect(client.withdraw(signer, "fFUEL", 1 as any)).rejects.toThrow(
+            "Invalid amount type: expected string or bigint, got number",
+          );
+          expect(withdrawSpy).not.toHaveBeenCalled();
+          expect(personalSign).not.toHaveBeenCalled();
+        });
+      });
     });
-    const mintSpy = vi.spyOn(client.api, "mintToContract").mockResolvedValue({
-      message: "Minted test assets to contract",
-    });
-
-    const res = await client.topUpFromFaucet(signer);
-
-    expect(res.error).toBeUndefined();
-    expect(res.message).toBeTruthy();
-    expect(mintSpy).toHaveBeenCalledWith(TRADE_ACCOUNT_ID);
-  });
-
-  it("topUpFromFaucet throws when no trade account exists for owner", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    const { signer } = makeSigner();
-
-    vi.spyOn(client.api, "getAccount").mockResolvedValue({
-      trade_account_id: undefined,
-      trade_account: null,
-      session: null,
-    } as unknown as AccountInfo);
-    const mintSpy = vi.spyOn(client.api, "mintToContract");
-
-    await expect(client.topUpFromFaucet(signer)).rejects.toThrow("Call setupAccount() first");
-    expect(mintSpy).not.toHaveBeenCalled();
-  });
+  }
 });
 
 describe("O2Client bigint precision", () => {
@@ -428,88 +531,6 @@ describe("O2Client fractional price adjustment", () => {
         ],
       }),
     );
-  });
-});
-
-describe("O2Client runtime numeric guards", () => {
-  it("createOrder rejects JS number price with a controlled O2Error", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    client.setSession(makeSession());
-
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
-
-    await expect(client.createOrder("fFUEL/fUSDC", "buy", 1 as any, "1")).rejects.toThrow(
-      "Invalid price type: expected string or bigint, got number",
-    );
-    expect(submitActionsSpy).not.toHaveBeenCalled();
-  });
-
-  it("batchActions rejects JS number action quantity with a controlled O2Error", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    client.setSession(makeSession());
-
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
-
-    await expect(
-      client.batchActions([
-        {
-          market: "fFUEL/fUSDC",
-          actions: [{ type: "createOrder", side: "buy", price: "1", quantity: 1 as any }],
-        },
-      ]),
-    ).rejects.toThrow("Invalid action.quantity type: expected string or bigint, got number");
-    expect(submitActionsSpy).not.toHaveBeenCalled();
-  });
-
-  it("createOrder rejects JS number orderType price with a controlled O2Error", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    client.setSession(makeSession());
-
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
-
-    await expect(
-      client.createOrder("fFUEL/fUSDC", "buy", "1", "1", {
-        orderType: {
-          BoundedMarket: { max_price: 1 as any, min_price: "0" },
-        },
-      }),
-    ).rejects.toThrow("Invalid orderType.BoundedMarket.max_price type: expected string or bigint");
-    expect(submitActionsSpy).not.toHaveBeenCalled();
-  });
-
-  it("withdraw rejects JS number amount with a controlled O2Error", async () => {
-    const client = new O2Client({ network: Network.TESTNET });
-    const { signer, personalSign } = makeSigner();
-
-    const ownerLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: null,
-      session: null,
-    };
-    const nonceLookup: AccountInfo = {
-      trade_account_id: TRADE_ACCOUNT_ID,
-      trade_account: {
-        last_modification: 0,
-        nonce: 5n,
-        owner: { Address: OWNER },
-      },
-      session: null,
-    };
-
-    vi.spyOn(client.api, "getAccount")
-      .mockResolvedValueOnce(ownerLookup)
-      .mockResolvedValueOnce(nonceLookup);
-    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
-    const withdrawSpy = vi.spyOn(client.api, "withdraw");
-
-    await expect(client.withdraw(signer, "fFUEL", 1 as any)).rejects.toThrow(
-      "Invalid amount type: expected string or bigint, got number",
-    );
-    expect(withdrawSpy).not.toHaveBeenCalled();
-    expect(personalSign).not.toHaveBeenCalled();
   });
 });
 
