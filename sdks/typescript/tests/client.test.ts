@@ -39,6 +39,7 @@ const MARKET: Market = {
     decimals: 9,
     max_precision: 9,
   },
+  pair: ""
 };
 
 const LOW_PRECISION_MARKET: Market = {

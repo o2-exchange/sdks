@@ -464,7 +464,7 @@ export class O2Client {
     );
 
     // Sign with owner wallet
-    const signature = wallet.personalSign(signingBytes);
+    const signature = await wallet.personalSign(signingBytes);
 
     // Submit
     await this.api.createSession(wallet.b256Address, {
@@ -1035,7 +1035,7 @@ export class O2Client {
       scaledAmount,
     );
 
-    const signature = wallet.personalSign(signingBytes);
+    const signature = await wallet.personalSign(signingBytes);
 
     return this.api.withdraw(wallet.b256Address, {
       trade_account_id: tradeAccountId,

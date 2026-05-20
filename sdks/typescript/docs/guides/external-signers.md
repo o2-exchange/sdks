@@ -27,7 +27,7 @@ Client methods (`createSession`, `setupAccount`, `withdraw`) accept any
 ```ts
 interface Signer {
   readonly b256Address: string;
-  personalSign(message: Uint8Array): Uint8Array;
+  personalSign(message: Uint8Array): Uint8Array | Promise<Uint8Array>;
 }
 ```
 
@@ -37,7 +37,8 @@ The built-in `WalletState` (returned by `O2Client.generateWallet()`,
 ## Fuel-Native External Signer
 
 For Fuel-native accounts, use `ExternalSigner`. The SDK handles the Fuel
-`personalSign` message framing; your callback only signs a 32-byte digest:
+`personalSign` message framing; your callback only signs a 32-byte digest
+and may return either a signature directly or a promise of one:
 
 ```ts
 import {
@@ -47,8 +48,8 @@ import {
 } from "@o2exchange/sdk";
 import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
-function myKmsSign(digest: Uint8Array): Uint8Array {
-  const { r, s, recoveryId } = myKms.sign("my-key-id", digest);
+async function myKmsSign(digest: Uint8Array): Promise<Uint8Array> {
+  const { r, s, recoveryId } = await myKms.sign("my-key-id", digest);
   return toFuelCompactSignature(r, s, recoveryId);
 }
 
@@ -88,14 +89,14 @@ await client.createSession(signer, ["FUEL/USDC"]);
 
 ## Implementing the Callback
 
-The `SignDigestFn` callback must return a **64-byte Fuel compact signature**.
-Use `toFuelCompactSignature` to convert from standard `(r, s, recoveryId)`
-components:
+The `SignDigestFn` callback must return a **64-byte Fuel compact signature**
+or a promise of one. Use `toFuelCompactSignature` to convert from standard
+`(r, s, recoveryId)` components:
 
 ```ts
 import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
-function signDigest(digest: Uint8Array): Uint8Array {
+function signDigest(digest: Uint8Array): Uint8Array | Promise<Uint8Array> {
   const r: Uint8Array = ...;   // 32 bytes
   const s: Uint8Array = ...;   // 32 bytes (must be low-s normalized)
   const v: number     = ...;   // 0 or 1
@@ -125,7 +126,7 @@ import { toFuelCompactSignature } from "@o2exchange/sdk/internals";
 
 const kms = new KMSClient({ region: "us-east-1" });
 
-function awsKmsSign(digest: Uint8Array): Uint8Array {
+async function awsKmsSign(digest: Uint8Array): Promise<Uint8Array> {
   const command = new SignCommand({
     KeyId: "alias/my-trading-key",
     Message: digest,
@@ -133,7 +134,7 @@ function awsKmsSign(digest: Uint8Array): Uint8Array {
     SigningAlgorithm: "ECDSA_SHA_256",
   });
 
-  const response = kms.send(command);
+  const response = await kms.send(command);
   const { r, s, recoveryId } = parseDerSignature(response.Signature);
   return toFuelCompactSignature(r, s, recoveryId);
 }
@@ -159,7 +160,7 @@ class MyCustomSigner implements Signer {
     this.b256Address = address;
   }
 
-  personalSign(message: Uint8Array): Uint8Array {
+  personalSign(message: Uint8Array): Uint8Array | Promise<Uint8Array> {
     const digest = fuelPersonalSignDigest(message);
     return myBackendSign(digest);
   }
