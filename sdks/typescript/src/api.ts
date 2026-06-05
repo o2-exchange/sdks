@@ -85,11 +85,11 @@ export interface O2ApiOptions {
  * ```
  */
 export class O2Api {
-  private readonly baseUrl: string;
-  private readonly faucetUrl: string | null;
-  private readonly maxRetries: number;
-  private readonly retryDelayMs: number;
-  private readonly timeoutMs: number;
+  protected readonly baseUrl: string;
+  protected readonly faucetUrl: string | null;
+  protected readonly maxRetries: number;
+  protected readonly retryDelayMs: number;
+  protected readonly timeoutMs: number;
 
   constructor(options: O2ApiOptions) {
     this.baseUrl = options.config.apiBase;
@@ -101,7 +101,7 @@ export class O2Api {
 
   // ── Internal HTTP helpers ───────────────────────────────────────
 
-  private async request<T>(
+  protected async request<T>(
     method: string,
     path: string,
     options: {
@@ -167,7 +167,7 @@ export class O2Api {
     throw lastError ?? new Error("Request failed after retries");
   }
 
-  private async get<T>(
+  protected async get<T>(
     path: string,
     query?: Record<string, string | number | boolean | undefined>,
     headers?: Record<string, string>,
@@ -175,11 +175,19 @@ export class O2Api {
     return this.request<T>("GET", path, { query, headers });
   }
 
-  private async post<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
+  protected async post<T>(
+    path: string,
+    body: unknown,
+    headers?: Record<string, string>,
+  ): Promise<T> {
     return this.request<T>("POST", path, { body, headers });
   }
 
-  private async put<T>(path: string, body: unknown, headers?: Record<string, string>): Promise<T> {
+  protected async put<T>(
+    path: string,
+    body: unknown,
+    headers?: Record<string, string>,
+  ): Promise<T> {
     return this.request<T>("PUT", path, { body, headers });
   }
 

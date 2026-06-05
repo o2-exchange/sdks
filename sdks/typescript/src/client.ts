@@ -227,14 +227,14 @@ function validateDepthPrecision(precision: number | string): void {
 export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
-  private wsClient: O2WebSocket | null = null;
-  private readonly config: NetworkConfig;
-  private marketsCache: MarketsResponse | null = null;
-  private marketsCacheTime = 0;
-  private marketsRefreshPromise: Promise<MarketsResponse> | null = null;
-  private readonly marketsCacheTtlMs: number;
-  private readonly webSocketFactory?: (url: string) => WebSocket;
-  private _session: SessionState | null = null;
+  protected wsClient: O2WebSocket | null = null;
+  protected readonly config: NetworkConfig;
+  protected marketsCache: MarketsResponse | null = null;
+  protected marketsCacheTime = 0;
+  protected marketsRefreshPromise: Promise<MarketsResponse> | null = null;
+  protected readonly marketsCacheTtlMs: number;
+  protected readonly webSocketFactory?: (url: string) => WebSocket;
+  protected _session: SessionState | null = null;
 
   constructor(optionsOrNetwork: O2ClientOptions | Network = {}) {
     const options: O2ClientOptions =
@@ -256,7 +256,7 @@ export class O2Client {
   }
 
   /** Returns the stored session or throws if none exists. */
-  private ensureSession(): SessionState {
+  protected ensureSession(): SessionState {
     if (!this._session) {
       throw new O2Error(
         "No active session. Call createSession() to create a new session, " +
@@ -850,7 +850,7 @@ export class O2Client {
 
   // ── WebSocket streaming ─────────────────────────────────────────
 
-  private async ensureWs(): Promise<O2WebSocket> {
+  protected async ensureWs(): Promise<O2WebSocket> {
     if (this.wsClient?.isTerminated()) {
       this.wsClient = null;
     }
@@ -1077,7 +1077,7 @@ export class O2Client {
 
   // ── Internal helpers ────────────────────────────────────────────
 
-  private async fetchMarkets(): Promise<MarketsResponse> {
+  protected async fetchMarkets(): Promise<MarketsResponse> {
     const now = Date.now();
     if (this.marketsCache && now - this.marketsCacheTime < this.marketsCacheTtlMs) {
       return this.marketsCache;
@@ -1106,7 +1106,7 @@ export class O2Client {
     return this.marketsCache;
   }
 
-  private resolveMarket(data: MarketsResponse, symbolPair: string): Market {
+  protected resolveMarket(data: MarketsResponse, symbolPair: string): Market {
     // Accept hex market_id
     if (symbolPair.startsWith("0x")) {
       const found = data.markets.find((m) => m.market_id === symbolPair);
@@ -1141,7 +1141,7 @@ export class O2Client {
   }
 
   /** Resolve an asset by symbol name or hex asset ID. */
-  private resolveAsset(
+  protected resolveAsset(
     data: MarketsResponse,
     symbolOrId: string,
   ): { assetId: AssetId; decimals: number | undefined } {
@@ -1179,7 +1179,7 @@ export class O2Client {
    * Bigint prices are treated as already-scaled chain integers.
    * They must still align to `max_precision` to avoid on-chain rejects.
    */
-  private ensureBigIntPricePrecision(price: bigint, market: Market): void {
+  protected ensureBigIntPricePrecision(price: bigint, market: Market): void {
     const precisionDelta = market.quote.decimals - market.quote.max_precision;
     const priceStep = precisionDelta <= 0 ? 1n : BigInt(10 ** precisionDelta);
     if (price % priceStep !== 0n) {
@@ -1246,7 +1246,7 @@ export class O2Client {
   }
 
   /** Convert a type-safe Action to the wire-format ActionPayload. */
-  private actionToPayload(action: Action, market: Market): ActionPayload {
+  protected actionToPayload(action: Action, market: Market): ActionPayload {
     const session = this.ensureSession();
     switch (action.type) {
       case "createOrder": {
@@ -1284,7 +1284,7 @@ export class O2Client {
    * Internal batch submission. Handles encoding, signing, nonce management.
    * The session nonce is updated in-place after each call.
    */
-  private async submitBatch(
+  protected async submitBatch(
     marketActions: MarketActions[],
     collectOrders = false,
   ): Promise<SessionActionsResponse> {
