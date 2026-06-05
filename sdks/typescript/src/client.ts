@@ -194,6 +194,8 @@ export interface CreateOrderOptions {
   settleFirst?: boolean;
   /** Whether to return order details in response (default: `true`). */
   collectOrders?: boolean;
+  /** Explicit session to use for this order. Defaults to the client's active session. */
+  session?: SessionState;
 }
 
 /**
@@ -228,7 +230,8 @@ export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
   protected wsClient: O2WebSocket | null = null;
-  protected readonly config: NetworkConfig;
+  /** Network endpoint and contract configuration used by this client. */
+  public readonly config: NetworkConfig;
   protected marketsCache: MarketsResponse | null = null;
   protected marketsCacheTime = 0;
   protected marketsRefreshPromise: Promise<MarketsResponse> | null = null;
@@ -253,6 +256,11 @@ export class O2Client {
   /** Restore a pre-existing session (e.g., from serialized state). */
   setSession(session: SessionState): void {
     this._session = session;
+  }
+
+  /** Clear the active session. */
+  clearSession(): void {
+    this._session = null;
   }
 
   /** Returns the stored session or throws if none exists. */
@@ -512,7 +520,7 @@ export class O2Client {
     quantity: Numeric,
     options?: CreateOrderOptions,
   ): Promise<SessionActionsResponse> {
-    const session = this.ensureSession();
+    const session = options?.session ?? this.ensureSession();
     const orderType = options?.orderType ?? "Spot";
     const settleFirst = options?.settleFirst ?? true;
     const collectOrders = options?.collectOrders ?? true;
@@ -547,34 +555,45 @@ export class O2Client {
       },
     });
 
-    return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders);
+    return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
   }
 
   /** Cancel an order. The session nonce is updated in-place. */
-  async cancelOrder(orderId: OrderId, market: MarketRef): Promise<SessionActionsResponse> {
-    this.ensureSession();
+  async cancelOrder(
+    orderId: OrderId,
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    return this.submitBatch([
-      {
-        market_id: resolved.market_id,
-        actions: [{ CancelOrder: { order_id: orderId } }],
-      },
-    ]);
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [{ CancelOrder: { order_id: orderId } }],
+        },
+      ],
+      false,
+      activeSession,
+    );
   }
 
   /**
    * Cancel all open orders for a market. Returns one result per chunk, or null if no orders.
    */
-  async cancelAllOrders(market: MarketRef): Promise<SessionActionsResponse[] | null> {
-    const session = this.ensureSession();
+  async cancelAllOrders(
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse[] | null> {
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
     const orders = await this.api.getOrders(
       resolved.market_id,
-      session.tradeAccountId,
+      activeSession.tradeAccountId,
       "desc",
       200,
       true,
@@ -591,9 +610,11 @@ export class O2Client {
         CancelOrder: { order_id: o.order_id },
       }));
 
-      const result = await this.submitBatch([
-        { market_id: resolved.market_id, actions: cancelActions },
-      ]);
+      const result = await this.submitBatch(
+        [{ market_id: resolved.market_id, actions: cancelActions }],
+        false,
+        activeSession,
+      );
       results.push(result);
     }
 
@@ -601,23 +622,27 @@ export class O2Client {
   }
 
   /** Settle balance for a market. The session nonce is updated in-place. */
-  async settleBalance(market: MarketRef): Promise<SessionActionsResponse> {
-    const session = this.ensureSession();
+  async settleBalance(market: MarketRef, session?: SessionState): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    return this.submitBatch([
-      {
-        market_id: resolved.market_id,
-        actions: [
-          {
-            SettleBalance: {
-              to: { ContractId: session.tradeAccountId },
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            {
+              SettleBalance: {
+                to: { ContractId: activeSession.tradeAccountId },
+              },
             },
-          },
-        ],
-      },
-    ]);
+          ],
+        },
+      ],
+      false,
+      activeSession,
+    );
   }
 
   /**
@@ -632,6 +657,7 @@ export class O2Client {
    *
    * @param marketActions - Groups of actions per market.
    * @param collectOrders - Whether to return order details in response (default: `false`).
+   * @param session - Explicit session to use. Defaults to the client's active session.
    *
    * @example
    * ```ts
@@ -647,19 +673,23 @@ export class O2Client {
   async batchActions(
     marketActions: MarketActionGroup[],
     collectOrders = false,
+    session?: SessionState,
   ): Promise<SessionActionsResponse> {
-    this.ensureSession();
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
 
     // Convert type-safe actions to wire format
     const wireGroups: MarketActions[] = [];
 
     for (const group of marketActions) {
-      const resolved = this.resolveMarket(marketsData, group.market);
+      const resolved =
+        typeof group.market === "string"
+          ? this.resolveMarket(marketsData, group.market)
+          : group.market;
 
       const wireActions: ActionPayload[] = [];
       for (const action of group.actions) {
-        wireActions.push(this.actionToPayload(action, resolved));
+        wireActions.push(this.actionToPayload(action, resolved, activeSession));
       }
 
       wireGroups.push({
@@ -672,7 +702,7 @@ export class O2Client {
       throw new O2Error("No market actions provided");
     }
 
-    return this.submitBatch(wireGroups, collectOrders);
+    return this.submitBatch(wireGroups, collectOrders, activeSession);
   }
 
   // ── Market data ─────────────────────────────────────────────────
@@ -1060,18 +1090,19 @@ export class O2Client {
   }
 
   /**
-   * Re-fetch the nonce from the API and update the stored session state.
+   * Re-fetch the nonce from the API and update a session state.
    *
    * @remarks
    * Call this after errors to re-sync the nonce (it increments on-chain
    * even on reverts).
    *
+   * @param session - Explicit session to refresh. Defaults to the client's active session.
    * @returns The fresh nonce value.
    */
-  async refreshNonce(): Promise<bigint> {
-    const session = this.ensureSession();
-    const nonce = await this.getNonce(session.tradeAccountId);
-    session.nonce = nonce;
+  async refreshNonce(session?: SessionState): Promise<bigint> {
+    const activeSession = session ?? this.ensureSession();
+    const nonce = await this.getNonce(activeSession.tradeAccountId);
+    activeSession.nonce = nonce;
     return nonce;
   }
 
@@ -1246,8 +1277,8 @@ export class O2Client {
   }
 
   /** Convert a type-safe Action to the wire-format ActionPayload. */
-  protected actionToPayload(action: Action, market: Market): ActionPayload {
-    const session = this.ensureSession();
+  protected actionToPayload(action: Action, market: Market, session?: SessionState): ActionPayload {
+    const activeSession = session ?? this.ensureSession();
     switch (action.type) {
       case "createOrder": {
         const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
@@ -1272,7 +1303,7 @@ export class O2Client {
       case "settleBalance":
         return {
           SettleBalance: {
-            to: { ContractId: session.tradeAccountId },
+            to: { ContractId: activeSession.tradeAccountId },
           },
         };
       case "registerReferer":
@@ -1282,15 +1313,16 @@ export class O2Client {
 
   /**
    * Internal batch submission. Handles encoding, signing, nonce management.
-   * The session nonce is updated in-place after each call.
+   * The selected session nonce is updated in-place after each call.
    */
   protected async submitBatch(
     marketActions: MarketActions[],
     collectOrders = false,
+    session?: SessionState,
   ): Promise<SessionActionsResponse> {
-    const session = this.ensureSession();
+    const activeSession = session ?? this.ensureSession();
     // Check session expiry before submitting on-chain
-    if (session.expiry > 0 && Math.floor(Date.now() / 1000) >= session.expiry) {
+    if (activeSession.expiry > 0 && Math.floor(Date.now() / 1000) >= activeSession.expiry) {
       throw new SessionExpired();
     }
 
@@ -1307,34 +1339,34 @@ export class O2Client {
     }
 
     // Build signing bytes and sign
-    const signingBytes = buildActionsSigningBytes(session.nonce, calls);
-    const signature = rawSign(session.sessionPrivateKey, signingBytes);
+    const signingBytes = buildActionsSigningBytes(activeSession.nonce, calls);
+    const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
     try {
-      const response = await this.api.submitActions(session.ownerAddress, {
+      const response = await this.api.submitActions(activeSession.ownerAddress, {
         actions: marketActions,
         signature: { Secp256k1: bytesToHex(signature) },
-        nonce: session.nonce.toString(),
-        trade_account_id: session.tradeAccountId,
-        session_id: { Address: session.sessionAddress },
+        nonce: activeSession.nonce.toString(),
+        trade_account_id: activeSession.tradeAccountId,
+        session_id: { Address: activeSession.sessionAddress },
         collect_orders: collectOrders,
       });
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {
-        session.nonce += 1n;
+        activeSession.nonce += 1n;
       }
       return response;
     } catch (error) {
       // Nonce increments on-chain even on revert
-      session.nonce += 1n;
+      activeSession.nonce += 1n;
       // Re-fetch nonce on error for resync
       try {
         const info = await this.api.getAccount({
-          tradeAccountId: session.tradeAccountId,
+          tradeAccountId: activeSession.tradeAccountId,
         });
         if (info.trade_account) {
-          session.nonce = info.trade_account.nonce;
+          activeSession.nonce = info.trade_account.nonce;
         }
       } catch (_e: unknown) {
         // If re-fetch fails, keep incremented nonce

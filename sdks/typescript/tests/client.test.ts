@@ -8,6 +8,7 @@ import {
   type Market,
   type MarketsResponse,
   marketId,
+  orderId,
   tradeAccountId,
 } from "../src/models.js";
 
@@ -393,6 +394,92 @@ describe("O2Client sign paths", () => {
       });
     });
   }
+});
+
+describe("O2Client management", () => {
+  it("clearSession removes the active session", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const session = makeSession();
+
+    client.setSession(session);
+    expect(client.session).toBe(session);
+
+    client.clearSession();
+    expect(client.session).toBeNull();
+    await expect(client.refreshNonce()).rejects.toThrow("No active session");
+  });
+
+  it("createOrder can use an explicit session without setting an active session", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const session = {
+      ...makeSession(),
+      ownerAddress: `0x${"ab".repeat(32)}`,
+      tradeAccountId: tradeAccountId(`0x${"bc".repeat(32)}`),
+      sessionAddress: `0x${"cd".repeat(32)}`,
+      sessionPrivateKey: new Uint8Array(32).fill(2),
+      nonce: 11n,
+    };
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"dd".repeat(32)}`,
+    } as never);
+
+    await expect(client.createOrder(MARKET, "buy", "1", "1", { session })).resolves.toBeTruthy();
+
+    expect(client.session).toBeNull();
+    expect(session.nonce).toBe(12n);
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      session.ownerAddress,
+      expect.objectContaining({
+        nonce: "11",
+        trade_account_id: session.tradeAccountId,
+        session_id: { Address: session.sessionAddress },
+      }),
+    );
+  });
+
+  it("batchActions accepts a Market object and explicit session", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    const session = {
+      ...makeSession(),
+      tradeAccountId: tradeAccountId(`0x${"de".repeat(32)}`),
+      nonce: 21n,
+    };
+
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"ef".repeat(32)}`,
+    } as never);
+
+    await expect(
+      client.batchActions(
+        [
+          {
+            market: MARKET,
+            actions: [{ type: "cancelOrder", orderId: orderId(`0x${"fa".repeat(32)}`) }],
+          },
+        ],
+        false,
+        session,
+      ),
+    ).resolves.toBeTruthy();
+
+    expect(session.nonce).toBe(22n);
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      session.ownerAddress,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET.market_id,
+            actions: [{ CancelOrder: { order_id: `0x${"fa".repeat(32)}` } }],
+          },
+        ],
+        nonce: "21",
+        trade_account_id: session.tradeAccountId,
+      }),
+    );
+  });
 });
 
 describe("O2Client bigint precision", () => {

@@ -34,13 +34,14 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `O2Client.loadEvmWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load EVM wallet from hex |
 | `session` | — | `SessionState \| null` | Getter: the currently active session |
 | `setSession(session)` | `SessionState` | `void` | Restore a serialized session |
+| `clearSession()` | — | `void` | Clear the active session |
 | `setupAccount(wallet)` | `Signer` | `{ tradeAccountId, nonce }` | Idempotent account setup |
 | `createSession(wallet, markets, expiryDays?)` | `Signer`, market list, days | `SessionState` | Create and store trading session |
-| `createOrder(market, side, price, quantity, options?)` | market, `"buy"\|"sell"`, `Numeric`, `Numeric`, options | `SessionActionsResponse` | Place order (nonce auto-managed) |
-| `cancelOrder(orderId, market)` | orderId, market | `SessionActionsResponse` | Cancel an order |
-| `cancelAllOrders(market)` | market | `SessionActionsResponse[] \| null` | Cancel all open orders |
-| `settleBalance(market)` | market | `SessionActionsResponse` | Settle filled balances |
-| `batchActions(marketActions, collectOrders?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
+| `createOrder(market, side, price, quantity, options?)` | market, `"buy"\|"sell"`, `Numeric`, `Numeric`, options incl. `session?` | `SessionActionsResponse` | Place order (nonce auto-managed) |
+| `cancelOrder(orderId, market, session?)` | orderId, market, session? | `SessionActionsResponse` | Cancel an order |
+| `cancelAllOrders(market, session?)` | market, session? | `SessionActionsResponse[] \| null` | Cancel all open orders |
+| `settleBalance(market, session?)` | market, session? | `SessionActionsResponse` | Settle filled balances |
+| `batchActions(marketActions, collectOrders?, session?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
 | `getMarkets()` | — | `Market[]` | Fetch all markets |
 | `getMarket(pair)` | `"FUEL/USDC"` | `Market` | Resolve market by pair |
 | `getDepth(market, precision?)` | market, precision | `DepthSnapshot` | Get order book depth |
@@ -56,7 +57,7 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `streamBalances(tradeAccountId)` | id | `AsyncGenerator<BalanceUpdate>` | Stream balances |
 | `streamNonce(tradeAccountId)` | id | `AsyncGenerator<NonceUpdate>` | Stream nonce updates |
 | `getNonce(tradeAccountId)` | id | `bigint` | Fetch current nonce |
-| `refreshNonce()` | — | `bigint` | Re-fetch nonce and update stored session |
+| `refreshNonce(session?)` | session? | `bigint` | Re-fetch nonce and update a session |
 | `withdraw(wallet, asset, amount, to?)` | owner signer, symbol/assetId, `Numeric`, address? | `WithdrawResponse` | Withdraw funds |
 | `disconnectWs()` | — | `void` | Close WebSocket connection |
 | `close()` | — | `void` | Close all resources (WebSocket + cache) |

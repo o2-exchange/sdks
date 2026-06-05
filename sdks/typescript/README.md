@@ -147,19 +147,19 @@ Identifier usage:
 | `O2Client.generateEvmWallet()` / `O2Client.loadEvmWallet(hex)` | Create or load an EVM wallet |
 | `setupAccount(wallet)` | Idempotent account setup |
 | `topUpFromFaucet(wallet)` | Explicit faucet top-up to the wallet's trading account (testnet/devnet) |
-| `setSession(session)` | Restore a serialized session onto the client |
+| `setSession(session)` / `clearSession()` | Restore or clear the active client session |
 | `createSession(wallet, markets, expiryDays?)` | Create and store a trading session |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
 | `cancelOrder(orderId, market)` | Cancel a specific order |
 | `cancelAllOrders(market)` | Cancel all open orders |
 | `settleBalance(market)` | Settle filled order proceeds |
-| `batchActions(marketActions, collectOrders?)` | Submit type-safe action batches |
+| `batchActions(marketActions, collectOrders?, session?)` | Submit type-safe action batches |
 | `getMarkets()` / `getMarket(pair)` | Fetch market info |
 | `getDepth(market)` / `getTrades(market)` | Order book and trade data |
 | `getBalances(tradeAccountId)` / `getOrders(id, market)` | Account data |
 | `streamDepth(market)` | Real-time order book stream |
 | `streamOrders(id)` / `streamTrades(market)` | Real-time updates |
-| `refreshNonce()` | Re-sync the stored session nonce |
+| `refreshNonce(session?)` | Re-sync a session nonce |
 | `withdraw(wallet, asset, amount, to?)` | Withdraw funds |
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
