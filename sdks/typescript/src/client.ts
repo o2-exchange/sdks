@@ -75,9 +75,15 @@ import type {
   TradeAccountId,
   TradeUpdate,
   WalletState,
-  WireOrderType,
 } from "./models.js";
-import { depthPrecision, assetId as toAssetId, tradeAccountId } from "./models.js";
+import { depthPrecision, tradeAccountId } from "./models.js";
+import {
+  capitalizeSide,
+  ensureNumeric,
+  resolveAsset as resolveAssetFromMarkets,
+  resolveMarket as resolveMarketFromMarkets,
+  scaleOrderType,
+} from "./utils.js";
 import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
@@ -98,67 +104,6 @@ function toMarketInfo(market: Market): MarketInfo {
       decimals: market.quote.decimals,
       maxPrecision: market.quote.max_precision,
       symbol: market.quote.symbol,
-    },
-  };
-}
-
-/** Capitalize side for the API wire format: "buy" → "Buy", "sell" → "Sell". */
-function capitalizeSide(side: string): string {
-  return side.charAt(0).toUpperCase() + side.slice(1);
-}
-
-/** Runtime guard for Numeric values coming from untyped JS callers. */
-function ensureNumeric(value: Numeric, fieldName: string): Numeric {
-  if (typeof value === "string" || typeof value === "bigint") {
-    return value;
-  }
-  throw new O2Error(`Invalid ${fieldName} type: expected string or bigint, got ${typeof value}`);
-}
-
-/** Scale a single Numeric price to a chain integer string. */
-function scaleNumericPrice(
-  value: Numeric,
-  decimals: number,
-  maxPrecision: number,
-  fieldName = "price",
-): string {
-  const normalized = ensureNumeric(value, fieldName);
-  if (typeof normalized === "bigint") return normalized.toString();
-  return scalePriceString(normalized, decimals, maxPrecision).toString();
-}
-
-/** Convert an OrderType (with Numeric prices) to a WireOrderType (chain integer strings). */
-function scaleOrderType(ot: OrderType, market: Market): WireOrderType {
-  if (typeof ot === "string") return ot;
-  if ("Limit" in ot) {
-    const [price, timestamp] = ot.Limit;
-    return {
-      Limit: [
-        scaleNumericPrice(
-          price,
-          market.quote.decimals,
-          market.quote.max_precision,
-          "orderType.Limit.price",
-        ),
-        timestamp,
-      ],
-    };
-  }
-  // BoundedMarket
-  return {
-    BoundedMarket: {
-      max_price: scaleNumericPrice(
-        ot.BoundedMarket.max_price,
-        market.quote.decimals,
-        market.quote.max_precision,
-        "orderType.BoundedMarket.max_price",
-      ),
-      min_price: scaleNumericPrice(
-        ot.BoundedMarket.min_price,
-        market.quote.decimals,
-        market.quote.max_precision,
-        "orderType.BoundedMarket.min_price",
-      ),
     },
   };
 }
@@ -1138,37 +1083,7 @@ export class O2Client {
   }
 
   protected resolveMarket(data: MarketsResponse, symbolPair: string): Market {
-    // Accept hex market_id
-    if (symbolPair.startsWith("0x")) {
-      const found = data.markets.find((m) => m.market_id === symbolPair);
-      if (found) return found;
-      throw new O2Error(`Market not found: ${symbolPair}`);
-    }
-
-    // Accept "BASE/QUOTE" format
-    const [baseSymbol, quoteSymbol] = symbolPair.split("/");
-    const found = data.markets.find(
-      (m) =>
-        m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() &&
-        m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase(),
-    );
-
-    if (!found) {
-      // Try case-insensitive with f-prefix variants
-      const altFound = data.markets.find(
-        (m) =>
-          (m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() ||
-            m.base.symbol.toLowerCase() === `f${baseSymbol.toLowerCase()}`) &&
-          (m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase() ||
-            m.quote.symbol.toLowerCase() === `f${quoteSymbol.toLowerCase()}`),
-      );
-      if (altFound) return altFound;
-      throw new O2Error(
-        `Market not found: ${symbolPair}. Available: ${data.markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`,
-      );
-    }
-
-    return found;
+    return resolveMarketFromMarkets(data, symbolPair);
   }
 
   /** Resolve an asset by symbol name or hex asset ID. */
@@ -1176,32 +1091,7 @@ export class O2Client {
     data: MarketsResponse,
     symbolOrId: string,
   ): { assetId: AssetId; decimals: number | undefined } {
-    // If it looks like a hex ID, normalize and match case-insensitively
-    if (symbolOrId.startsWith("0x") || symbolOrId.startsWith("0X")) {
-      const normalized = toAssetId(symbolOrId);
-      for (const m of data.markets) {
-        if (toAssetId(m.base.asset) === normalized)
-          return { assetId: m.base.asset, decimals: m.base.decimals };
-        if (toAssetId(m.quote.asset) === normalized)
-          return { assetId: m.quote.asset, decimals: m.quote.decimals };
-      }
-      // Unknown hex asset — caller must provide pre-scaled bigint amount
-      return { assetId: normalized, decimals: undefined };
-    }
-
-    // Search by symbol name (case-insensitive)
-    for (const m of data.markets) {
-      if (m.base.symbol.toLowerCase() === symbolOrId.toLowerCase()) {
-        return { assetId: m.base.asset, decimals: m.base.decimals };
-      }
-      if (m.quote.symbol.toLowerCase() === symbolOrId.toLowerCase()) {
-        return { assetId: m.quote.asset, decimals: m.quote.decimals };
-      }
-    }
-
-    throw new O2Error(
-      `Asset not found: ${symbolOrId}. Available: ${[...new Set(data.markets.flatMap((m) => [m.base.symbol, m.quote.symbol]))].join(", ")}`,
-    );
+    return resolveAssetFromMarkets(data, symbolOrId);
   }
 
   /**

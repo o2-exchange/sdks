@@ -42,6 +42,14 @@ export {
   type Wallet,
 } from "./crypto.js";
 
+// ── Encoding utilities ────────────────────────────────────────────
+export {
+  scaleDecimalString,
+  scalePriceString,
+  validateFractionalPrice,
+  validateMinOrder,
+} from "./encoding.js";
+
 // ── Errors ────────────────────────────────────────────────────────
 export {
   AccountNotFound,
@@ -153,6 +161,17 @@ export {
 } from "./models.js";
 // ── On-chain revert decoding ──────────────────────────────────────
 export { augmentRevertReason } from "./onchain-revert.js";
+// ── Utilities ─────────────────────────────────────────────────────
+export {
+  capitalizeSide,
+  ensureNumeric,
+  type ResolvedAsset,
+  resolveAsset,
+  resolveMarket,
+  resolveMarketRef,
+  scaleNumericPrice,
+  scaleOrderType,
+} from "./utils.js";
 
 // ── WebSocket ─────────────────────────────────────────────────────
 export {

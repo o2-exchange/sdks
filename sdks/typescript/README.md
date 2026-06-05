@@ -150,9 +150,9 @@ Identifier usage:
 | `setSession(session)` / `clearSession()` | Restore or clear the active client session |
 | `createSession(wallet, markets, expiryDays?)` | Create and store a trading session |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
-| `cancelOrder(orderId, market)` | Cancel a specific order |
-| `cancelAllOrders(market)` | Cancel all open orders |
-| `settleBalance(market)` | Settle filled order proceeds |
+| `cancelOrder(orderId, market, session?)` | Cancel a specific order |
+| `cancelAllOrders(market, session?)` | Cancel all open orders |
+| `settleBalance(market, session?)` | Settle filled order proceeds |
 | `batchActions(marketActions, collectOrders?, session?)` | Submit type-safe action batches |
 | `getMarkets()` / `getMarket(pair)` | Fetch market info |
 | `getDepth(market)` / `getTrades(market)` | Order book and trade data |
@@ -161,6 +161,11 @@ Identifier usage:
 | `streamOrders(id)` / `streamTrades(market)` | Real-time updates |
 | `refreshNonce(session?)` | Re-sync a session nonce |
 | `withdraw(wallet, asset, amount, to?)` | Withdraw funds |
+
+Utility exports such as `resolveMarket`, `resolveAsset`, `ensureNumeric`, and
+`scaleOrderType` are available from the package root for custom client flows.
+Low-level encoding helpers, including `adjustQuantityForFractionalPrice`, are
+available from `@o2exchange/sdk/internals`.
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
 
