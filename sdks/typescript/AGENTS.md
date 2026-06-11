@@ -34,13 +34,14 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `O2Client.loadEvmWallet(hex)` | `privateKeyHex: string` | `WalletState` | Load EVM wallet from hex |
 | `session` | — | `SessionState \| null` | Getter: the currently active session |
 | `setSession(session)` | `SessionState` | `void` | Restore a serialized session |
+| `clearSession()` | — | `void` | Clear the active session |
 | `setupAccount(wallet)` | `Signer` | `{ tradeAccountId, nonce }` | Idempotent account setup |
 | `createSession(wallet, markets, expiryDays?)` | `Signer`, market list, days | `SessionState` | Create and store trading session |
-| `createOrder(market, side, price, quantity, options?)` | market, `"buy"\|"sell"`, `Numeric`, `Numeric`, options | `SessionActionsResponse` | Place order (nonce auto-managed) |
-| `cancelOrder(orderId, market)` | orderId, market | `SessionActionsResponse` | Cancel an order |
-| `cancelAllOrders(market)` | market | `SessionActionsResponse[] \| null` | Cancel all open orders |
-| `settleBalance(market)` | market | `SessionActionsResponse` | Settle filled balances |
-| `batchActions(marketActions, collectOrders?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
+| `createOrder(market, side, price, quantity, options?)` | market, `"buy"\|"sell"`, `Numeric`, `Numeric`, options incl. `session?` | `SessionActionsResponse` | Place order (nonce auto-managed) |
+| `cancelOrder(orderId, market, session?)` | orderId, market, session? | `SessionActionsResponse` | Cancel an order |
+| `cancelAllOrders(market, session?)` | market, session? | `SessionActionsResponse[] \| null` | Cancel all open orders |
+| `settleBalance(market, session?)` | market, session? | `SessionActionsResponse` | Settle filled balances |
+| `batchActions(marketActions, collectOrders?, session?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
 | `getMarkets()` | — | `Market[]` | Fetch all markets |
 | `getMarket(pair)` | `"FUEL/USDC"` | `Market` | Resolve market by pair |
 | `getDepth(market, precision?)` | market, precision | `DepthSnapshot` | Get order book depth |
@@ -56,10 +57,24 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `streamBalances(tradeAccountId)` | id | `AsyncGenerator<BalanceUpdate>` | Stream balances |
 | `streamNonce(tradeAccountId)` | id | `AsyncGenerator<NonceUpdate>` | Stream nonce updates |
 | `getNonce(tradeAccountId)` | id | `bigint` | Fetch current nonce |
-| `refreshNonce()` | — | `bigint` | Re-fetch nonce and update stored session |
+| `refreshNonce(session?)` | session? | `bigint` | Re-fetch nonce and update a session |
 | `withdraw(wallet, asset, amount, to?)` | owner signer, symbol/assetId, `Numeric`, address? | `WithdrawResponse` | Withdraw funds |
 | `disconnectWs()` | — | `void` | Close WebSocket connection |
 | `close()` | — | `void` | Close all resources (WebSocket + cache) |
+
+### Utility Exports
+
+These helpers are exported from the package root (`@o2exchange/sdk`).
+
+| Function | Params | Returns | Description |
+|----------|--------|---------|-------------|
+| `ensureNumeric(value, fieldName)` | `unknown`, string | `Numeric` | Runtime guard for decimal-string or bigint inputs |
+| `capitalizeSide(side)` | `"buy"\|"sell"` | `"Buy"\|"Sell"` | Convert side to API wire format |
+| `scaleNumericPrice(value, decimals, maxPrecision)` | `Numeric`, ints | `string` | Scale price to chain integer string |
+| `scaleOrderType(orderType, market)` | order type, market | `WireOrderType` | Scale order-type price fields |
+| `resolveMarket(markets, pairOrId)` | market list/response, string | `Market` | Resolve symbol pair or market ID |
+| `resolveMarketRef(markets, market)` | market list/response, `MarketRef` | `Market` | Resolve a `MarketRef` |
+| `resolveAsset(markets, symbolOrId)` | market list/response, string | `{ assetId, decimals }` | Resolve asset symbol or ID |
 
 ### Low-Level Modules
 
@@ -96,8 +111,13 @@ import { ... } from "@o2exchange/sdk/internals";
 | `buildSessionSigningBytes(...)` | nonce, chainId, addr, cids, expiry | `Uint8Array` | Session signing payload |
 | `buildActionsSigningBytes(nonce, calls)` | nonce, calls | `Uint8Array` | Action signing payload |
 | `actionToCall(action, market, registryId?)` | JSON action, market info | `ContractCall` | High-to-low level conversion |
+| `scaleDecimalString(value, decimals)` | decimal string, int | `bigint` | Decimal string to chain integer |
+| `scalePriceString(value, decimals, maxPrecision)` | decimal string, ints | `bigint` | Decimal string price to chain integer |
 | `scalePrice(price, decimals, maxPrecision)` | number, ints | `bigint` | Human to chain price |
 | `scaleQuantity(qty, decimals, maxPrecision)` | number, ints | `bigint` | Human to chain quantity |
+| `validateFractionalPrice(price, qty, baseDecimals)` | bigints, int | `boolean` | Check FractionalPrice divisibility |
+| `adjustQuantityForFractionalPrice(price, qty, baseDecimals)` | bigints, int | `bigint` | Round quantity down to valid quantum |
+| `validateMinOrder(price, qty, baseDecimals, minOrder)` | bigints, int, bigint | `boolean` | Check minimum order value |
 | `formatDecimal(chainValue, decimals)` | bigint, int | `number` | Chain to human |
 | `hexToBytes(hex)` | `string` | `Uint8Array` | Hex to bytes |
 | `bytesToHex(bytes)` | `Uint8Array` | `string` | Bytes to 0x-prefixed hex |

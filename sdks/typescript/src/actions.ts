@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { Identity, Numeric, OrderId, OrderType, Side } from "./models.js";
+import type { Identity, MarketRef, Numeric, OrderId, OrderType, Side } from "./models.js";
 
 export type { Numeric } from "./models.js";
 
@@ -90,8 +90,7 @@ export function registerRefererAction(to: Identity): Action {
  * A group of actions targeting a specific market.
  *
  * Used with {@link O2Client.batchActions}. The `market` field accepts
- * a symbol pair string (e.g., `"fFUEL/fUSDC"`) which is resolved
- * internally by the SDK.
+ * a symbol pair string, hex market ID, or full Market object.
  *
  * @example
  * ```ts
@@ -109,8 +108,8 @@ export function registerRefererAction(to: Identity): Action {
  * ```
  */
 export interface MarketActionGroup {
-  /** Market symbol pair (e.g., `"fFUEL/fUSDC"`) or hex market ID. */
-  market: string;
+  /** Market symbol pair (e.g., `"fFUEL/fUSDC"`), hex market ID, or full Market object. */
+  market: MarketRef;
   /** Actions to execute on this market (max 5 per group). */
   actions: Action[];
 }

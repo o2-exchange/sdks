@@ -329,7 +329,7 @@ export function toFuelCompactSignature(
 export class ExternalSigner implements Signer {
   /** The Fuel B256 address (0x-prefixed hex string). */
   readonly b256Address: string;
-  private readonly signDigest: SignDigestFn;
+  protected readonly signDigest: SignDigestFn;
 
   /**
    * @param b256Address - The Fuel B256 address (0x-prefixed, 64-char hex).
@@ -378,7 +378,7 @@ export class ExternalEvmSigner implements Signer {
   readonly b256Address: string;
   /** The EVM address (0x-prefixed, 40-char hex). */
   readonly evmAddress: string;
-  private readonly signDigest: SignDigestFn;
+  protected readonly signDigest: SignDigestFn;
 
   /**
    * @param b256Address - The B256 address (EVM address zero-padded to 32 bytes).

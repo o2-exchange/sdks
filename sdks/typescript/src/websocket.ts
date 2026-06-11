@@ -108,22 +108,22 @@ type MessageHandler = (data: Record<string, unknown>) => void;
  * ```
  */
 export class O2WebSocket {
-  private ws: WebSocket | null = null;
-  private readonly url: string;
-  private readonly shouldReconnect: boolean;
-  private readonly maxReconnectAttempts: number;
-  private readonly reconnectDelayMs: number;
-  private readonly pingIntervalMs: number;
-  private readonly pongTimeoutMs: number;
-  private readonly webSocketFactory?: (url: string) => WebSocket;
-  private reconnectAttempts = 0;
-  private pingInterval: ReturnType<typeof setInterval> | null = null;
-  private handlers = new Map<string, Set<MessageHandler>>();
-  private connected = false;
-  private closing = false;
-  private terminated = false;
-  private lastMessage = 0;
-  private pendingSubscriptions: Array<Record<string, unknown>> = [];
+  protected ws: WebSocket | null = null;
+  protected readonly url: string;
+  protected readonly shouldReconnect: boolean;
+  protected readonly maxReconnectAttempts: number;
+  protected readonly reconnectDelayMs: number;
+  protected readonly pingIntervalMs: number;
+  protected readonly pongTimeoutMs: number;
+  protected readonly webSocketFactory?: (url: string) => WebSocket;
+  protected reconnectAttempts = 0;
+  protected pingInterval: ReturnType<typeof setInterval> | null = null;
+  protected handlers = new Map<string, Set<MessageHandler>>();
+  protected connected = false;
+  protected closing = false;
+  protected terminated = false;
+  protected lastMessage = 0;
+  protected pendingSubscriptions: Array<Record<string, unknown>> = [];
 
   constructor(options: O2WebSocketOptions) {
     this.url = options.config.wsUrl;
@@ -427,13 +427,13 @@ export class O2WebSocket {
 
   // ── Internal ────────────────────────────────────────────────────
 
-  private send(data: Record<string, unknown>): void {
+  protected send(data: Record<string, unknown>): void {
     if (this.ws && this.connected && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     }
   }
 
-  private emitLifecycle(state: ConnectionState, attempt: number, message: string): void {
+  protected emitLifecycle(state: ConnectionState, attempt: number, message: string): void {
     const event: ConnectionEvent = { state, attempt, message };
     const handlers = this.handlers.get("__lifecycle__");
     if (handlers) {
@@ -441,7 +441,7 @@ export class O2WebSocket {
     }
   }
 
-  private async *subscribe<T>(
+  protected async *subscribe<T>(
     subscription: Record<string, unknown>,
     actions: string[],
     transform?: (raw: Record<string, unknown>) => T,
@@ -534,7 +534,7 @@ export class O2WebSocket {
     }
   }
 
-  private startPingInterval(): void {
+  protected startPingInterval(): void {
     this.stopPingInterval();
     this.pingInterval = setInterval(() => {
       if (!this.ws || !this.connected) return;
@@ -553,14 +553,14 @@ export class O2WebSocket {
     }, this.pingIntervalMs);
   }
 
-  private stopPingInterval(): void {
+  protected stopPingInterval(): void {
     if (this.pingInterval) {
       clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
   }
 
-  private attemptReconnect(): void {
+  protected attemptReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       // Max attempts exhausted — signal all generators to terminate
       this.terminated = true;
@@ -601,7 +601,7 @@ export class O2WebSocket {
     }, delay);
   }
 
-  private removePendingSub(action: string, marketId?: string): void {
+  protected removePendingSub(action: string, marketId?: string): void {
     this.pendingSubscriptions = this.pendingSubscriptions.filter((s) => {
       if (s.action !== action) return true;
       if (marketId && s.market_id !== marketId) return true;

@@ -75,9 +75,15 @@ import type {
   TradeAccountId,
   TradeUpdate,
   WalletState,
-  WireOrderType,
 } from "./models.js";
-import { depthPrecision, assetId as toAssetId, tradeAccountId } from "./models.js";
+import { depthPrecision, tradeAccountId } from "./models.js";
+import {
+  capitalizeSide,
+  ensureNumeric,
+  resolveAsset as resolveAssetFromMarkets,
+  resolveMarket as resolveMarketFromMarkets,
+  scaleOrderType,
+} from "./utils.js";
 import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
@@ -98,67 +104,6 @@ function toMarketInfo(market: Market): MarketInfo {
       decimals: market.quote.decimals,
       maxPrecision: market.quote.max_precision,
       symbol: market.quote.symbol,
-    },
-  };
-}
-
-/** Capitalize side for the API wire format: "buy" → "Buy", "sell" → "Sell". */
-function capitalizeSide(side: string): string {
-  return side.charAt(0).toUpperCase() + side.slice(1);
-}
-
-/** Runtime guard for Numeric values coming from untyped JS callers. */
-function ensureNumeric(value: Numeric, fieldName: string): Numeric {
-  if (typeof value === "string" || typeof value === "bigint") {
-    return value;
-  }
-  throw new O2Error(`Invalid ${fieldName} type: expected string or bigint, got ${typeof value}`);
-}
-
-/** Scale a single Numeric price to a chain integer string. */
-function scaleNumericPrice(
-  value: Numeric,
-  decimals: number,
-  maxPrecision: number,
-  fieldName = "price",
-): string {
-  const normalized = ensureNumeric(value, fieldName);
-  if (typeof normalized === "bigint") return normalized.toString();
-  return scalePriceString(normalized, decimals, maxPrecision).toString();
-}
-
-/** Convert an OrderType (with Numeric prices) to a WireOrderType (chain integer strings). */
-function scaleOrderType(ot: OrderType, market: Market): WireOrderType {
-  if (typeof ot === "string") return ot;
-  if ("Limit" in ot) {
-    const [price, timestamp] = ot.Limit;
-    return {
-      Limit: [
-        scaleNumericPrice(
-          price,
-          market.quote.decimals,
-          market.quote.max_precision,
-          "orderType.Limit.price",
-        ),
-        timestamp,
-      ],
-    };
-  }
-  // BoundedMarket
-  return {
-    BoundedMarket: {
-      max_price: scaleNumericPrice(
-        ot.BoundedMarket.max_price,
-        market.quote.decimals,
-        market.quote.max_precision,
-        "orderType.BoundedMarket.max_price",
-      ),
-      min_price: scaleNumericPrice(
-        ot.BoundedMarket.min_price,
-        market.quote.decimals,
-        market.quote.max_precision,
-        "orderType.BoundedMarket.min_price",
-      ),
     },
   };
 }
@@ -194,6 +139,8 @@ export interface CreateOrderOptions {
   settleFirst?: boolean;
   /** Whether to return order details in response (default: `true`). */
   collectOrders?: boolean;
+  /** Explicit session to use for this order. Defaults to the client's active session. */
+  session?: SessionState;
 }
 
 /**
@@ -227,14 +174,15 @@ function validateDepthPrecision(precision: number | string): void {
 export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
-  private wsClient: O2WebSocket | null = null;
-  private readonly config: NetworkConfig;
-  private marketsCache: MarketsResponse | null = null;
-  private marketsCacheTime = 0;
-  private marketsRefreshPromise: Promise<MarketsResponse> | null = null;
-  private readonly marketsCacheTtlMs: number;
-  private readonly webSocketFactory?: (url: string) => WebSocket;
-  private _session: SessionState | null = null;
+  protected wsClient: O2WebSocket | null = null;
+  /** Network endpoint and contract configuration used by this client. */
+  public readonly config: NetworkConfig;
+  protected marketsCache: MarketsResponse | null = null;
+  protected marketsCacheTime = 0;
+  protected marketsRefreshPromise: Promise<MarketsResponse> | null = null;
+  protected readonly marketsCacheTtlMs: number;
+  protected readonly webSocketFactory?: (url: string) => WebSocket;
+  protected _session: SessionState | null = null;
 
   constructor(optionsOrNetwork: O2ClientOptions | Network = {}) {
     const options: O2ClientOptions =
@@ -255,8 +203,13 @@ export class O2Client {
     this._session = session;
   }
 
+  /** Clear the active session. */
+  clearSession(): void {
+    this._session = null;
+  }
+
   /** Returns the stored session or throws if none exists. */
-  private ensureSession(): SessionState {
+  protected ensureSession(): SessionState {
     if (!this._session) {
       throw new O2Error(
         "No active session. Call createSession() to create a new session, " +
@@ -512,7 +465,7 @@ export class O2Client {
     quantity: Numeric,
     options?: CreateOrderOptions,
   ): Promise<SessionActionsResponse> {
-    const session = this.ensureSession();
+    const session = options?.session ?? this.ensureSession();
     const orderType = options?.orderType ?? "Spot";
     const settleFirst = options?.settleFirst ?? true;
     const collectOrders = options?.collectOrders ?? true;
@@ -547,34 +500,45 @@ export class O2Client {
       },
     });
 
-    return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders);
+    return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
   }
 
   /** Cancel an order. The session nonce is updated in-place. */
-  async cancelOrder(orderId: OrderId, market: MarketRef): Promise<SessionActionsResponse> {
-    this.ensureSession();
+  async cancelOrder(
+    orderId: OrderId,
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    return this.submitBatch([
-      {
-        market_id: resolved.market_id,
-        actions: [{ CancelOrder: { order_id: orderId } }],
-      },
-    ]);
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [{ CancelOrder: { order_id: orderId } }],
+        },
+      ],
+      false,
+      activeSession,
+    );
   }
 
   /**
    * Cancel all open orders for a market. Returns one result per chunk, or null if no orders.
    */
-  async cancelAllOrders(market: MarketRef): Promise<SessionActionsResponse[] | null> {
-    const session = this.ensureSession();
+  async cancelAllOrders(
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse[] | null> {
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
     const orders = await this.api.getOrders(
       resolved.market_id,
-      session.tradeAccountId,
+      activeSession.tradeAccountId,
       "desc",
       200,
       true,
@@ -591,9 +555,11 @@ export class O2Client {
         CancelOrder: { order_id: o.order_id },
       }));
 
-      const result = await this.submitBatch([
-        { market_id: resolved.market_id, actions: cancelActions },
-      ]);
+      const result = await this.submitBatch(
+        [{ market_id: resolved.market_id, actions: cancelActions }],
+        false,
+        activeSession,
+      );
       results.push(result);
     }
 
@@ -601,23 +567,27 @@ export class O2Client {
   }
 
   /** Settle balance for a market. The session nonce is updated in-place. */
-  async settleBalance(market: MarketRef): Promise<SessionActionsResponse> {
-    const session = this.ensureSession();
+  async settleBalance(market: MarketRef, session?: SessionState): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    return this.submitBatch([
-      {
-        market_id: resolved.market_id,
-        actions: [
-          {
-            SettleBalance: {
-              to: { ContractId: session.tradeAccountId },
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            {
+              SettleBalance: {
+                to: { ContractId: activeSession.tradeAccountId },
+              },
             },
-          },
-        ],
-      },
-    ]);
+          ],
+        },
+      ],
+      false,
+      activeSession,
+    );
   }
 
   /**
@@ -632,6 +602,7 @@ export class O2Client {
    *
    * @param marketActions - Groups of actions per market.
    * @param collectOrders - Whether to return order details in response (default: `false`).
+   * @param session - Explicit session to use. Defaults to the client's active session.
    *
    * @example
    * ```ts
@@ -647,19 +618,23 @@ export class O2Client {
   async batchActions(
     marketActions: MarketActionGroup[],
     collectOrders = false,
+    session?: SessionState,
   ): Promise<SessionActionsResponse> {
-    this.ensureSession();
+    const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
 
     // Convert type-safe actions to wire format
     const wireGroups: MarketActions[] = [];
 
     for (const group of marketActions) {
-      const resolved = this.resolveMarket(marketsData, group.market);
+      const resolved =
+        typeof group.market === "string"
+          ? this.resolveMarket(marketsData, group.market)
+          : group.market;
 
       const wireActions: ActionPayload[] = [];
       for (const action of group.actions) {
-        wireActions.push(this.actionToPayload(action, resolved));
+        wireActions.push(this.actionToPayload(action, resolved, activeSession));
       }
 
       wireGroups.push({
@@ -672,7 +647,7 @@ export class O2Client {
       throw new O2Error("No market actions provided");
     }
 
-    return this.submitBatch(wireGroups, collectOrders);
+    return this.submitBatch(wireGroups, collectOrders, activeSession);
   }
 
   // ── Market data ─────────────────────────────────────────────────
@@ -850,7 +825,7 @@ export class O2Client {
 
   // ── WebSocket streaming ─────────────────────────────────────────
 
-  private async ensureWs(): Promise<O2WebSocket> {
+  protected async ensureWs(): Promise<O2WebSocket> {
     if (this.wsClient?.isTerminated()) {
       this.wsClient = null;
     }
@@ -1060,24 +1035,25 @@ export class O2Client {
   }
 
   /**
-   * Re-fetch the nonce from the API and update the stored session state.
+   * Re-fetch the nonce from the API and update a session state.
    *
    * @remarks
    * Call this after errors to re-sync the nonce (it increments on-chain
    * even on reverts).
    *
+   * @param session - Explicit session to refresh. Defaults to the client's active session.
    * @returns The fresh nonce value.
    */
-  async refreshNonce(): Promise<bigint> {
-    const session = this.ensureSession();
-    const nonce = await this.getNonce(session.tradeAccountId);
-    session.nonce = nonce;
+  async refreshNonce(session?: SessionState): Promise<bigint> {
+    const activeSession = session ?? this.ensureSession();
+    const nonce = await this.getNonce(activeSession.tradeAccountId);
+    activeSession.nonce = nonce;
     return nonce;
   }
 
   // ── Internal helpers ────────────────────────────────────────────
 
-  private async fetchMarkets(): Promise<MarketsResponse> {
+  protected async fetchMarkets(): Promise<MarketsResponse> {
     const now = Date.now();
     if (this.marketsCache && now - this.marketsCacheTime < this.marketsCacheTtlMs) {
       return this.marketsCache;
@@ -1106,71 +1082,16 @@ export class O2Client {
     return this.marketsCache;
   }
 
-  private resolveMarket(data: MarketsResponse, symbolPair: string): Market {
-    // Accept hex market_id
-    if (symbolPair.startsWith("0x")) {
-      const found = data.markets.find((m) => m.market_id === symbolPair);
-      if (found) return found;
-      throw new O2Error(`Market not found: ${symbolPair}`);
-    }
-
-    // Accept "BASE/QUOTE" format
-    const [baseSymbol, quoteSymbol] = symbolPair.split("/");
-    const found = data.markets.find(
-      (m) =>
-        m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() &&
-        m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase(),
-    );
-
-    if (!found) {
-      // Try case-insensitive with f-prefix variants
-      const altFound = data.markets.find(
-        (m) =>
-          (m.base.symbol.toLowerCase() === baseSymbol.toLowerCase() ||
-            m.base.symbol.toLowerCase() === `f${baseSymbol.toLowerCase()}`) &&
-          (m.quote.symbol.toLowerCase() === quoteSymbol.toLowerCase() ||
-            m.quote.symbol.toLowerCase() === `f${quoteSymbol.toLowerCase()}`),
-      );
-      if (altFound) return altFound;
-      throw new O2Error(
-        `Market not found: ${symbolPair}. Available: ${data.markets.map((m) => `${m.base.symbol}/${m.quote.symbol}`).join(", ")}`,
-      );
-    }
-
-    return found;
+  protected resolveMarket(data: MarketsResponse, symbolPair: string): Market {
+    return resolveMarketFromMarkets(data, symbolPair);
   }
 
   /** Resolve an asset by symbol name or hex asset ID. */
-  private resolveAsset(
+  protected resolveAsset(
     data: MarketsResponse,
     symbolOrId: string,
   ): { assetId: AssetId; decimals: number | undefined } {
-    // If it looks like a hex ID, normalize and match case-insensitively
-    if (symbolOrId.startsWith("0x") || symbolOrId.startsWith("0X")) {
-      const normalized = toAssetId(symbolOrId);
-      for (const m of data.markets) {
-        if (toAssetId(m.base.asset) === normalized)
-          return { assetId: m.base.asset, decimals: m.base.decimals };
-        if (toAssetId(m.quote.asset) === normalized)
-          return { assetId: m.quote.asset, decimals: m.quote.decimals };
-      }
-      // Unknown hex asset — caller must provide pre-scaled bigint amount
-      return { assetId: normalized, decimals: undefined };
-    }
-
-    // Search by symbol name (case-insensitive)
-    for (const m of data.markets) {
-      if (m.base.symbol.toLowerCase() === symbolOrId.toLowerCase()) {
-        return { assetId: m.base.asset, decimals: m.base.decimals };
-      }
-      if (m.quote.symbol.toLowerCase() === symbolOrId.toLowerCase()) {
-        return { assetId: m.quote.asset, decimals: m.quote.decimals };
-      }
-    }
-
-    throw new O2Error(
-      `Asset not found: ${symbolOrId}. Available: ${[...new Set(data.markets.flatMap((m) => [m.base.symbol, m.quote.symbol]))].join(", ")}`,
-    );
+    return resolveAssetFromMarkets(data, symbolOrId);
   }
 
   /**
@@ -1179,7 +1100,7 @@ export class O2Client {
    * Bigint prices are treated as already-scaled chain integers.
    * They must still align to `max_precision` to avoid on-chain rejects.
    */
-  private ensureBigIntPricePrecision(price: bigint, market: Market): void {
+  protected ensureBigIntPricePrecision(price: bigint, market: Market): void {
     const precisionDelta = market.quote.decimals - market.quote.max_precision;
     const priceStep = precisionDelta <= 0 ? 1n : BigInt(10 ** precisionDelta);
     if (price % priceStep !== 0n) {
@@ -1246,8 +1167,8 @@ export class O2Client {
   }
 
   /** Convert a type-safe Action to the wire-format ActionPayload. */
-  private actionToPayload(action: Action, market: Market): ActionPayload {
-    const session = this.ensureSession();
+  protected actionToPayload(action: Action, market: Market, session?: SessionState): ActionPayload {
+    const activeSession = session ?? this.ensureSession();
     switch (action.type) {
       case "createOrder": {
         const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
@@ -1272,7 +1193,7 @@ export class O2Client {
       case "settleBalance":
         return {
           SettleBalance: {
-            to: { ContractId: session.tradeAccountId },
+            to: { ContractId: activeSession.tradeAccountId },
           },
         };
       case "registerReferer":
@@ -1282,15 +1203,16 @@ export class O2Client {
 
   /**
    * Internal batch submission. Handles encoding, signing, nonce management.
-   * The session nonce is updated in-place after each call.
+   * The selected session nonce is updated in-place after each call.
    */
-  private async submitBatch(
+  protected async submitBatch(
     marketActions: MarketActions[],
     collectOrders = false,
+    session?: SessionState,
   ): Promise<SessionActionsResponse> {
-    const session = this.ensureSession();
+    const activeSession = session ?? this.ensureSession();
     // Check session expiry before submitting on-chain
-    if (session.expiry > 0 && Math.floor(Date.now() / 1000) >= session.expiry) {
+    if (activeSession.expiry > 0 && Math.floor(Date.now() / 1000) >= activeSession.expiry) {
       throw new SessionExpired();
     }
 
@@ -1307,34 +1229,34 @@ export class O2Client {
     }
 
     // Build signing bytes and sign
-    const signingBytes = buildActionsSigningBytes(session.nonce, calls);
-    const signature = rawSign(session.sessionPrivateKey, signingBytes);
+    const signingBytes = buildActionsSigningBytes(activeSession.nonce, calls);
+    const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
     try {
-      const response = await this.api.submitActions(session.ownerAddress, {
+      const response = await this.api.submitActions(activeSession.ownerAddress, {
         actions: marketActions,
         signature: { Secp256k1: bytesToHex(signature) },
-        nonce: session.nonce.toString(),
-        trade_account_id: session.tradeAccountId,
-        session_id: { Address: session.sessionAddress },
+        nonce: activeSession.nonce.toString(),
+        trade_account_id: activeSession.tradeAccountId,
+        session_id: { Address: activeSession.sessionAddress },
         collect_orders: collectOrders,
       });
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {
-        session.nonce += 1n;
+        activeSession.nonce += 1n;
       }
       return response;
     } catch (error) {
       // Nonce increments on-chain even on revert
-      session.nonce += 1n;
+      activeSession.nonce += 1n;
       // Re-fetch nonce on error for resync
       try {
         const info = await this.api.getAccount({
-          tradeAccountId: session.tradeAccountId,
+          tradeAccountId: activeSession.tradeAccountId,
         });
         if (info.trade_account) {
-          session.nonce = info.trade_account.nonce;
+          activeSession.nonce = info.trade_account.nonce;
         }
       } catch (_e: unknown) {
         // If re-fetch fails, keep incremented nonce
