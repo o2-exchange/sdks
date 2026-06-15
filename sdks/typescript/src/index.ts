@@ -21,7 +21,13 @@ export {
 // ── API ───────────────────────────────────────────────────────────
 export { O2Api, type O2ApiOptions } from "./api.js";
 // ── High-level client ─────────────────────────────────────────────
-export { type CreateOrderOptions, O2Client, type O2ClientOptions } from "./client.js";
+export {
+  type CreateOrderOptions,
+  O2Client,
+  type O2ClientOptions,
+  type WithdrawToChainDestination,
+  type WithdrawToChainOptions,
+} from "./client.js";
 // ── Config ────────────────────────────────────────────────────────
 export {
   DEVNET,
@@ -85,6 +91,8 @@ export {
 } from "./errors.js";
 // ── Models ────────────────────────────────────────────────────────
 export type {
+  AccountActionsRequest,
+  AccountActionsResponse,
   AccountInfo,
   AggregatedAsset,
   AggregatedOrderbook,
@@ -137,6 +145,7 @@ export type {
   WireOrderType,
   WithdrawRequest,
   WithdrawResponse,
+  WithdrawToChainResponse,
 } from "./models.js";
 export {
   assetId,

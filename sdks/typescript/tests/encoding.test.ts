@@ -4,6 +4,7 @@ import {
   buildActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
+  buildWithdrawToChainSigningBytes,
   bytesToHex,
   type ContractCall,
   concat,
@@ -12,21 +13,36 @@ import {
   encodeOptionNone,
   encodeOptionSome,
   encodeOrderArgs,
+  encodeWithdrawViaFastBridgeWithFeeCallData,
   formatDecimal,
   functionSelector,
   GAS_MAX,
+  getFastBridgeAssetSubId,
+  getMintedAssetId,
   hexToBytes,
   scaleDecimalString,
   scalePrice,
   scalePriceString,
   scaleQuantity,
   scaleQuantityString,
+  u32BE,
   u64BE,
   validateFractionalPrice,
   validateMinOrder,
 } from "../src/encoding.js";
 
 describe("Encoding Module", () => {
+  describe("u32BE", () => {
+    it("encodes u32 values", () => {
+      expect(bytesToHex(u32BE(1))).toBe("0x00000001");
+      expect(bytesToHex(u32BE(0xffffffffn))).toBe("0xffffffff");
+    });
+
+    it("rejects values outside u32 range", () => {
+      expect(() => u32BE(0x100000000n)).toThrow("u32 overflow");
+    });
+  });
+
   describe("u64BE", () => {
     it("encodes 0 correctly", () => {
       const result = u64BE(0);
@@ -456,6 +472,54 @@ describe("Encoding Module", () => {
     it("handles no prefix", () => {
       const bytes = hexToBytes("abcd");
       expect(bytes.length).toBe(2);
+    });
+  });
+
+  describe("FastBridge withdraw-to-chain encoding", () => {
+    it("encodes withdraw_via_fast_bridge_with_fee calldata with the ABI widths", () => {
+      const assetSubId = getFastBridgeAssetSubId("USDC");
+      const calldata = encodeWithdrawViaFastBridgeWithFeeCallData({
+        assetSubId,
+        destinationChainId: 1n,
+        recipientAddress: "0x1111111111111111111111111111111111111111",
+        feeQuote: 1_100_000_000_000n,
+      });
+
+      expect(calldata.length).toBe(76);
+      expect(bytesToHex(calldata.slice(0, 32))).toBe(assetSubId);
+      expect(bytesToHex(calldata.slice(32, 36))).toBe("0x00000001");
+      expect(bytesToHex(calldata.slice(36, 68))).toBe(
+        "0x0000000000000000000000001111111111111111111111111111111111111111",
+      );
+      expect(bytesToHex(calldata.slice(68, 76))).toBe("0x000001001d1bf800");
+    });
+
+    it("builds the owner signing bytes for FastBridge account actions", () => {
+      const assetSubId = getFastBridgeAssetSubId("USDC");
+      const assetId = getMintedAssetId(`0x${"b2".repeat(32)}`, assetSubId);
+      const callData = encodeWithdrawViaFastBridgeWithFeeCallData({
+        assetSubId,
+        destinationChainId: 1n,
+        recipientAddress: "0x1111111111111111111111111111111111111111",
+        feeQuote: 1_100_000_000_000n,
+      });
+      const signingBytes = buildWithdrawToChainSigningBytes({
+        nonce: 11n,
+        chainId: 0n,
+        assetRegistryContractId: `0x${"a1".repeat(32)}`,
+        assetId,
+        amount: 1_000_000_000_000n,
+        callData,
+      });
+
+      expect(bytesToHex(signingBytes.slice(0, 8))).toBe("0x000000000000000b");
+      expect(bytesToHex(signingBytes.slice(8, 16))).toBe("0x0000000000000000");
+      expect(bytesToHex(signingBytes.slice(16, 38))).toBe(
+        bytesToHex(functionSelector("call_contracts")),
+      );
+      expect(bytesToHex(signingBytes)).toContain(
+        bytesToHex(functionSelector("withdraw_via_fast_bridge_with_fee")).slice(2),
+      );
     });
   });
 });

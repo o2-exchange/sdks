@@ -619,6 +619,69 @@ impl O2Api {
         self.parse_response(resp).await
     }
 
+    /// POST /v1/accounts/actions - Execute owner-signed account actions.
+    pub(crate) async fn submit_account_actions(
+        &self,
+        owner_id: &str,
+        request: &AccountActionsRequest,
+    ) -> Result<AccountActionsResponse, O2Error> {
+        debug!(
+            "api.submit_account_actions owner_id={} trade_account_id={} nonce={} actions={}",
+            owner_id,
+            request.trade_account_id,
+            request.nonce,
+            request.actions.len()
+        );
+        let url = format!("{}/v1/accounts/actions", self.config.api_base);
+        let resp = self
+            .client
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header("O2-Owner-Id", owner_id)
+            .json(request)
+            .send()
+            .await?;
+        let val: serde_json::Value = self.parse_response(resp).await?;
+
+        let parsed = AccountActionsResponse {
+            tx_id: val.get("tx_id").and_then(|v| v.as_str()).map(TxId::from),
+            orders: val
+                .get("orders")
+                .and_then(|o| serde_json::from_value::<Vec<Order>>(o.clone()).ok()),
+            code: val.get("code").and_then(|v| v.as_u64()).map(|v| v as u32),
+            message: val
+                .get("message")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            reason: val.get("reason").and_then(|v| v.as_str()).map(String::from),
+            receipts: val.get("receipts").cloned(),
+        };
+
+        if parsed.is_success() {
+            Ok(parsed)
+        } else if parsed.is_preflight_error() {
+            Err(O2Error::from_code(
+                parsed.code.unwrap_or(0),
+                parsed.message.unwrap_or_default(),
+            ))
+        } else if parsed.is_onchain_error() {
+            let message = parsed.message.unwrap_or_default();
+            let raw_reason = parsed.reason.unwrap_or_default();
+            let reason = crate::onchain_revert::augment_revert_reason(
+                &message,
+                &raw_reason,
+                parsed.receipts.as_ref(),
+            );
+            Err(O2Error::OnChainRevert {
+                message,
+                reason,
+                receipts: parsed.receipts,
+            })
+        } else {
+            Ok(parsed)
+        }
+    }
+
     // -----------------------------------------------------------------------
     // Analytics
     // -----------------------------------------------------------------------

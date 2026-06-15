@@ -9,6 +9,15 @@
 //! - Session signing bytes
 //! - Action signing bytes
 
+use sha2::{Digest, Sha256};
+
+use crate::errors::O2Error;
+
+/// Encode a u32 value as 4 bytes big-endian.
+pub fn u32_be(value: u32) -> [u8; 4] {
+    value.to_be_bytes()
+}
+
 /// Encode a u64 value as 8 bytes big-endian.
 pub fn u64_be(value: u64) -> [u8; 8] {
     value.to_be_bytes()
@@ -284,6 +293,89 @@ pub fn build_withdraw_signing_bytes(
     result.extend_from_slice(&u64_be(amount));
 
     result
+}
+
+/// Compute a Fuel minted asset ID from a minter contract ID and asset sub ID.
+///
+/// Layout: sha256(contract_id(32) + sub_id(32)).
+pub fn get_minted_asset_id(contract_id: &str, sub_id: &str) -> Result<String, O2Error> {
+    let contract_id = crate::crypto::parse_hex_32(contract_id)?;
+    let sub_id = crate::crypto::parse_hex_32(sub_id)?;
+    let mut hasher = Sha256::new();
+    hasher.update(contract_id);
+    hasher.update(sub_id);
+    Ok(format!("0x{}", hex::encode(hasher.finalize())))
+}
+
+/// Compute the universal FastBridge sub ID from an asset symbol.
+///
+/// Layout: sha256(utf8(asset)).
+pub fn get_fast_bridge_asset_sub_id(asset: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(asset.as_bytes());
+    format!("0x{}", hex::encode(hasher.finalize()))
+}
+
+/// Encode call data for `withdraw_via_fast_bridge_with_fee`.
+///
+/// Actual ABI layout:
+///   b256 sub_id + u32 destination_chain + b256 recipient + u64 fee_quote
+pub fn encode_withdraw_via_fast_bridge_with_fee_call_data(
+    asset_sub_id: &str,
+    destination_chain_id: u32,
+    recipient_address: &str,
+    fee_quote: u64,
+) -> Result<Vec<u8>, O2Error> {
+    let asset_sub_id = crate::crypto::parse_hex_32(asset_sub_id)?;
+    let recipient = recipient_address
+        .strip_prefix("0x")
+        .unwrap_or(recipient_address);
+    let recipient_bytes = hex::decode(recipient)
+        .map_err(|e| O2Error::CryptoError(format!("Invalid EVM recipient hex: {e}")))?;
+    if recipient_bytes.len() > 32 {
+        return Err(O2Error::InvalidRequest(format!(
+            "EVM recipient must be at most 32 bytes, got {}",
+            recipient_bytes.len()
+        )));
+    }
+
+    let mut padded_recipient = [0u8; 32];
+    let start = 32 - recipient_bytes.len();
+    padded_recipient[start..].copy_from_slice(&recipient_bytes);
+
+    let mut result = Vec::with_capacity(76);
+    result.extend_from_slice(&asset_sub_id);
+    result.extend_from_slice(&u32_be(destination_chain_id));
+    result.extend_from_slice(&padded_recipient);
+    result.extend_from_slice(&u64_be(fee_quote));
+    Ok(result)
+}
+
+/// Build owner-signing bytes for `call_contracts` with one
+/// `withdraw_via_fast_bridge_with_fee` call.
+pub fn build_withdraw_to_chain_signing_bytes(
+    nonce: u64,
+    chain_id: u64,
+    asset_registry_contract_id: &str,
+    asset_id: &str,
+    amount: u64,
+    call_data: Vec<u8>,
+) -> Result<Vec<u8>, O2Error> {
+    let call = CallArg {
+        contract_id: crate::crypto::parse_hex_32(asset_registry_contract_id)?,
+        function_selector: function_selector("withdraw_via_fast_bridge_with_fee"),
+        amount,
+        asset_id: crate::crypto::parse_hex_32(asset_id)?,
+        gas: GAS_MAX,
+        call_data: Some(call_data),
+    };
+
+    let mut result = Vec::new();
+    result.extend_from_slice(&u64_be(nonce));
+    result.extend_from_slice(&u64_be(chain_id));
+    result.extend_from_slice(&function_selector("call_contracts"));
+    result.extend_from_slice(&build_actions_signing_bytes(nonce, &[call])[8..]);
+    Ok(result)
 }
 
 /// Convert a high-level `Action` to a low-level `CallArg` and JSON representation.

@@ -971,6 +971,7 @@ pub struct MarketsResponse {
     pub accounts_registry_id: ContractId,
     pub trade_account_oracle_id: ContractId,
     pub fast_bridge_asset_registry_contract_id: Option<ContractId>,
+    pub fast_bridge_minter_contract_id: Option<ContractId>,
     pub chain_id: String,
     pub base_asset_id: AssetId,
     pub markets: Vec<Market>,
@@ -1459,6 +1460,78 @@ impl SessionActionsResponse {
 // Withdraw
 // ---------------------------------------------------------------------------
 
+/// EVM destination for FastBridge withdrawals.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WithdrawToChainDestination {
+    pub chain_id: u32,
+    pub recipient_address: String,
+}
+
+/// Optional contract IDs and fee cap for FastBridge withdrawals.
+#[derive(Debug, Clone, Default)]
+pub struct WithdrawToChainOptions {
+    pub fast_bridge_asset_registry_contract_id: Option<String>,
+    pub fast_bridge_assets_minter_contract_id: Option<String>,
+    pub fee_quote: Option<u64>,
+}
+
+/// Amount input for FastBridge withdrawals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WithdrawToChainAmount {
+    /// Human-readable amount, scaled with 9 decimals.
+    Human(UnsignedDecimal),
+    /// Already-scaled raw chain integer amount.
+    Raw(u64),
+}
+
+impl WithdrawToChainAmount {
+    pub fn to_raw(self) -> Result<u64, O2Error> {
+        match self {
+            Self::Raw(value) => Ok(value),
+            Self::Human(value) => {
+                let factor = Decimal::from(10u64.pow(9));
+                let scaled = (*value.inner() * factor).floor().to_string();
+                scaled.parse::<u64>().map_err(|e| {
+                    O2Error::Other(format!(
+                        "Failed to scale withdraw amount '{}' into u64: {e}",
+                        value
+                    ))
+                })
+            }
+        }
+    }
+}
+
+impl From<u64> for WithdrawToChainAmount {
+    fn from(value: u64) -> Self {
+        Self::Raw(value)
+    }
+}
+
+impl TryFrom<&str> for WithdrawToChainAmount {
+    type Error = O2Error;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(Self::Human(UnsignedDecimal::from_str(value)?))
+    }
+}
+
+impl TryFrom<String> for WithdrawToChainAmount {
+    type Error = O2Error;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Self::try_from(value.as_str())
+    }
+}
+
+impl TryFrom<UnsignedDecimal> for WithdrawToChainAmount {
+    type Error = O2Error;
+
+    fn try_from(value: UnsignedDecimal) -> Result<Self, Self::Error> {
+        Ok(Self::Human(value))
+    }
+}
+
 /// Request body for POST /v1/accounts/withdraw.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WithdrawRequest {
@@ -1477,6 +1550,64 @@ pub struct WithdrawResponse {
     pub code: Option<u32>,
     pub message: Option<String>,
 }
+
+/// Asset reference for a FastBridge withdrawal action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FastBridgeAsset {
+    pub sub_id: String,
+    pub universal: AssetId,
+}
+
+/// EVM recipient payload for a FastBridge withdrawal action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FastBridgeEvmRecipient {
+    pub chain_id: String,
+    pub recipient: FastBridgeRecipientAddress,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FastBridgeRecipientAddress {
+    pub address: String,
+}
+
+/// WithdrawViaFastBridgeWithFee action payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct WithdrawViaFastBridgeWithFeeAction {
+    pub amount: String,
+    pub fee_quote: String,
+    pub asset: FastBridgeAsset,
+    #[serde(rename = "recipient")]
+    pub recipient: FastBridgeRecipient,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum FastBridgeRecipient {
+    Evm(FastBridgeEvmRecipient),
+}
+
+/// A single owner-signed account action.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) enum AccountAction {
+    WithdrawViaFastBridgeWithFee(WithdrawViaFastBridgeWithFeeAction),
+}
+
+/// Request body for POST /v1/accounts/actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct AccountActionsRequest {
+    pub actions: Vec<AccountAction>,
+    pub signature: Signature,
+    pub nonce: String,
+    pub trade_account_id: TradeAccountId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub variable_outputs: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contracts: Option<Vec<ContractId>>,
+}
+
+/// Response from POST /v1/accounts/actions.
+pub type AccountActionsResponse = SessionActionsResponse;
+/// Response from a successful FastBridge withdrawal.
+pub type WithdrawToChainResponse = AccountActionsResponse;
 
 // ---------------------------------------------------------------------------
 // Whitelist

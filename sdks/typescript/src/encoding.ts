@@ -12,7 +12,21 @@
  * - Action signing bytes (session/actions)
  */
 
+import { sha256 } from "@noble/hashes/sha2.js";
+
 // ── Primitives ──────────────────────────────────────────────────────
+
+/** Encode a number or bigint as 4 bytes big-endian (u32). */
+export function u32BE(value: number | bigint): Uint8Array {
+  const v = BigInt(value);
+  if (v < 0n || v > 0xffffffffn) {
+    throw new RangeError(`u32 overflow: ${value}`);
+  }
+  const buf = new Uint8Array(4);
+  const view = new DataView(buf.buffer);
+  view.setUint32(0, Number(v), false);
+  return buf;
+}
 
 /** Encode a number or bigint as 8 bytes big-endian (u64). */
 export function u64BE(value: number | bigint): Uint8Array {
@@ -178,6 +192,75 @@ export function buildWithdrawSigningBytes(
     u64BE(amount),
   ];
   return concat(parts);
+}
+
+// ── FastBridge Withdraw Signing Bytes ───────────────────────────────
+
+/**
+ * Compute a Fuel minted asset ID from a minter contract ID and asset sub ID.
+ *
+ * Layout: sha256(contract_id(32) + sub_id(32)).
+ */
+export function getMintedAssetId(contractId: string, subId: string): string {
+  return bytesToHex(sha256(concat([hexToBytes(contractId), hexToBytes(subId)])));
+}
+
+/**
+ * Compute the universal FastBridge sub ID from an asset symbol.
+ *
+ * Layout: sha256(utf8(asset)).
+ */
+export function getFastBridgeAssetSubId(asset: string): string {
+  return bytesToHex(sha256(new TextEncoder().encode(asset)));
+}
+
+/**
+ * Encode call data for `withdraw_via_fast_bridge_with_fee`.
+ *
+ * Actual ABI layout:
+ *   b256 sub_id + u32 destination_chain + b256 recipient + u64 fee_quote
+ */
+export function encodeWithdrawViaFastBridgeWithFeeCallData(params: {
+  assetSubId: string;
+  destinationChainId: string | number | bigint;
+  recipientAddress: string;
+  feeQuote: bigint;
+}): Uint8Array {
+  return concat([
+    hexToBytes(params.assetSubId),
+    u32BE(BigInt(params.destinationChainId)),
+    leftPadBytes(hexToBytes(params.recipientAddress), 32),
+    u64BE(params.feeQuote),
+  ]);
+}
+
+/**
+ * Build owner-signing bytes for `call_contracts` with one
+ * `withdraw_via_fast_bridge_with_fee` call.
+ */
+export function buildWithdrawToChainSigningBytes(params: {
+  nonce: bigint;
+  chainId: bigint;
+  assetRegistryContractId: string;
+  assetId: string;
+  amount: bigint;
+  callData: Uint8Array;
+}): Uint8Array {
+  return concat([
+    u64BE(params.nonce),
+    u64BE(params.chainId),
+    functionSelector("call_contracts"),
+    buildActionsSigningBytes(params.nonce, [
+      {
+        contractId: hexToBytes(params.assetRegistryContractId),
+        functionSelector: functionSelector("withdraw_via_fast_bridge_with_fee"),
+        amount: params.amount,
+        assetId: hexToBytes(params.assetId),
+        gas: GAS_MAX,
+        callData: params.callData,
+      },
+    ]).slice(8),
+  ]);
 }
 
 // ── Action Signing Bytes ────────────────────────────────────────────
@@ -555,6 +638,16 @@ export function concat(arrays: Uint8Array[]): Uint8Array {
     result.set(a, offset);
     offset += a.length;
   }
+  return result;
+}
+
+/** Left-pad bytes to a fixed length. */
+function leftPadBytes(bytes: Uint8Array, length: number): Uint8Array {
+  if (bytes.length > length) {
+    throw new RangeError(`Cannot left-pad ${bytes.length} bytes to ${length}`);
+  }
+  const result = new Uint8Array(length);
+  result.set(bytes, length - bytes.length);
   return result;
 }
 

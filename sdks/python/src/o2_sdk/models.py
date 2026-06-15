@@ -291,6 +291,8 @@ class MarketsResponse:
     books_registry_id: Id
     accounts_registry_id: Id
     trade_account_oracle_id: Id
+    fast_bridge_asset_registry_contract_id: Id | None
+    fast_bridge_minter_contract_id: Id | None
     chain_id: str
     base_asset_id: Id
     markets: list[Market]
@@ -301,6 +303,10 @@ class MarketsResponse:
             books_registry_id=Id(d.get("books_registry_id") or _ZERO_ID),
             accounts_registry_id=Id(d.get("accounts_registry_id") or _ZERO_ID),
             trade_account_oracle_id=Id(d.get("trade_account_oracle_id") or _ZERO_ID),
+            fast_bridge_asset_registry_contract_id=_parse_id(
+                d.get("fast_bridge_asset_registry_contract_id")
+            ),
+            fast_bridge_minter_contract_id=_parse_id(d.get("fast_bridge_minter_contract_id")),
             chain_id=d.get("chain_id", "0x0000000000000000"),
             base_asset_id=Id(d.get("base_asset_id") or _ZERO_ID),
             markets=[Market.from_dict(m) for m in d.get("markets", [])],
@@ -821,6 +827,26 @@ class ActionsResponse:
     @property
     def success(self) -> bool:
         return self.tx_id is not None
+
+
+WithdrawToChainResponse = ActionsResponse
+
+
+@dataclass
+class WithdrawToChainDestination:
+    """EVM destination for FastBridge withdrawals."""
+
+    chain_id: int
+    recipient_address: str
+
+
+@dataclass
+class WithdrawToChainOptions:
+    """Optional contract IDs and fee cap for FastBridge withdrawals."""
+
+    fast_bridge_asset_registry_contract_id: str | None = None
+    fast_bridge_assets_minter_contract_id: str | None = None
+    fee_quote: int | None = None
 
 
 # ---------------------------------------------------------------------------

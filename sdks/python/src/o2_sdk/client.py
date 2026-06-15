@@ -10,6 +10,7 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
+from decimal import ROUND_DOWN, Decimal, InvalidOperation
 
 from .api import O2Api
 from .config import Network, NetworkConfig, get_config
@@ -28,6 +29,10 @@ from .encoding import (
     build_actions_signing_bytes,
     build_session_signing_bytes,
     build_withdraw_signing_bytes,
+    build_withdraw_to_chain_signing_bytes,
+    encode_withdraw_via_fast_bridge_with_fee_call_data,
+    get_fast_bridge_asset_sub_id,
+    get_minted_asset_id,
 )
 from .errors import InvalidRequest, O2Error, SessionExpired
 from .models import (
@@ -40,6 +45,7 @@ from .models import (
     BoundedMarketOrder,
     CancelOrderAction,
     CancelOrderRequestAction,
+    ChainInt,
     CreateOrderAction,
     CreateOrderRequestAction,
     DepthSnapshot,
@@ -63,6 +69,9 @@ from .models import (
     Trade,
     TradeUpdate,
     WithdrawResponse,
+    WithdrawToChainDestination,
+    WithdrawToChainOptions,
+    WithdrawToChainResponse,
 )
 from .websocket import ConnectionEvent, O2WebSocket
 
@@ -1128,6 +1137,112 @@ class O2Client:
 
         return await self.api.withdraw(owner.b256_address, withdraw_request)
 
+    async def withdraw_to_chain(
+        self,
+        owner: Signer,
+        asset: str,
+        amount: NumericInput,
+        to: WithdrawToChainDestination,
+        options: WithdrawToChainOptions | None = None,
+    ) -> WithdrawToChainResponse:
+        """Withdraw a wrapped asset to an EVM chain via FastBridge.
+
+        Args:
+            owner: Owner signer for the trading account.
+            asset: Bridge asset symbol used to derive the universal sub ID.
+            amount: Human-readable amount scaled with 9 decimals, or
+                ``ChainInt`` for an already-scaled raw amount.
+            to: EVM chain and recipient address.
+            options: Optional FastBridge contract IDs and fee quote cap.
+        """
+        options = options or WithdrawToChainOptions()
+        markets_resp = await self._get_markets_cached()
+        account = await self.api.get_account(owner=owner.b256_address)
+        if account.trade_account_id is None:
+            raise O2Error(
+                message="No trade account found for this wallet. Call setup_account() first."
+            )
+
+        registry_contract_id = (
+            options.fast_bridge_asset_registry_contract_id
+            or markets_resp.fast_bridge_asset_registry_contract_id
+        )
+        if registry_contract_id is None:
+            raise O2Error(
+                message=(
+                    "FastBridge asset registry contract ID is required. Pass "
+                    "fast_bridge_asset_registry_contract_id or use an API that returns "
+                    "fast_bridge_asset_registry_contract_id."
+                )
+            )
+
+        minter_contract_id = (
+            options.fast_bridge_assets_minter_contract_id
+            or markets_resp.fast_bridge_minter_contract_id
+        )
+        if minter_contract_id is None:
+            raise O2Error(
+                message=(
+                    "FastBridge minter contract ID is required. Pass "
+                    "fast_bridge_assets_minter_contract_id or use an API that returns "
+                    "fast_bridge_minter_contract_id."
+                )
+            )
+
+        nonce = account.nonce
+        amount_raw = self._scale_withdraw_to_chain_amount(amount)
+        fee_quote = options.fee_quote
+        if fee_quote is None:
+            fee_quote = amount_raw + amount_raw // 1000
+
+        asset_sub_id = get_fast_bridge_asset_sub_id(asset)
+        asset_id = get_minted_asset_id(str(minter_contract_id), asset_sub_id)
+        call_data = encode_withdraw_via_fast_bridge_with_fee_call_data(
+            asset_sub_id=asset_sub_id,
+            destination_chain_id=to.chain_id,
+            recipient_address=to.recipient_address,
+            fee_quote=fee_quote,
+        )
+        signing_bytes = build_withdraw_to_chain_signing_bytes(
+            nonce=nonce,
+            chain_id=markets_resp.chain_id_int,
+            asset_registry_contract_id=str(registry_contract_id),
+            asset_id=asset_id,
+            amount=amount_raw,
+            call_data=call_data,
+        )
+        signature = owner.personal_sign(signing_bytes)
+
+        request = {
+            "actions": [
+                {
+                    "WithdrawViaFastBridgeWithFee": {
+                        "amount": str(amount_raw),
+                        "fee_quote": str(fee_quote),
+                        "asset": {
+                            "sub_id": asset_sub_id,
+                            "universal": asset_id,
+                        },
+                        "recipient": {
+                            "Evm": {
+                                "chain_id": str(to.chain_id),
+                                "recipient": {
+                                    "address": to.recipient_address,
+                                },
+                            },
+                        },
+                    },
+                },
+            ],
+            "signature": {"Secp256k1": "0x" + signature.hex()},
+            "nonce": str(nonce),
+            "trade_account_id": account.trade_account_id,
+            "variable_outputs": 1,
+            "contracts": [str(registry_contract_id)],
+        }
+
+        return await self.api.submit_account_actions(owner.b256_address, request)
+
     # -----------------------------------------------------------------------
     # Nonce management
     # -----------------------------------------------------------------------
@@ -1182,6 +1297,19 @@ class O2Client:
         if isinstance(market, Market):
             return market
         return await self._resolve_market_async(market)
+
+    def _scale_withdraw_to_chain_amount(self, amount: NumericInput) -> int:
+        if isinstance(amount, ChainInt):
+            return amount.value
+        try:
+            parsed = Decimal(str(amount).strip())
+        except (InvalidOperation, ValueError) as err:
+            raise O2Error(message=f"Invalid amount: {amount!r}") from err
+        if not parsed.is_finite():
+            raise O2Error(message="Amount must be finite")
+        if parsed < 0:
+            raise O2Error(message="Amount must be non-negative")
+        return int((parsed * (Decimal(10) ** 9)).to_integral_value(rounding=ROUND_DOWN))
 
     def _get_market_info_by_id(self, markets_resp: MarketsResponse, market_id: str) -> dict:
         """Get market info dict needed by action_to_call."""

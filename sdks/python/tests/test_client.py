@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from o2_sdk import (
+    AccountInfo,
     ActionsResponse,
     AddressIdentity,
     ChainInt,
@@ -17,6 +18,8 @@ from o2_sdk import (
     OrderSide,
     SessionInfo,
     SettleBalanceAction,
+    WithdrawToChainDestination,
+    WithdrawToChainOptions,
 )
 
 
@@ -137,6 +140,81 @@ async def test_batch_actions_normalizes_builder_group(monkeypatch: pytest.Monkey
     assert actions[1]["CreateOrder"]["quantity"] == "5000000000"
     assert actions[1]["CreateOrder"]["order_type"] == "Spot"
     assert actions[2]["CancelOrder"]["order_id"] == "0x" + "09" * 32
+
+
+@pytest.mark.asyncio
+async def test_withdraw_to_chain_builds_account_action_request(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    market = _test_market()
+    client._markets_cache = _test_markets_response(market)
+
+    class Owner:
+        b256_address = "0x" + "88" * 32
+
+        def personal_sign(self, message: bytes) -> bytes:
+            assert message == b"signed-payload"
+            return b"\x99" * 64
+
+    async def fake_get_account(
+        owner: str | None = None,
+        trade_account_id: str | None = None,
+    ) -> AccountInfo:
+        assert owner == Owner.b256_address
+        assert trade_account_id is None
+        return AccountInfo.from_dict(
+            {
+                "trade_account_id": "0x" + "66" * 32,
+                "trade_account": {
+                    "contract_id": "0x" + "66" * 32,
+                    "nonce": "7",
+                    "owner": {"Address": Owner.b256_address},
+                },
+            }
+        )
+
+    captured: dict = {}
+
+    async def fake_submit_account_actions(owner: str, request: dict) -> ActionsResponse:
+        captured["owner"] = owner
+        captured["request"] = request
+        return ActionsResponse.from_dict({"tx_id": "0x" + "aa" * 32})
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+    monkeypatch.setattr(client.api, "submit_account_actions", fake_submit_account_actions)
+    monkeypatch.setattr(
+        "o2_sdk.client.build_withdraw_to_chain_signing_bytes",
+        lambda **_kwargs: b"signed-payload",
+    )
+
+    result = await client.withdraw_to_chain(
+        owner=Owner(),
+        asset="uwUSDC",
+        amount="1000",
+        to=WithdrawToChainDestination(
+            chain_id=8453,
+            recipient_address="0x1111111111111111111111111111111111111111",
+        ),
+        options=WithdrawToChainOptions(
+            fast_bridge_asset_registry_contract_id="0x" + "33" * 32,
+            fast_bridge_assets_minter_contract_id="0x" + "44" * 32,
+        ),
+    )
+
+    assert result.tx_id == "0x" + "aa" * 32
+    assert captured["owner"] == Owner.b256_address
+    request = captured["request"]
+    assert request["nonce"] == "7"
+    assert request["trade_account_id"] == "0x" + "66" * 32
+    assert request["variable_outputs"] == 1
+    assert request["contracts"] == ["0x" + "33" * 32]
+    assert request["signature"] == {"Secp256k1": "0x" + "99" * 64}
+    action = request["actions"][0]["WithdrawViaFastBridgeWithFee"]
+    assert action["amount"] == "1000000000000"
+    assert action["fee_quote"] == "1001000000000"
+    assert action["recipient"]["Evm"]["chain_id"] == "8453"
+    assert action["recipient"]["Evm"]["recipient"]["address"] == (
+        "0x1111111111111111111111111111111111111111"
+    )
 
 
 @pytest.mark.asyncio

@@ -13,9 +13,15 @@ Implements the exact byte layouts from the O2 integration guide:
 
 from __future__ import annotations
 
+import hashlib
 import struct
 
 GAS_MAX = 18446744073709551615  # u64::MAX
+
+
+def u32_be(value: int) -> bytes:
+    """Encode an integer as 4 bytes big-endian (u32)."""
+    return struct.pack(">I", value)
 
 
 def u64_be(value: int) -> bytes:
@@ -212,6 +218,78 @@ def build_withdraw_signing_bytes(
     result += u64_be(amount)
 
     return bytes(result)
+
+
+def _hex_to_bytes(value: str) -> bytes:
+    raw = value[2:] if value.lower().startswith("0x") else value
+    return bytes.fromhex(raw)
+
+
+def _left_pad_bytes(value: bytes, length: int) -> bytes:
+    if len(value) > length:
+        raise ValueError(f"Value must be at most {length} bytes, got {len(value)}")
+    return bytes(length - len(value)) + value
+
+
+def get_minted_asset_id(contract_id: str, sub_id: str) -> str:
+    """Compute a Fuel minted asset ID from a minter contract ID and asset sub ID.
+
+    Layout: sha256(contract_id(32) + sub_id(32)).
+    """
+    digest = hashlib.sha256(_hex_to_bytes(contract_id) + _hex_to_bytes(sub_id)).hexdigest()
+    return "0x" + digest
+
+
+def get_fast_bridge_asset_sub_id(asset: str) -> str:
+    """Compute the universal FastBridge sub ID from an asset symbol.
+
+    Layout: sha256(utf8(asset)).
+    """
+    return "0x" + hashlib.sha256(asset.encode("utf-8")).hexdigest()
+
+
+def encode_withdraw_via_fast_bridge_with_fee_call_data(
+    asset_sub_id: str,
+    destination_chain_id: int,
+    recipient_address: str,
+    fee_quote: int,
+) -> bytes:
+    """Encode call data for ``withdraw_via_fast_bridge_with_fee``.
+
+    Actual ABI layout:
+      b256 sub_id + u32 destination_chain + b256 recipient + u64 fee_quote
+    """
+    return (
+        _hex_to_bytes(asset_sub_id)
+        + u32_be(destination_chain_id)
+        + _left_pad_bytes(_hex_to_bytes(recipient_address), 32)
+        + u64_be(fee_quote)
+    )
+
+
+def build_withdraw_to_chain_signing_bytes(
+    nonce: int,
+    chain_id: int,
+    asset_registry_contract_id: str,
+    asset_id: str,
+    amount: int,
+    call_data: bytes,
+) -> bytes:
+    """Build owner-signing bytes for ``call_contracts`` with one FastBridge call."""
+    call = {
+        "contract_id": _hex_to_bytes(asset_registry_contract_id),
+        "function_selector": function_selector("withdraw_via_fast_bridge_with_fee"),
+        "amount": amount,
+        "asset_id": _hex_to_bytes(asset_id),
+        "gas": GAS_MAX,
+        "call_data": call_data,
+    }
+    return (
+        u64_be(nonce)
+        + u64_be(chain_id)
+        + function_selector("call_contracts")
+        + build_actions_signing_bytes(nonce, [call])[8:]
+    )
 
 
 def action_to_call(action: dict, market_info: dict) -> dict:
