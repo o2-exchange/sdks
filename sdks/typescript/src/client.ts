@@ -1086,8 +1086,7 @@ export class O2Client {
     const assetRegistryContractId = toContractId(assetRegistryContractIdRaw);
 
     const minterContractIdRaw =
-      options.fastBridgeAssetsMinterContractId ??
-      marketsData.fast_bridge_minter_contract_id;
+      options.fastBridgeAssetsMinterContractId ?? marketsData.fast_bridge_minter_contract_id;
     if (!minterContractIdRaw) {
       throw new O2Error(
         "FastBridge minter contract ID is required. Pass fastBridgeAssetsMinterContractId or use an API that returns fast_bridge_minter_contract_id.",
