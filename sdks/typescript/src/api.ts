@@ -207,6 +207,10 @@ export class O2Api {
         typeof raw.fast_bridge_asset_registry_contract_id === "string"
           ? hexIdTrusted<"ContractId">(raw.fast_bridge_asset_registry_contract_id)
           : undefined,
+      fast_bridge_minter_contract_id:
+        typeof raw.fast_bridge_minter_contract_id === "string"
+          ? hexIdTrusted<"ContractId">(raw.fast_bridge_minter_contract_id)
+          : undefined,
       chain_id: raw.chain_id as string,
       base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
