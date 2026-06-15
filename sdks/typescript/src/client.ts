@@ -180,8 +180,13 @@ export interface WithdrawToChainOptions {
    * `/v1/markets` when available.
    */
   fastBridgeAssetRegistryContractId?: ContractId | string;
-  /** FastBridge assets minter contract ID. Required for minted asset ID derivation. */
-  fastBridgeAssetsMinterContractId: ContractId | string;
+  /**
+   * FastBridge assets minter contract ID.
+   *
+   * Defaults to the `fast_bridge_minter_contract_id` returned by
+   * `/v1/markets` when available.
+   */
+  fastBridgeAssetsMinterContractId?: ContractId | string;
   feeQuote?: bigint;
 }
 

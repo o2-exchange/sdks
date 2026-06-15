@@ -159,8 +159,15 @@ async def test_withdraw_to_chain_builds_account_action_request(monkeypatch: pyte
         owner: str | None = None,
         trade_account_id: str | None = None,
     ) -> AccountInfo:
-        assert owner == Owner.b256_address
-        assert trade_account_id is None
+        if owner == Owner.b256_address:
+            assert trade_account_id is None
+            return AccountInfo.from_dict(
+                {
+                    "trade_account_id": "0x" + "66" * 32,
+                }
+            )
+        assert owner is None
+        assert trade_account_id == "0x" + "66" * 32
         return AccountInfo.from_dict(
             {
                 "trade_account_id": "0x" + "66" * 32,

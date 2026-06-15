@@ -1162,6 +1162,7 @@ class O2Client:
             raise O2Error(
                 message="No trade account found for this wallet. Call setup_account() first."
             )
+        trade_account_id = str(account.trade_account_id)
 
         registry_contract_id = (
             options.fast_bridge_asset_registry_contract_id
@@ -1189,7 +1190,8 @@ class O2Client:
                 )
             )
 
-        nonce = account.nonce
+        nonce_account = await self.api.get_account(trade_account_id=trade_account_id)
+        nonce = nonce_account.nonce
         amount_raw = self._scale_withdraw_to_chain_amount(amount)
         fee_quote = options.fee_quote
         if fee_quote is None:
@@ -1236,7 +1238,7 @@ class O2Client:
             ],
             "signature": {"Secp256k1": "0x" + signature.hex()},
             "nonce": str(nonce),
-            "trade_account_id": account.trade_account_id,
+            "trade_account_id": trade_account_id,
             "variable_outputs": 1,
             "contracts": [str(registry_contract_id)],
         }

@@ -1310,10 +1310,7 @@ impl O2Client {
                 "No trade account found for this wallet. Call setup_account() first.".into(),
             )
         })?;
-        let nonce = Self::parse_account_nonce(
-            account.trade_account.as_ref().map(|ta| ta.nonce),
-            "withdraw_to_chain account response",
-        )?;
+        let nonce = self.get_nonce(trade_account_id.as_str()).await?;
 
         let (chain_id, registry_contract_id, minter_contract_id) = {
             let markets = self.ensure_markets().await?;
