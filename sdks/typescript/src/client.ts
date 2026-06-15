@@ -44,7 +44,11 @@ import {
   buildActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
+  buildWithdrawToChainSigningBytes,
   type ContractCall,
+  encodeWithdrawViaFastBridgeWithFeeCallData,
+  getFastBridgeAssetSubId,
+  getMintedAssetId,
   type MarketInfo,
   scaleDecimalString,
   scalePriceString,
@@ -58,6 +62,7 @@ import type {
   BalanceResponse,
   BalanceUpdate,
   Bar,
+  ContractId,
   DepthSnapshot,
   DepthUpdate,
   FaucetResponse,
@@ -75,8 +80,15 @@ import type {
   TradeAccountId,
   TradeUpdate,
   WalletState,
+  WithdrawToChainResponse,
 } from "./models.js";
-import { depthPrecision, tradeAccountId } from "./models.js";
+import {
+  depthPrecision,
+  assetId as toAssetId,
+  contractId as toContractId,
+  tradeAccountId,
+} from "./models.js";
+
 import {
   capitalizeSide,
   ensureNumeric,
@@ -106,6 +118,10 @@ function toMarketInfo(market: Market): MarketInfo {
       symbol: market.quote.symbol,
     },
   };
+}
+
+function parseChainId(chainId: string): bigint {
+  return BigInt(chainId);
 }
 
 /**
@@ -141,6 +157,37 @@ export interface CreateOrderOptions {
   collectOrders?: boolean;
   /** Explicit session to use for this order. Defaults to the client's active session. */
   session?: SessionState;
+}
+
+/**
+ * EVM destination for {@link O2Client.withdrawToChain}.
+ */
+export interface WithdrawToChainDestination {
+  /** Destination EVM chain ID. */
+  chainId: string | number | bigint;
+  /** Destination EVM recipient address. */
+  recipientAddress: string;
+}
+
+/**
+ * Options for {@link O2Client.withdrawToChain}.
+ */
+export interface WithdrawToChainOptions {
+  /**
+   * FastBridge asset registry contract ID.
+   *
+   * Defaults to the `fast_bridge_asset_registry_contract_id` returned by
+   * `/v1/markets` when available.
+   */
+  fastBridgeAssetRegistryContractId?: ContractId | string;
+  /**
+   * FastBridge assets minter contract ID.
+   *
+   * Defaults to the `fast_bridge_minter_contract_id` returned by
+   * `/v1/markets` when available.
+   */
+  fastBridgeAssetsMinterContractId?: ContractId | string;
+  feeQuote?: bigint;
 }
 
 /**
@@ -351,11 +398,7 @@ export class O2Client {
    * @throws {@link O2Error} if no trade account exists or faucet is unavailable.
    */
   async topUpFromFaucet(wallet: Signer): Promise<FaucetResponse> {
-    const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
-    const tradeAccountId = accountInfo.trade_account_id;
-    if (!tradeAccountId) {
-      throw new O2Error("No trade account found for this wallet. Call setupAccount() first.");
-    }
+    const tradeAccountId = await this.getTradeAccountIdForOwner(wallet);
     return this.api.mintToContract(tradeAccountId);
   }
 
@@ -376,11 +419,7 @@ export class O2Client {
     expiryDays = 30,
   ): Promise<SessionState> {
     // Resolve trade account
-    const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
-    const tradeAccountId = accountInfo.trade_account_id;
-    if (!tradeAccountId) {
-      throw new O2Error("No trade account found for this wallet. Call setupAccount() first.");
-    }
+    const tradeAccountId = await this.getTradeAccountIdForOwner(wallet);
 
     // Resolve markets
     const marketsData = await this.fetchMarkets();
@@ -391,11 +430,7 @@ export class O2Client {
     const contractIds = resolvedMarkets.map((m) => m.contract_id);
 
     // Parse chain_id
-    const chainId = BigInt(
-      marketsData.chain_id.startsWith("0x")
-        ? Number.parseInt(marketsData.chain_id, 16)
-        : marketsData.chain_id,
-    );
+    const chainId = parseChainId(marketsData.chain_id);
 
     // Generate session keypair
     const sessionWallet = generateWallet();
@@ -961,20 +996,13 @@ export class O2Client {
    */
   async withdraw(wallet: Signer, asset: string, amount: Numeric, to?: string) {
     // Resolve trade account from wallet
-    const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
-    const tradeAccountId = accountInfo.trade_account_id;
-    if (!tradeAccountId) {
-      throw new O2Error("No trade account found for this wallet. Call setupAccount() first.");
-    }
+    const tradeAccountId = await this.getTradeAccountIdForOwner(wallet);
 
     // Fetch nonce by trade account ID (owner lookups may omit trade_account state)
     const nonce = await this.getNonce(tradeAccountId);
 
     const marketsData = await this.fetchMarkets();
-    const chainIdRaw = marketsData.chain_id;
-    const chainId = BigInt(
-      chainIdRaw.startsWith("0x") ? Number.parseInt(chainIdRaw, 16) : chainIdRaw,
-    );
+    const chainId = parseChainId(marketsData.chain_id);
 
     // Resolve asset
     const { assetId, decimals } = this.resolveAsset(marketsData, asset);
@@ -1022,6 +1050,108 @@ export class O2Client {
     });
   }
 
+  /**
+   * Withdraw a wrapped asset from a trading account to an EVM chain via FastBridge.
+   *
+   * This constructs the owner-signed account action payload locally. It does not
+   * perform a Fuel RPC dry-run; backend/on-chain validation errors are returned
+   * by the account-actions endpoint.
+   *
+   * @param wallet - The owner wallet (not session key).
+   * @param asset - Bridge asset symbol used to derive the universal sub ID, e.g. uwETH, uwUSDC, uwUSDT...
+   * @param amount - Amount as human-readable string with 9 decimals or raw bigint.
+   * @param to - EVM destination chain and recipient.
+   * @param options - Bridge contract IDs.
+   */
+  async withdrawToChain(
+    wallet: Signer,
+    asset: string,
+    amount: Numeric,
+    to: WithdrawToChainDestination,
+    options: WithdrawToChainOptions,
+  ): Promise<WithdrawToChainResponse> {
+    const tradeAccountId = await this.getTradeAccountIdForOwner(wallet);
+
+    const nonce = await this.getNonce(tradeAccountId);
+    const marketsData = await this.fetchMarkets();
+    const chainId = parseChainId(marketsData.chain_id);
+    const assetRegistryContractIdRaw =
+      options.fastBridgeAssetRegistryContractId ??
+      marketsData.fast_bridge_asset_registry_contract_id;
+    if (!assetRegistryContractIdRaw) {
+      throw new O2Error(
+        "FastBridge asset registry contract ID is required. Pass fastBridgeAssetRegistryContractId or use an API that returns fast_bridge_asset_registry_contract_id.",
+      );
+    }
+    const assetRegistryContractId = toContractId(assetRegistryContractIdRaw);
+
+    const minterContractIdRaw =
+      options.fastBridgeAssetsMinterContractId ?? marketsData.fast_bridge_minter_contract_id;
+    if (!minterContractIdRaw) {
+      throw new O2Error(
+        "FastBridge minter contract ID is required. Pass fastBridgeAssetsMinterContractId or use an API that returns fast_bridge_minter_contract_id.",
+      );
+    }
+    const assetsMinterContractId = toContractId(minterContractIdRaw);
+
+    let coins: bigint;
+    const normalizedAmount = ensureNumeric(amount, "amount");
+    if (typeof normalizedAmount === "bigint") {
+      coins = normalizedAmount;
+    } else {
+      coins = scaleDecimalString(normalizedAmount, 9);
+    }
+
+    // Use a fee quote of 0.1% if not provided by caller.
+    // Not all of the quote is used as fee — this is a max cap
+    const feeQuote = options.feeQuote ?? coins + coins / 1000n;
+    const assetSubId = getFastBridgeAssetSubId(asset);
+    const assetId = toAssetId(getMintedAssetId(assetsMinterContractId, assetSubId));
+    const callData = encodeWithdrawViaFastBridgeWithFeeCallData({
+      assetSubId,
+      destinationChainId: to.chainId,
+      recipientAddress: to.recipientAddress,
+      feeQuote,
+    });
+    const signingBytes = buildWithdrawToChainSigningBytes({
+      nonce,
+      chainId,
+      assetRegistryContractId,
+      assetId,
+      amount: coins,
+      callData,
+    });
+    const signature = await wallet.personalSign(signingBytes);
+
+    return this.api.submitAccountActions(wallet.b256Address, {
+      actions: [
+        {
+          WithdrawViaFastBridgeWithFee: {
+            amount: coins.toString(),
+            fee_quote: feeQuote.toString(),
+            asset: {
+              sub_id: assetSubId,
+              universal: assetId,
+            },
+            recipient: {
+              Evm: {
+                chain_id: to.chainId.toString(),
+                recipient: {
+                  address: to.recipientAddress,
+                },
+              },
+            },
+          },
+        },
+      ],
+      signature: { Secp256k1: bytesToHex(signature) },
+      nonce: nonce.toString(),
+      trade_account_id: tradeAccountId,
+      variable_outputs: 1,
+      contracts: [assetRegistryContractId],
+    });
+  }
+
   // ── Nonce management ────────────────────────────────────────────
 
   /**
@@ -1052,6 +1182,15 @@ export class O2Client {
   }
 
   // ── Internal helpers ────────────────────────────────────────────
+
+  protected async getTradeAccountIdForOwner(wallet: Signer): Promise<TradeAccountId> {
+    const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
+    const tradeAccountId = accountInfo.trade_account_id;
+    if (!tradeAccountId) {
+      throw new O2Error("No trade account found for this wallet. Call setupAccount() first.");
+    }
+    return tradeAccountId;
+  }
 
   protected async fetchMarkets(): Promise<MarketsResponse> {
     const now = Date.now();

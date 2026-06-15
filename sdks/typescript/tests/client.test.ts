@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Signer } from "../src/crypto.js";
+import { getFastBridgeAssetSubId, getMintedAssetId } from "../src/encoding.js";
 import { Network, O2Client } from "../src/index.js";
 import {
   type AccountInfo,
@@ -19,6 +20,8 @@ const MARKET_CONTRACT_ID = contractId(`0x${"44".repeat(32)}`);
 const BASE_ASSET_ID = assetId(`0x${"55".repeat(32)}`);
 const QUOTE_ASSET_ID = assetId(`0x${"66".repeat(32)}`);
 const DESTINATION = `0x${"77".repeat(32)}`;
+const FAST_BRIDGE_ASSET_REGISTRY_CONTRACT_ID = contractId(`0x${"a1".repeat(32)}`);
+const FAST_BRIDGE_ASSETS_MINTER_CONTRACT_ID = contractId(`0x${"b2".repeat(32)}`);
 
 const MARKET: Market = {
   contract_id: MARKET_CONTRACT_ID,
@@ -76,6 +79,8 @@ const MARKETS_RESPONSE: MarketsResponse = {
   books_registry_id: contractId(`0x${"88".repeat(32)}`),
   accounts_registry_id: contractId(`0x${"99".repeat(32)}`),
   trade_account_oracle_id: contractId(`0x${"aa".repeat(32)}`),
+  fast_bridge_asset_registry_contract_id: FAST_BRIDGE_ASSET_REGISTRY_CONTRACT_ID,
+  fast_bridge_minter_contract_id: FAST_BRIDGE_ASSETS_MINTER_CONTRACT_ID,
   chain_id: "0x0",
   base_asset_id: BASE_ASSET_ID,
   markets: [MARKET],
@@ -269,6 +274,87 @@ describe("O2Client sign paths", () => {
           );
           expect(personalSign).toHaveBeenCalledTimes(1);
           expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(7n);
+        });
+
+        it("withdrawToChain submits a FastBridge account action", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer, personalSign } = makeSigner();
+
+          const ownerLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: null,
+            session: null,
+          };
+          const nonceLookup: AccountInfo = {
+            trade_account_id: TRADE_ACCOUNT_ID,
+            trade_account: {
+              last_modification: 0,
+              nonce: 11n,
+              owner: { Address: OWNER },
+            },
+            session: null,
+          };
+
+          const getAccountSpy = vi
+            .spyOn(client.api, "getAccount")
+            .mockResolvedValueOnce(ownerLookup)
+            .mockResolvedValueOnce(nonceLookup);
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const submitAccountActionsSpy = vi
+            .spyOn(client.api, "submitAccountActions")
+            .mockResolvedValue({ tx_id: `0x${"cc".repeat(32)}` as any });
+
+          await client.withdrawToChain(
+            signer,
+            "USDC",
+            "1000",
+            {
+              chainId: 1,
+              recipientAddress: "0x1111111111111111111111111111111111111111",
+            },
+            {
+              fastBridgeAssetsMinterContractId: FAST_BRIDGE_ASSETS_MINTER_CONTRACT_ID,
+            },
+          );
+
+          expect(getAccountSpy).toHaveBeenNthCalledWith(1, { owner: OWNER });
+          expect(getAccountSpy).toHaveBeenNthCalledWith(2, { tradeAccountId: TRADE_ACCOUNT_ID });
+          expect(submitAccountActionsSpy).toHaveBeenCalledWith(
+            OWNER,
+            expect.objectContaining({
+              nonce: "11",
+              trade_account_id: TRADE_ACCOUNT_ID,
+              variable_outputs: 1,
+              contracts: [FAST_BRIDGE_ASSET_REGISTRY_CONTRACT_ID],
+              actions: [
+                {
+                  WithdrawViaFastBridgeWithFee: expect.objectContaining({
+                    amount: "1000000000000",
+                    fee_quote: "1001000000000",
+                    asset: {
+                      sub_id: getFastBridgeAssetSubId("USDC"),
+                      universal: assetId(
+                        getMintedAssetId(
+                          FAST_BRIDGE_ASSETS_MINTER_CONTRACT_ID,
+                          getFastBridgeAssetSubId("USDC"),
+                        ),
+                      ),
+                    },
+                    recipient: {
+                      Evm: {
+                        chain_id: "1",
+                        recipient: {
+                          address: "0x1111111111111111111111111111111111111111",
+                        },
+                      },
+                    },
+                  }),
+                },
+              ],
+            }),
+          );
+          expect(personalSign).toHaveBeenCalledTimes(1);
+          expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(11n);
         });
       });
 

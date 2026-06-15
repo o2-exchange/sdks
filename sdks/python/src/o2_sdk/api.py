@@ -429,6 +429,18 @@ class O2Api:
         )
         return WithdrawResponse.from_dict(data)
 
+    async def submit_account_actions(self, owner_id: str, actions_request: dict) -> ActionsResponse:
+        data = await self._request(
+            "POST",
+            "/v1/accounts/actions",
+            json=actions_request,
+            headers={"O2-Owner-Id": owner_id},
+        )
+        result = ActionsResponse.from_dict(data)
+        if not result.success:
+            raise_for_error(data)
+        return result
+
     # -----------------------------------------------------------------------
     # Analytics
     # -----------------------------------------------------------------------

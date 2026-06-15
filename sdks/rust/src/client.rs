@@ -15,7 +15,9 @@ use crate::crypto::{
     to_hex_string, EvmWallet, Wallet,
 };
 use crate::encoding::{
-    build_actions_signing_bytes, build_session_signing_bytes, build_withdraw_signing_bytes, CallArg,
+    build_actions_signing_bytes, build_session_signing_bytes, build_withdraw_signing_bytes,
+    build_withdraw_to_chain_signing_bytes, encode_withdraw_via_fast_bridge_with_fee_call_data,
+    get_fast_bridge_asset_sub_id, get_minted_asset_id, CallArg,
 };
 use crate::errors::O2Error;
 use crate::models::*;
@@ -1283,6 +1285,123 @@ impl O2Client {
         self.api.withdraw(&owner_hex, &request).await
     }
 
+    /// Withdraw a wrapped asset from a trading account to an EVM chain via FastBridge.
+    ///
+    /// This constructs the owner-signed account action payload locally. It does not
+    /// perform a Fuel RPC dry-run; backend/on-chain validation errors are returned
+    /// by the account-actions endpoint.
+    pub async fn withdraw_to_chain<W: SignableWallet>(
+        &mut self,
+        owner: &W,
+        asset: &str,
+        amount: WithdrawToChainAmount,
+        to: WithdrawToChainDestination,
+        options: WithdrawToChainOptions,
+    ) -> Result<WithdrawToChainResponse, O2Error> {
+        debug!(
+            "client.withdraw_to_chain asset={} amount={:?} chain_id={} recipient={}",
+            asset, amount, to.chain_id, to.recipient_address
+        );
+
+        let owner_hex = to_hex_string(owner.b256_address());
+        let account = self.api.get_account_by_owner(&owner_hex).await?;
+        let trade_account_id = account.trade_account_id.ok_or_else(|| {
+            O2Error::AccountNotFound(
+                "No trade account found for this wallet. Call setup_account() first.".into(),
+            )
+        })?;
+        let nonce = self.get_nonce(trade_account_id.as_str()).await?;
+
+        let (chain_id, registry_contract_id, minter_contract_id) = {
+            let markets = self.ensure_markets().await?;
+            let chain_id_hex = markets.chain_id.as_str();
+            let stripped = chain_id_hex.strip_prefix("0x").unwrap_or(chain_id_hex);
+            let chain_id = u64::from_str_radix(stripped, 16)
+                .map_err(|e| O2Error::Other(format!("Failed to parse chain_id: {e}")))?;
+            let registry = options
+                .fast_bridge_asset_registry_contract_id
+                .clone()
+                .or_else(|| {
+                    markets
+                        .fast_bridge_asset_registry_contract_id
+                        .as_ref()
+                        .map(|id| id.as_str().to_string())
+                })
+                .ok_or_else(|| {
+                    O2Error::InvalidRequest(
+                        "FastBridge asset registry contract ID is required. Pass fast_bridge_asset_registry_contract_id or use an API that returns fast_bridge_asset_registry_contract_id.".into(),
+                    )
+                })?;
+            let minter = options
+                .fast_bridge_assets_minter_contract_id
+                .clone()
+                .or_else(|| {
+                    markets
+                        .fast_bridge_minter_contract_id
+                        .as_ref()
+                        .map(|id| id.as_str().to_string())
+                })
+                .ok_or_else(|| {
+                    O2Error::InvalidRequest(
+                        "FastBridge minter contract ID is required. Pass fast_bridge_assets_minter_contract_id or use an API that returns fast_bridge_minter_contract_id.".into(),
+                    )
+                })?;
+            (chain_id, registry, minter)
+        };
+
+        let amount_raw = amount.to_raw()?;
+        let fee_quote = match options.fee_quote {
+            Some(value) => value,
+            None => amount_raw
+                .checked_add(amount_raw / 1000)
+                .ok_or_else(|| O2Error::Other("FastBridge fee quote overflow".into()))?,
+        };
+        let asset_sub_id = get_fast_bridge_asset_sub_id(asset);
+        let asset_id = get_minted_asset_id(&minter_contract_id, &asset_sub_id)?;
+        let call_data = encode_withdraw_via_fast_bridge_with_fee_call_data(
+            &asset_sub_id,
+            to.chain_id,
+            &to.recipient_address,
+            fee_quote,
+        )?;
+        let signing_bytes = build_withdraw_to_chain_signing_bytes(
+            nonce,
+            chain_id,
+            &registry_contract_id,
+            &asset_id,
+            amount_raw,
+            call_data,
+        )?;
+        let signature = owner.personal_sign(&signing_bytes)?;
+        let sig_hex = to_hex_string(&signature);
+
+        let request = AccountActionsRequest {
+            actions: vec![AccountAction::WithdrawViaFastBridgeWithFee(
+                WithdrawViaFastBridgeWithFeeAction {
+                    amount: amount_raw.to_string(),
+                    fee_quote: fee_quote.to_string(),
+                    asset: FastBridgeAsset {
+                        sub_id: asset_sub_id,
+                        universal: AssetId::new(asset_id),
+                    },
+                    recipient: FastBridgeRecipient::Evm(FastBridgeEvmRecipient {
+                        chain_id: to.chain_id.to_string(),
+                        recipient: FastBridgeRecipientAddress {
+                            address: to.recipient_address,
+                        },
+                    }),
+                },
+            )],
+            signature: Signature::Secp256k1(sig_hex),
+            nonce: nonce.to_string(),
+            trade_account_id,
+            variable_outputs: Some(1),
+            contracts: Some(vec![ContractId::new(registry_contract_id)]),
+        };
+
+        self.api.submit_account_actions(&owner_hex, &request).await
+    }
+
     // -----------------------------------------------------------------------
     // WebSocket Streaming (shared connection)
     // -----------------------------------------------------------------------
@@ -1425,6 +1544,7 @@ mod tests {
             accounts_registry_id: ContractId::new("0x2"),
             trade_account_oracle_id: ContractId::new("0x3"),
             fast_bridge_asset_registry_contract_id: None,
+            fast_bridge_minter_contract_id: None,
             chain_id: "0x0".to_string(),
             base_asset_id: AssetId::new("0x4"),
             markets: Vec::new(),

@@ -31,6 +31,11 @@ fn test_u64_be_known_value() {
 }
 
 #[test]
+fn test_u32_be_known_value() {
+    assert_eq!(u32_be(8453), [0x00, 0x00, 0x21, 0x05]);
+}
+
+#[test]
 fn test_function_selector_create_order() {
     let sel = function_selector("create_order");
     // u64_be(12) + "create_order"
@@ -309,6 +314,72 @@ fn test_build_actions_signing_bytes_single_call() {
     assert_eq!(&bytes[offset..offset + 8], &u64_be(8)); // call_data length
     offset += 8;
     assert_eq!(&bytes[offset..offset + 8], &call_data);
+}
+
+#[test]
+fn test_fast_bridge_sub_id_and_minted_asset_id() {
+    let sub_id = get_fast_bridge_asset_sub_id("uwUSDC");
+    assert_eq!(
+        sub_id,
+        "0xd04028f798e9831acba65f305b4f69124a6178406d2188a7b995a6f7116acb20"
+    );
+
+    let contract_id = format!("0x{}", "11".repeat(32));
+    let minted_asset_id = get_minted_asset_id(&contract_id, &sub_id).unwrap();
+    assert_eq!(
+        minted_asset_id,
+        "0x4653262770b205c0334900cb237bd6b3eeafa9faa8b70b9aec2933e647f61943"
+    );
+}
+
+#[test]
+fn test_encode_withdraw_via_fast_bridge_with_fee_call_data() {
+    let sub_id = format!("0x{}", "22".repeat(32));
+    let recipient = "0x1111111111111111111111111111111111111111";
+    let bytes =
+        encode_withdraw_via_fast_bridge_with_fee_call_data(&sub_id, 8453, recipient, 1_001_000)
+            .unwrap();
+
+    assert_eq!(bytes.len(), 76);
+    assert_eq!(&bytes[..32], &[0x22; 32]);
+    assert_eq!(&bytes[32..36], &u32_be(8453));
+    assert_eq!(&bytes[36..48], &[0u8; 12]);
+    assert_eq!(&bytes[48..68], &[0x11; 20]);
+    assert_eq!(&bytes[68..76], &u64_be(1_001_000));
+}
+
+#[test]
+fn test_build_withdraw_to_chain_signing_bytes() {
+    let registry = format!("0x{}", "33".repeat(32));
+    let asset_id = format!("0x{}", "44".repeat(32));
+    let call_data = vec![0x55; 76];
+    let bytes = build_withdraw_to_chain_signing_bytes(
+        7,
+        9889,
+        &registry,
+        &asset_id,
+        1_000_000,
+        call_data.clone(),
+    )
+    .unwrap();
+
+    let mut expected = Vec::new();
+    expected.extend_from_slice(&u64_be(7));
+    expected.extend_from_slice(&u64_be(9889));
+    expected.extend_from_slice(&function_selector("call_contracts"));
+    expected.extend_from_slice(&u64_be(1));
+    expected.extend_from_slice(&[0x33; 32]);
+    let selector = function_selector("withdraw_via_fast_bridge_with_fee");
+    expected.extend_from_slice(&u64_be(selector.len() as u64));
+    expected.extend_from_slice(&selector);
+    expected.extend_from_slice(&u64_be(1_000_000));
+    expected.extend_from_slice(&[0x44; 32]);
+    expected.extend_from_slice(&u64_be(GAS_MAX));
+    expected.extend_from_slice(&u64_be(1));
+    expected.extend_from_slice(&u64_be(call_data.len() as u64));
+    expected.extend_from_slice(&call_data);
+
+    assert_eq!(bytes, expected);
 }
 
 #[test]

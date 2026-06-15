@@ -16,6 +16,8 @@
 import type { NetworkConfig } from "./config.js";
 import { isActionsSuccess, O2Error, parseApiError, RateLimitExceeded } from "./errors.js";
 import {
+  type AccountActionsRequest,
+  type AccountActionsResponse,
   type AccountInfo,
   type AggregatedAsset,
   type AggregatedOrderbook,
@@ -201,6 +203,14 @@ export class O2Api {
       books_registry_id: hexIdTrusted<"ContractId">(raw.books_registry_id as string),
       accounts_registry_id: hexIdTrusted<"ContractId">(raw.accounts_registry_id as string),
       trade_account_oracle_id: hexIdTrusted<"ContractId">(raw.trade_account_oracle_id as string),
+      fast_bridge_asset_registry_contract_id:
+        typeof raw.fast_bridge_asset_registry_contract_id === "string"
+          ? hexIdTrusted<"ContractId">(raw.fast_bridge_asset_registry_contract_id)
+          : undefined,
+      fast_bridge_minter_contract_id:
+        typeof raw.fast_bridge_minter_contract_id === "string"
+          ? hexIdTrusted<"ContractId">(raw.fast_bridge_minter_contract_id)
+          : undefined,
       chain_id: raw.chain_id as string,
       base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
@@ -515,6 +525,29 @@ export class O2Api {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
       "O2-Owner-Id": ownerId,
     });
+  }
+
+  /**
+   * Submit owner-signed account actions.
+   * @param ownerId - The owner's b256 address.
+   * @param request - The signed account-actions request.
+   */
+  async submitAccountActions(
+    ownerId: string,
+    request: AccountActionsRequest,
+  ): Promise<AccountActionsResponse> {
+    const body = await this.request<Record<string, unknown>>("POST", "/v1/accounts/actions", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+    });
+
+    if (!isActionsSuccess(body)) {
+      throw parseApiError(body);
+    }
+
+    return {
+      tx_id: hexIdTrusted<"TxId">(body.tx_id),
+    };
   }
 
   // ── Analytics ───────────────────────────────────────────────────

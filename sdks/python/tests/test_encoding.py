@@ -8,12 +8,17 @@ from o2_sdk.encoding import (
     action_to_call,
     build_actions_signing_bytes,
     build_session_signing_bytes,
+    build_withdraw_to_chain_signing_bytes,
     encode_identity,
     encode_option_call_data,
     encode_option_none,
     encode_option_some,
     encode_order_args,
+    encode_withdraw_via_fast_bridge_with_fee_call_data,
     function_selector,
+    get_fast_bridge_asset_sub_id,
+    get_minted_asset_id,
+    u32_be,
     u64_be,
 )
 
@@ -38,6 +43,11 @@ class TestU64Be:
             encoded = u64_be(val)
             decoded = struct.unpack(">Q", encoded)[0]
             assert decoded == val
+
+
+class TestU32Be:
+    def test_known_value(self):
+        assert u32_be(8453) == b"\x00\x00\x21\x05"
 
 
 class TestFunctionSelector:
@@ -346,3 +356,64 @@ class TestActionToCall:
         assert call["amount"] == 0
         expected_identity = encode_identity(1, bytes.fromhex("dd" * 32))
         assert call["call_data"] == expected_identity
+
+
+class TestFastBridgeEncoding:
+    def test_sub_id_and_minted_asset_id(self):
+        sub_id = get_fast_bridge_asset_sub_id("uwUSDC")
+        assert sub_id == "0xd04028f798e9831acba65f305b4f69124a6178406d2188a7b995a6f7116acb20"
+
+        contract_id = "0x" + "11" * 32
+        minted_asset_id = get_minted_asset_id(contract_id, sub_id)
+        assert (
+            minted_asset_id == "0x4653262770b205c0334900cb237bd6b3eeafa9faa8b70b9aec2933e647f61943"
+        )
+
+    def test_withdraw_via_fast_bridge_with_fee_call_data(self):
+        sub_id = "0x" + "22" * 32
+        recipient = "0x1111111111111111111111111111111111111111"
+        result = encode_withdraw_via_fast_bridge_with_fee_call_data(
+            asset_sub_id=sub_id,
+            destination_chain_id=8453,
+            recipient_address=recipient,
+            fee_quote=1001000,
+        )
+
+        assert len(result) == 76
+        assert result[:32] == bytes.fromhex("22" * 32)
+        assert result[32:36] == u32_be(8453)
+        assert result[36:48] == bytes(12)
+        assert result[48:68] == bytes.fromhex("11" * 20)
+        assert result[68:76] == u64_be(1001000)
+
+    def test_withdraw_to_chain_signing_bytes(self):
+        registry = "0x" + "33" * 32
+        asset_id = "0x" + "44" * 32
+        call_data = bytes([0x55]) * 76
+        result = build_withdraw_to_chain_signing_bytes(
+            nonce=7,
+            chain_id=9889,
+            asset_registry_contract_id=registry,
+            asset_id=asset_id,
+            amount=1000000,
+            call_data=call_data,
+        )
+
+        selector = function_selector("withdraw_via_fast_bridge_with_fee")
+        expected = (
+            u64_be(7)
+            + u64_be(9889)
+            + function_selector("call_contracts")
+            + u64_be(1)
+            + bytes.fromhex("33" * 32)
+            + u64_be(len(selector))
+            + selector
+            + u64_be(1000000)
+            + bytes.fromhex("44" * 32)
+            + u64_be(GAS_MAX)
+            + u64_be(1)
+            + u64_be(len(call_data))
+            + call_data
+        )
+
+        assert result == expected

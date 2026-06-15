@@ -299,6 +299,10 @@ export interface MarketsResponse {
   accounts_registry_id: ContractId;
   /** Trade account oracle contract ID. */
   trade_account_oracle_id: ContractId;
+  /** FastBridge asset registry contract ID, if configured by the API. */
+  fast_bridge_asset_registry_contract_id?: ContractId;
+  /** FastBridge minter contract ID, if configured by the API. */
+  fast_bridge_minter_contract_id?: ContractId;
   /** The Fuel chain ID (may be hex or decimal string). */
   chain_id: string;
   /** The native base asset ID (e.g., ETH on Fuel). */
@@ -1002,6 +1006,56 @@ export interface WithdrawResponse {
   /** On-chain transaction ID. */
   tx_id: TxId;
 }
+
+// ── Account Actions ─────────────────────────────────────────────────
+
+/** Request body for owner-signed account actions. */
+export interface AccountActionsRequest {
+  /** Actions to execute against the trading account. */
+  actions: AccountAction[];
+  /** Owner wallet signature over the account-action signing bytes. */
+  signature: Signature;
+  /** Current nonce (as string). */
+  nonce: string;
+  /** The trade account contract ID. */
+  trade_account_id: TradeAccountId;
+  /** Number of variable outputs needed by the transaction. */
+  variable_outputs?: number;
+  /** Contract IDs that the action touches. */
+  contracts?: ContractId[];
+}
+
+/** Supported owner-signed account action payloads. */
+export type AccountAction = WithdrawViaFastBridgeWithFeeAction;
+
+/** Withdraw a wrapped asset through FastBridge with fee quote protection. */
+export interface WithdrawViaFastBridgeWithFeeAction {
+  WithdrawViaFastBridgeWithFee: {
+    amount: string;
+    fee_quote: string;
+    asset: {
+      sub_id: string;
+      universal: AssetId;
+    };
+    recipient: {
+      Evm: {
+        chain_id: string;
+        recipient: {
+          address: string;
+        };
+      };
+    };
+  };
+}
+
+/** Response from a successful owner-signed account action submission. */
+export interface AccountActionsResponse {
+  /** On-chain transaction ID. */
+  tx_id: TxId;
+}
+
+/** Response from a successful FastBridge withdrawal. */
+export type WithdrawToChainResponse = AccountActionsResponse;
 
 // ── Whitelist ───────────────────────────────────────────────────────
 
