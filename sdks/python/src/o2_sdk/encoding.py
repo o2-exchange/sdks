@@ -181,24 +181,10 @@ def build_set_proxy_signing_bytes(nonce: int, chain_id: int) -> bytes:
     return build_owner_action_signing_bytes(nonce, chain_id, SET_PROXY_FN_NAME)
 
 
-def build_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
-    """Build the signing bytes from a list of low-level calls.
-
-    Layout:
-      u64(nonce) + u64(num_calls)
-      + for each call:
-          contract_id (32 bytes)
-          + u64(selector_len)
-          + selector (variable)
-          + u64(amount)
-          + asset_id (32 bytes)
-          + u64(gas)
-          + encode_option_call_data(call_data)
-    """
-    result = bytearray()
-    result += u64_be(nonce)
+def _append_calls(result: bytearray, calls: list[dict]) -> None:
+    """Append ``u64(num_calls)`` + the per-call layout shared by the sequential
+    and parallel action payloads."""
     result += u64_be(len(calls))
-
     for call in calls:
         selector = call["function_selector"]
         result += call["contract_id"]  # 32 bytes
@@ -209,6 +195,31 @@ def build_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
         result += u64_be(call["gas"])  # 8 bytes
         result += encode_option_call_data(call.get("call_data"))
 
+
+def build_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
+    """Sequential-track signing bytes: ``call_data(u64 nonce, calls)``.
+
+    Layout: ``u64(nonce) + u64(num_calls) + per-call(contract_id, selector,
+    amount, asset_id, gas, option(call_data))``. ``Message::new`` (sha256) of
+    this is what the session key signs.
+    """
+    result = bytearray()
+    result += u64_be(nonce)
+    _append_calls(result, calls)
+    return bytes(result)
+
+
+def build_parallel_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
+    """Parallel-track signing bytes: ``call_data(u256 nonce, calls)``.
+
+    Identical to the sequential layout except the nonce is a 32-byte big-endian
+    u256 (the packed parallel nonce) instead of a u64. Matches fuel-o2
+    ``verify_parallel_session_signature`` (``Message::new(call_data!(nonce,
+    calls))``, plain Secp256k1 over the Fuel session key).
+    """
+    result = bytearray()
+    result += nonce.to_bytes(32, "big")  # u256, big-endian
+    _append_calls(result, calls)
     return bytes(result)
 
 

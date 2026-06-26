@@ -375,3 +375,35 @@ class TestSetProxyUpgradeSigningBytes:
         base = build_set_proxy_signing_bytes(1, 1)
         assert base != build_set_proxy_signing_bytes(2, 1)
         assert base != build_set_proxy_signing_bytes(1, 2)
+
+
+class TestParallelActionsSigningBytes:
+    def _calls(self):
+        return [{
+            "contract_id": bytes(range(32)),
+            "function_selector": b"create_order",
+            "amount": 1000,
+            "asset_id": bytes(range(32, 64)),
+            "gas": 5_000_000,
+            "call_data": b"\x01\x02\x03",
+        }]
+
+    def test_parallel_equals_sequential_except_nonce_width(self):
+        from o2_sdk.encoding import (
+            build_actions_signing_bytes,
+            build_parallel_actions_signing_bytes,
+            u64_be,
+        )
+        calls = self._calls()
+        seq = build_actions_signing_bytes(7, calls)
+        par = build_parallel_actions_signing_bytes(7, calls)
+        # both share the call tail; differ only in the nonce prefix (8 vs 32 bytes)
+        assert par[:32] == (7).to_bytes(32, "big")
+        assert par[32:] == seq[8:]  # everything after the nonce is identical
+        assert seq[:8] == u64_be(7)
+
+    def test_u256_nonce_full_width(self):
+        from o2_sdk.encoding import build_parallel_actions_signing_bytes
+        big = (1 << 168) | 5  # a realistic packed parallel nonce (session_id bits set)
+        par = build_parallel_actions_signing_bytes(big, self._calls())
+        assert par[:32] == big.to_bytes(32, "big")
