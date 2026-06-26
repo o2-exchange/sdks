@@ -345,7 +345,7 @@ class O2Api:
         ``{word_position, bitmap}`` as decimal strings) — parse with
         ``o2_sdk.nonce.WindowResponse.from_dict``.
         """
-        return await self._request(
+        data: dict = await self._request(
             "GET",
             "/v1/accounts/window",
             params={
@@ -353,12 +353,14 @@ class O2Api:
                 "nonce_session_id": str(nonce_session_id),
             },
         )
+        return data
 
     async def upgrade_account(self, request: dict) -> dict:
         """Upgrade a trade account to the latest implementation (owner-signed,
         sequential nonce). ``request``: ``{trade_account_id, nonce, signature}``.
         Returns ``{tx_id}``."""
-        return await self._request("POST", "/v1/accounts/upgrade", json=request)
+        data: dict = await self._request("POST", "/v1/accounts/upgrade", json=request)
+        return data
 
     async def get_balance(
         self,
