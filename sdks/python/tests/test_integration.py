@@ -1199,3 +1199,38 @@ class TestWebSocket:
                 if taker_session:
                     await ws_client.settle_balance(market.pair, session=taker_session)
             await ws_client.close()
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_read_path_devnet():
+    """Validate the parallel-nonce read path against the live devnet V3 account
+    (the golden-vector account). No keys needed — account/window are public GETs.
+    Exercises get_account version gate + get_account_window + WindowResponse +
+    ParallelNonceManager.init/next_nonce end-to-end."""
+    from o2_sdk.client import O2Client
+    from o2_sdk.config import Network
+    from o2_sdk.nonce import ParallelNonce, ParallelNonceManager, WindowResponse
+
+    owner = "0x000000000000000000000000dd89c413f054398c0f6903786477a2f26875ad80"
+    ta = "0x18f9d6f5e708d01ddf2249318b906dd2d7d954c3b8b2399c912565ea78f272b1"
+
+    client = O2Client(network=Network.DEVNET)
+    try:
+        acct = await client.api.get_account(owner=owner)
+        assert acct.version == 3
+        assert acct.is_parallel_capable
+
+        async def _fetch():
+            return WindowResponse.from_dict(
+                await client.api.get_account_window(ta, nonce_session_id=0)
+            )
+
+        window = await _fetch()
+        assert window.nonce_session_id == 0
+        mgr = ParallelNonceManager(window_fetcher=_fetch)
+        await mgr.init()
+        n = ParallelNonce.decode(mgr.next_nonce())
+        assert window.base <= n.word_position < window.base + 8
+        assert n.nonce_session_id == 0
+    finally:
+        await client.close()
