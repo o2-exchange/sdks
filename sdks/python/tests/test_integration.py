@@ -1234,3 +1234,70 @@ async def test_parallel_nonce_read_path_devnet():
         assert n.nonce_session_id == 0
     finally:
         await client.close()
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_concurrent_submission():
+    """Fire N concurrent batch_actions on the parallel track and assert there are
+    no nonce conflicts and the cursor advances by N (one distinct slot each).
+
+    This is the core guarantee: concurrent submissions never collide on a nonce
+    (sequential would fail N-1 of them with 'nonce too low'). Requires a
+    gen-3 (parallel-capable) account; testnet accounts are created at V3."""
+    from o2_sdk.client import O2Client
+    from o2_sdk.config import Network
+
+    n = 6
+    client = O2Client(network=Network.TESTNET)
+    try:
+        wallet = _load_or_create_wallet(client, "parallel_test_tn")
+        acct = await client.api.get_account(owner=wallet.b256_address)
+        if acct.trade_account is None:
+            res = await client.api.create_account(wallet.b256_address)
+            acct = await client.api.get_account(trade_account_id=res.trade_account_id)
+        ta = acct.trade_account_id
+        try:
+            await client.api.mint_to_contract(ta)
+        except Exception:
+            pass
+        # Ensure parallel-capable (upgrade is a no-op on already-V3 testnet accts).
+        await client.upgrade_account(wallet)
+        acct = await client.api.get_account(owner=wallet.b256_address)
+        if not acct.is_parallel_capable:
+            pytest.skip("account not parallel-capable (gen<3) and upgrade did not land")
+
+        market = (await client.get_markets())[0]
+        session = await client.create_session(
+            owner=wallet, markets=[market.pair], expiry_days=1,
+            nonce_strategy="parallel", nonce_session_id=0,
+        )
+        before = session.nonce_manager.cursor
+        price = 10 ** (-market.quote.max_precision)
+        qty = _min_quantity_for_min_order(market, price)
+
+        async def place():
+            try:
+                r = await client.create_order(
+                    market=market.pair, side=OrderSide.BUY, price=price, quantity=qty,
+                    order_type=OrderType.POST_ONLY, settle_first=True,
+                    collect_orders=True, session=session,
+                )
+                return ("ok", str(r.tx_id))
+            except Exception as e:
+                reason = (str(e) + " " + (getattr(e, "reason", "") or "")).lower()
+                is_nonce = "nonce" in reason and any(
+                    k in reason for k in ("low", "usable", "window")
+                )
+                return ("nonce_conflict" if is_nonce else "other", reason[:120])
+
+        results = await asyncio.gather(*[place() for _ in range(n)])
+        nonce_conflicts = [r for r in results if r[0] == "nonce_conflict"]
+        after = session.nonce_manager.cursor
+
+        # The guarantee: concurrent submissions never collide on a nonce, and the
+        # cursor advances by exactly n (one slot per call).
+        assert not nonce_conflicts, f"nonce conflicts under concurrency: {nonce_conflicts}"
+        word, bit = before
+        assert after == (word, bit + n), f"cursor {before} -> {after}, expected +{n}"
+    finally:
+        await client.close()
