@@ -1256,10 +1256,8 @@ async def test_parallel_nonce_concurrent_submission():
             res = await client.api.create_account(wallet.b256_address)
             acct = await client.api.get_account(trade_account_id=res.trade_account_id)
         ta = acct.trade_account_id
-        try:
+        with contextlib.suppress(Exception):
             await client.api.mint_to_contract(ta)
-        except Exception:
-            pass
         # Ensure parallel-capable (upgrade is a no-op on already-V3 testnet accts).
         await client.upgrade_account(wallet)
         acct = await client.api.get_account(owner=wallet.b256_address)
