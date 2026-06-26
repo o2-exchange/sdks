@@ -336,6 +336,30 @@ class O2Api:
         data = await self._request("GET", "/v1/accounts", params=params)
         return AccountInfo.from_dict(data)
 
+    async def get_account_window(
+        self, trade_account_id: str, nonce_session_id: int = 0
+    ) -> dict:
+        """Fetch the parallel-nonce sliding window for one (account, lane).
+
+        Returns the raw JSON (``nonce_session_id``, ``base``, ``slots`` of
+        ``{word_position, bitmap}`` as decimal strings) — parse with
+        ``o2_sdk.nonce.WindowResponse.from_dict``.
+        """
+        return await self._request(
+            "GET",
+            "/v1/accounts/window",
+            params={
+                "trade_account_id": trade_account_id,
+                "nonce_session_id": str(nonce_session_id),
+            },
+        )
+
+    async def upgrade_account(self, request: dict) -> dict:
+        """Upgrade a trade account to the latest implementation (owner-signed,
+        sequential nonce). ``request``: ``{trade_account_id, nonce, signature}``.
+        Returns ``{tx_id}``."""
+        return await self._request("POST", "/v1/accounts/upgrade", json=request)
+
     async def get_balance(
         self,
         asset_id: str,
