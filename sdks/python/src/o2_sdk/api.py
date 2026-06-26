@@ -355,11 +355,17 @@ class O2Api:
         )
         return data
 
-    async def upgrade_account(self, request: dict) -> dict:
+    async def upgrade_account(self, owner_id: str, request: dict) -> dict:
         """Upgrade a trade account to the latest implementation (owner-signed,
         sequential nonce). ``request``: ``{trade_account_id, nonce, signature}``.
-        Returns ``{tx_id}``."""
-        data: dict = await self._request("POST", "/v1/accounts/upgrade", json=request)
+        The handler extracts the owner from the ``O2-Owner-Id`` header. Returns
+        ``{tx_id}``."""
+        data: dict = await self._request(
+            "POST",
+            "/v1/accounts/upgrade",
+            json=request,
+            headers={"O2-Owner-Id": owner_id},
+        )
         return data
 
     async def get_balance(

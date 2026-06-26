@@ -297,7 +297,7 @@ class O2Client:
             account.trade_account_id,
             account.version,
         )
-        resp = await self.api.upgrade_account(request)
+        resp = await self.api.upgrade_account(owner.b256_address, request)
         tx_id = resp.get("tx_id")
         logger.info("Account upgrade submitted: tx_id=%s", tx_id)
         return tx_id
