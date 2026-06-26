@@ -27,6 +27,7 @@ from .encoding import (
     action_to_call,
     build_actions_signing_bytes,
     build_session_signing_bytes,
+    build_set_proxy_signing_bytes,
     build_withdraw_signing_bytes,
 )
 from .errors import InvalidRequest, O2Error, SessionExpired
@@ -248,6 +249,52 @@ class O2Client:
                 )
 
         return account
+
+    async def upgrade_account(self, owner: Signer) -> str | None:
+        """Upgrade the owner's trade account to the latest implementation
+        (generation 3 — parallel-nonce capable) if it isn't already.
+
+        Uses the **non-typed** owner-signature flow (plain Secp256k1 over
+        ``calldata(nonce, chain_id, "set_proxy_target_with_signature")``). This is
+        required for proxies created before typed signatures: those proxies are
+        non-upgradeable and only understand the legacy scheme, and it is accepted
+        by newer proxies too. The owner key signs via ``owner.personal_sign``
+        (Fuel or EVM framing per the owner address type).
+
+        Returns the upgrade tx id, or ``None`` if the account is already current.
+        """
+        account = await self.api.get_account(owner=owner.b256_address)
+        if account.trade_account is None or account.trade_account_id is None:
+            raise O2Error(message="Account not found. Call setup_account() first.")
+        if account.is_parallel_capable:
+            logger.info(
+                "Account %s already parallel-capable (gen %d); no upgrade needed",
+                account.trade_account_id,
+                account.version,
+            )
+            return None
+
+        markets_resp = await self._get_markets_cached()
+        chain_id = markets_resp.chain_id_int
+        nonce = account.nonce  # sequential nonce for the owner action
+
+        signing_bytes = build_set_proxy_signing_bytes(nonce, chain_id)
+        signature = owner.personal_sign(signing_bytes)
+
+        request = {
+            "trade_account_id": account.trade_account_id,
+            "nonce": str(nonce),
+            "signature": {"Secp256k1": "0x" + signature.hex()},
+        }
+        logger.info(
+            "Upgrading account %s (gen %d -> 3) via non-typed owner signature",
+            account.trade_account_id,
+            account.version,
+        )
+        resp = await self.api.upgrade_account(request)
+        tx_id = resp.get("tx_id")
+        logger.info("Account upgrade submitted: tx_id=%s", tx_id)
+        return tx_id
 
     async def top_up_from_faucet(self, owner: Signer) -> FaucetResponse:
         """Mint test assets to the owner's trading account contract.

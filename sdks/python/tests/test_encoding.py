@@ -346,3 +346,32 @@ class TestActionToCall:
         assert call["amount"] == 0
         expected_identity = encode_identity(1, bytes.fromhex("dd" * 32))
         assert call["call_data"] == expected_identity
+
+
+class TestSetProxyUpgradeSigningBytes:
+    def test_layout(self):
+        from o2_sdk.encoding import (
+            SET_PROXY_FN_NAME,
+            build_set_proxy_signing_bytes,
+            u64_be,
+        )
+
+        nonce, chain_id = 7, 0x42C026D7
+        b = build_set_proxy_signing_bytes(nonce, chain_id)
+        # u64(nonce) + u64(chain_id) + u64(len(fn)) + fn  (no args for SetProxy)
+        expected = (
+            u64_be(nonce)
+            + u64_be(chain_id)
+            + u64_be(len(SET_PROXY_FN_NAME))
+            + SET_PROXY_FN_NAME
+        )
+        assert b == expected
+        assert SET_PROXY_FN_NAME == b"set_proxy_target_with_signature"
+        assert len(b) == 8 + 8 + 8 + len(SET_PROXY_FN_NAME)
+
+    def test_nonce_and_chain_affect_bytes(self):
+        from o2_sdk.encoding import build_set_proxy_signing_bytes
+
+        base = build_set_proxy_signing_bytes(1, 1)
+        assert base != build_set_proxy_signing_bytes(2, 1)
+        assert base != build_set_proxy_signing_bytes(1, 2)

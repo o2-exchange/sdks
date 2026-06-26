@@ -150,6 +150,37 @@ def build_session_signing_bytes(
     return bytes(signing_bytes)
 
 
+# Owner-action function names (the Sway method names the proxy/account verify
+# against). The name participates in the signed bytes, so it must be exact.
+SET_PROXY_FN_NAME = b"set_proxy_target_with_signature"
+
+
+def build_owner_action_signing_bytes(
+    nonce: int, chain_id: int, func_name: bytes, encoded_args: bytes = b""
+) -> bytes:
+    """Generic owner-action signing bytes: ``calldata((nonce, chain_id, fn[, args]))``.
+
+    Layout: ``u64(nonce) + u64(chain_id) + u64(len(func_name)) + func_name + encoded_args``.
+    For actions with no args (e.g. SetProxy), ``encoded_args`` is empty.
+    """
+    out = bytearray()
+    out += u64_be(nonce)
+    out += u64_be(chain_id)
+    out += u64_be(len(func_name))
+    out += func_name
+    out += encoded_args
+    return bytes(out)
+
+
+def build_set_proxy_signing_bytes(nonce: int, chain_id: int) -> bytes:
+    """Owner signing bytes for the non-typed account upgrade (set_proxy_target).
+
+    The legacy (non-typed) flow — required for proxies created before typed
+    signatures, which are non-upgradeable and only accept this scheme.
+    """
+    return build_owner_action_signing_bytes(nonce, chain_id, SET_PROXY_FN_NAME)
+
+
 def build_actions_signing_bytes(nonce: int, calls: list[dict]) -> bytes:
     """Build the signing bytes from a list of low-level calls.
 
