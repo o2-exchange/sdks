@@ -530,3 +530,41 @@ class TestFaucetResponse:
         data = {"error": "You can request faucet funds only once every 60 seconds"}
         resp = FaucetResponse.from_dict(data)
         assert not resp.success
+
+
+class TestTradeAccountVersion:
+    """sync_state -> version/parallel-capability (shapes from live devnet API)."""
+
+    def _account(self, sync_state):
+        from o2_sdk.models import AccountInfo
+        return AccountInfo.from_dict({
+            "trade_account_id": "0x18f9d6f5e708d01ddf2249318b906dd2d7d954c3b8b2399c912565ea78f272b1",
+            "trade_account": {
+                "nonce": "2",
+                "owner": {"Address": "0x000000000000000000000000dd89c413f054398c0f6903786477a2f26875ad80"},
+                "sync_state": sync_state,
+            },
+            "session": None,
+        })
+
+    def test_v3_is_parallel_capable(self):
+        # Exact shape captured from devnet GET /v1/accounts?owner=...
+        acct = self._account({"V3": {"completed": 10532378, "started": 10532378}})
+        assert acct.version == 3
+        assert acct.is_parallel_capable
+
+    def test_v2_not_capable(self):
+        acct = self._account({"V2": {"completed": 1, "started": 1}})
+        assert acct.version == 2
+        assert not acct.is_parallel_capable
+
+    def test_none_sync_state(self):
+        acct = self._account("None")
+        assert acct.version == 0
+        assert not acct.is_parallel_capable
+
+    def test_missing_account_not_capable(self):
+        from o2_sdk.models import AccountInfo
+        acct = AccountInfo.from_dict({"trade_account_id": None, "trade_account": None})
+        assert acct.version == 0
+        assert not acct.is_parallel_capable

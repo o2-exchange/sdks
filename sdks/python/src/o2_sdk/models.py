@@ -380,6 +380,8 @@ class TradeAccount:
     nonce: str
     owner: Identity
     synced_with_network: bool | None = None
+    # Raw API sync_state: "None" or externally-tagged {"V1"|"V2"|"V3": {...}}.
+    sync_state: dict | str | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> TradeAccount:
@@ -388,7 +390,25 @@ class TradeAccount:
             nonce=str(d.get("nonce", "0")),
             owner=Identity.from_dict(d["owner"]),
             synced_with_network=d.get("synced_with_network"),
+            sync_state=d.get("sync_state"),
         )
+
+    @property
+    def version(self) -> int:
+        """Trade-account implementation generation from ``sync_state``
+        (None -> 0, V1 -> 1, V2 -> 2, V3 -> 3). The contract gained parallel
+        nonce support at generation 3."""
+        ss = self.sync_state
+        if isinstance(ss, dict):
+            for key in ss:
+                if len(key) >= 2 and key[0] == "V" and key[1:].isdigit():
+                    return int(key[1:])
+        return 0
+
+    @property
+    def is_parallel_capable(self) -> bool:
+        """True if the account supports parallel nonces (generation >= 3)."""
+        return self.version >= 3
 
 
 @dataclass
@@ -415,6 +435,16 @@ class AccountInfo:
         if self.trade_account is None:
             return 0
         return int(self.trade_account.nonce)
+
+    @property
+    def version(self) -> int:
+        """Trade-account implementation generation (0 if no account)."""
+        return self.trade_account.version if self.trade_account else 0
+
+    @property
+    def is_parallel_capable(self) -> bool:
+        """True if the account exists and supports parallel nonces (>= gen 3)."""
+        return self.trade_account is not None and self.trade_account.is_parallel_capable
 
 
 @dataclass
