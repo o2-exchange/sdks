@@ -26,6 +26,7 @@ from .crypto import (
 from .encoding import (
     action_to_call,
     build_actions_signing_bytes,
+    build_parallel_actions_signing_bytes,
     build_session_signing_bytes,
     build_set_proxy_signing_bytes,
     build_withdraw_signing_bytes,
@@ -64,6 +65,11 @@ from .models import (
     Trade,
     TradeUpdate,
     WithdrawResponse,
+)
+from .nonce import (
+    ParallelNonceManager,
+    WindowResponse,
+    is_parallel_nonce_out_of_window,
 )
 from .websocket import ConnectionEvent, O2WebSocket
 
@@ -393,6 +399,8 @@ class O2Client:
         owner: Signer,
         markets: list[str | Market],
         expiry_days: int = 30,
+        nonce_strategy: str = "sequential",
+        nonce_session_id: int = 0,
     ) -> SessionInfo:
         """Create a trading session.
 
@@ -401,10 +409,15 @@ class O2Client:
                 ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
             markets: List of market pair strings/IDs or Market objects
             expiry_days: Session expiry in days (default 30)
-
-        Returns:
-            SessionInfo with session keys and trading state
+            nonce_strategy: ``"sequential"`` (default) or ``"parallel"``. Parallel
+                lets the session submit actions concurrently without nonce
+                conflicts; requires a generation-3 trade account (call
+                ``upgrade_account`` first). Transparent to callers thereafter.
+            nonce_session_id: Parallel-nonce lane (0..4) this session owns. Use
+                distinct lanes for clients sharing one key (e.g. bot=0, rebalancer=1).
         """
+        if nonce_strategy not in ("sequential", "parallel"):
+            raise O2Error(message=f"unknown nonce_strategy: {nonce_strategy}")
         logger.info("Creating session for markets=%s, expiry_days=%d", markets, expiry_days)
 
         # Resolve markets
@@ -480,6 +493,28 @@ class O2Client:
             owner_address=owner.b256_address,
             nonce=nonce + 1,
         )
+
+        # Parallel track: attach a window-backed nonce manager so subsequent
+        # batch_actions can be submitted concurrently without nonce conflicts.
+        if nonce_strategy == "parallel":
+            ta_id = resp.trade_account_id
+
+            async def _fetch_window() -> WindowResponse:
+                return WindowResponse.from_dict(
+                    await self.api.get_account_window(ta_id, nonce_session_id)
+                )
+
+            manager = ParallelNonceManager(
+                window_fetcher=_fetch_window, nonce_session_id=nonce_session_id
+            )
+            await manager.init()
+            session.nonce_manager = manager
+            logger.info(
+                "Session using parallel nonces (lane %d), cursor=%s",
+                nonce_session_id,
+                manager.cursor,
+            )
+
         self._session = session
         return session
 
@@ -695,29 +730,60 @@ class O2Client:
         # Convert typed/high-level actions to wire dicts once
         actions_dicts = await self._normalize_market_actions(session, actions)
 
-        # Get current nonce
-        nonce = await self._get_nonce(session.trade_account_id)
-        logger.debug("Submitting actions with nonce=%d, actions=%s", nonce, actions_dicts)
+        if session.session_private_key is None:
+            raise O2Error(message="Session must have a private key")
+        if session.owner_address is None:
+            raise O2Error(message="Session must have an owner address")
 
-        # Convert actions to calls
+        # Convert actions to calls (shared by both nonce tracks)
         calls: list[dict] = []
         for market_group in actions_dicts:
             m_id = market_group["market_id"]
             market_info = self._get_market_info_by_id(markets_resp, m_id)
             for action in market_group["actions"]:
-                call = action_to_call(action, market_info)
-                calls.append(call)
+                calls.append(action_to_call(action, market_info))
 
-        # Build signing bytes and sign with session key
+        # --- Parallel nonce track -------------------------------------------
+        # Each submission draws a fresh window slot, so many can be in flight at
+        # once with no rollback. If we burned slots faster than the chain slid
+        # ("out of window"), resync the cursor from chain once and retry.
+        if session.nonce_manager is not None:
+            manager = session.nonce_manager
+            last_err: O2Error | None = None
+            for attempt in range(2):
+                par_nonce = manager.next_nonce()
+                signing_bytes = build_parallel_actions_signing_bytes(par_nonce, calls)
+                signature = raw_sign(session.session_private_key, signing_bytes)
+                request = {
+                    "actions": actions_dicts,
+                    "signature": {"Secp256k1": "0x" + signature.hex()},
+                    "parallel_nonce": str(par_nonce),
+                    "trade_account_id": session.trade_account_id,
+                    "session_id": session.session_id.to_dict(),
+                    "collect_orders": collect_orders,
+                }
+                try:
+                    result = await self.api.submit_actions(session.owner_address, request)
+                    logger.info("Actions submitted (parallel): tx_id=%s", result.tx_id)
+                    return result
+                except O2Error as e:
+                    last_err = e
+                    out_of_window = is_parallel_nonce_out_of_window(
+                        e.reason
+                    ) or is_parallel_nonce_out_of_window(e.message)
+                    if out_of_window and attempt == 0:
+                        logger.warning("parallel nonce out of window; resyncing cursor")
+                        await manager.resync_from_chain()
+                        continue
+                    raise
+            assert last_err is not None
+            raise last_err
+
+        # --- Sequential nonce track (legacy) --------------------------------
+        nonce = await self._get_nonce(session.trade_account_id)
+        logger.debug("Submitting actions with nonce=%d", nonce)
         signing_bytes = build_actions_signing_bytes(nonce, calls)
-        if session.session_private_key is None:
-            raise O2Error(message="Session must have a private key")
-        logger.debug(
-            "Signing %d actions (%d bytes) with session key", len(calls), len(signing_bytes)
-        )
         signature = raw_sign(session.session_private_key, signing_bytes)
-
-        # Submit
         request = {
             "actions": actions_dicts,
             "signature": {"Secp256k1": "0x" + signature.hex()},
@@ -726,20 +792,15 @@ class O2Client:
             "session_id": session.session_id.to_dict(),
             "collect_orders": collect_orders,
         }
-
-        if session.owner_address is None:
-            raise O2Error(message="Session must have an owner address")
         try:
             result = await self.api.submit_actions(session.owner_address, request)
-            # Increment nonce on success
             self._nonce_cache[session.trade_account_id] = nonce + 1
             session.nonce = nonce + 1
             logger.info("Actions submitted: tx_id=%s, nonce=%d->%d", result.tx_id, nonce, nonce + 1)
             return result
         except O2Error as e:
             logger.warning("Actions failed (nonce=%d): %s", nonce, e)
-            # Nonce increments even on revert, so re-fetch
-            await self.refresh_nonce(session)
+            await self.refresh_nonce(session)  # nonce bumps even on revert
             raise
 
     async def _normalize_market_actions(

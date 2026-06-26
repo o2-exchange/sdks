@@ -474,6 +474,9 @@ class SessionInfo:
     session_private_key: bytes | None = None
     owner_address: str | None = None
     nonce: int = 0
+    # Parallel-track nonce source (o2_sdk.nonce.ParallelNonceManager) when the
+    # session was created with nonce_strategy="parallel"; None => sequential track.
+    nonce_manager: Any = None
 
     @classmethod
     def from_response(cls, d: dict, **kwargs: Any) -> SessionInfo:
