@@ -2,7 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { O2Api } from "../src/api.js";
 import { TESTNET } from "../src/config.js";
 import { InternalError, RateLimitExceeded } from "../src/errors.js";
-import { marketId, type SessionActionsRequest, tradeAccountId } from "../src/models.js";
+import {
+  marketId,
+  orderId,
+  type SessionActionsRequest,
+  tradeAccountId,
+  triggerOrderId,
+} from "../src/models.js";
 
 const OWNER = `0x${"11".repeat(32)}`;
 const MARKET_ID = marketId(`0x${"55".repeat(32)}`);
@@ -111,5 +117,76 @@ describe("O2Api trades parsing", () => {
     expect(trades).toHaveLength(1);
     expect(trades[0].side).toBe("buy");
     expect(trades[0].price).toBe(5n);
+  });
+});
+
+describe("O2Api active orders parsing", () => {
+  it("parses mixed entries and forwards the combined cursor", async () => {
+    const api = new O2Api({ config: TESTNET });
+    const requestSpy = vi.spyOn(api as any, "request").mockResolvedValue({
+      market_id: MARKET_ID,
+      identity: { ContractId: BASE_ACTIONS_REQUEST.trade_account_id },
+      entries: [
+        {
+          kind: "order",
+          order_id: `0x${"66".repeat(32)}`,
+          side: "Buy",
+          order_type: "Spot",
+          price: "100",
+          quantity: "2",
+          timestamp: "10",
+          close: false,
+        },
+        {
+          kind: "trigger",
+          order_id: `0x${"77".repeat(32)}`,
+          owner: { ContractId: BASE_ACTIONS_REQUEST.trade_account_id },
+          side: "Sell",
+          order_type: "Market",
+          trigger_price: "90",
+          timestamp: "11",
+          history: [],
+        },
+      ],
+      next_timestamp: "12",
+      next_id: `0x${"88".repeat(32)}`,
+      next_kind: "trigger",
+    });
+
+    const response = await api.getActiveOrders(MARKET_ID, {
+      contract: BASE_ACTIONS_REQUEST.trade_account_id,
+      direction: "asc",
+      count: 2,
+      cursor: {
+        startTimestamp: "9",
+        startId: orderId(`0x${"44".repeat(32)}`),
+        startKind: "spot",
+      },
+    });
+
+    expect(requestSpy).toHaveBeenCalledWith(
+      "GET",
+      "/v1/orders/active",
+      expect.objectContaining({
+        query: expect.objectContaining({
+          start_timestamp: "9",
+          start_id: `0x${"44".repeat(32)}`,
+          start_kind: "spot",
+        }),
+      }),
+    );
+    expect(response.entries[0]).toMatchObject({
+      kind: "order",
+      order_id: orderId(`0x${"66".repeat(32)}`),
+      price: 100n,
+      quantity: 2n,
+    });
+    expect(response.entries[1]).toMatchObject({
+      kind: "trigger",
+      order_id: triggerOrderId(`0x${"77".repeat(32)}`),
+      trigger_price: 90n,
+    });
+    expect(response.next_id).toBe(triggerOrderId(`0x${"88".repeat(32)}`));
+    expect(response.next_kind).toBe("trigger");
   });
 });

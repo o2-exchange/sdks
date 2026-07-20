@@ -712,6 +712,72 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     }
   }, 60_000);
 
+  it("integration: cancelAllOrders cancels spots and standalone triggers", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await Promise.all([
+      ensureFunded(makerClient, makerTradeAccountId, market.base.symbol, 50_000_000n),
+      ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 50_000_000n),
+    ]);
+
+    try {
+      const spotPrice = await conservativePostOnlyBuyPriceStr(client, market);
+      const triggerPrice = Math.max(
+        minPriceStep(market),
+        Number.parseFloat(spotPrice) * 0.5,
+      ).toFixed(market.quote.max_precision);
+      const spotQuantity = minQuantityStr(market, spotPrice);
+      const triggerQuantity = minQuantityStr(market, triggerPrice);
+
+      await makerClient.createSession(makerWallet, [market], 30);
+      const spotResponse = await createOrderWithWhitelistRetry(
+        makerClient,
+        market,
+        "buy",
+        spotPrice,
+        spotQuantity,
+        "PostOnly",
+        makerTradeAccountId,
+      );
+      const spotId = spotResponse.orders?.[0]?.order_id;
+      expect(spotId).toBeTruthy();
+
+      const triggerResponse = await makerClient.createTriggerOrder(market, {
+        order_type: "Market",
+        quantity: { Quantity: { quantity: triggerQuantity } },
+        trigger_price: triggerPrice,
+        side: "sell",
+      });
+      expect(triggerResponse.txId).toBeTruthy();
+
+      const before = await makerClient.api.getActiveOrders(market.market_id, {
+        contract: makerTradeAccountId,
+        direction: "desc",
+        count: 200,
+      });
+      expect(
+        before.entries.some((entry) => entry.kind === "order" && entry.order_id === spotId),
+      ).toBe(true);
+      expect(before.entries.some((entry) => entry.kind === "trigger")).toBe(true);
+
+      const cancelResponses = await makerClient.cancelAllOrders(market);
+      expect(cancelResponses?.length).toBeGreaterThan(0);
+      expect(cancelResponses?.every((response) => response.txId != null)).toBe(true);
+
+      const after = await makerClient.api.getActiveOrders(market.market_id, {
+        contract: makerTradeAccountId,
+        direction: "desc",
+        count: 200,
+      });
+      expect(after.entries).toHaveLength(0);
+    } finally {
+      await cleanupOpenOrders(makerClient, makerWallet, market);
+    }
+  }, 90_000);
+
   it("integration: spot order with attached trigger, and cancels the trigger", async () => {
     const markets = await client.getMarkets();
     const market = markets[0];

@@ -481,6 +481,90 @@ describe("O2Client management", () => {
       }),
     );
   });
+
+  it("cancelAllOrders paginates and cancels spot and standalone trigger entries", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+
+    const spotIds = ["01", "02", "03", "04"].map((byte) => orderId(`0x${byte.repeat(32)}`));
+    const triggerIds = ["05", "06"].map((byte) => triggerOrderId(`0x${byte.repeat(32)}`));
+    const cursorId = triggerOrderId(`0x${"07".repeat(32)}`);
+    const orderEntry = (id: (typeof spotIds)[number]) => ({
+      kind: "order" as const,
+      order_id: id,
+    });
+    const triggerEntry = (id: (typeof triggerIds)[number]) => ({
+      kind: "trigger" as const,
+      order_id: id,
+    });
+
+    const getActiveOrdersSpy = vi
+      .spyOn(client.api, "getActiveOrders")
+      .mockResolvedValueOnce({
+        entries: [
+          orderEntry(spotIds[0]!),
+          triggerEntry(triggerIds[0]!),
+          orderEntry(spotIds[1]!),
+          orderEntry(spotIds[2]!),
+          orderEntry(spotIds[3]!),
+        ],
+        next_timestamp: "123",
+        next_id: cursorId,
+        next_kind: "trigger",
+      } as never)
+      .mockResolvedValueOnce({
+        entries: [triggerEntry(triggerIds[1]!)],
+        next_timestamp: null,
+        next_id: null,
+        next_kind: null,
+      } as never);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    const results = await client.cancelAllOrders(MARKET);
+
+    expect(results).toHaveLength(2);
+    expect(getActiveOrdersSpy).toHaveBeenNthCalledWith(
+      2,
+      MARKET_ID,
+      expect.objectContaining({
+        cursor: {
+          startTimestamp: "123",
+          startId: cursorId,
+          startKind: "trigger",
+        },
+      }),
+    );
+    const submittedActions = submitActionsSpy.mock.calls.flatMap(
+      ([, request]) => request.actions[0]!.actions,
+    );
+    expect(submittedActions).toEqual([
+      { CancelOrder: { order_id: spotIds[0] } },
+      { CancelTriggerOrder: { order_id: triggerIds[0] } },
+      { CancelOrder: { order_id: spotIds[1] } },
+      { CancelOrder: { order_id: spotIds[2] } },
+      { CancelOrder: { order_id: spotIds[3] } },
+      { CancelTriggerOrder: { order_id: triggerIds[1] } },
+    ]);
+  });
+
+  it("cancelAllOrders returns null when there are no active entries", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    vi.spyOn(client.api, "getActiveOrders").mockResolvedValue({
+      entries: [],
+      next_timestamp: null,
+      next_id: null,
+      next_kind: null,
+    } as never);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(client.cancelAllOrders(MARKET)).resolves.toBeNull();
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("O2Client trigger orders", () => {
