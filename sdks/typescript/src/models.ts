@@ -561,6 +561,14 @@ export interface TriggerOrderArgs {
   side: Side;
 }
 
+/**
+ * Trigger arguments attached atomically to a new spot order.
+ *
+ * The trigger quantity is inherited from the spot order created in the same
+ * call, so callers do not provide a quantity or parent order ID.
+ */
+export type AttachedTriggerOrderArgs = Omit<TriggerOrderArgs, "quantity">;
+
 /** Wire-format trigger order type. All price fields are raw chain integer strings. */
 export type WireTriggerOrderType =
   | "Market"

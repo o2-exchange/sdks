@@ -93,6 +93,7 @@ export type {
   AggregatedAsset,
   AggregatedOrderbook,
   AssetId,
+  AttachedTriggerOrderArgs,
   BalanceResponse,
   BalanceUpdate,
   Bar,

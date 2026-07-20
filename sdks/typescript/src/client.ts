@@ -58,6 +58,7 @@ import type {
   ActiveOrderEntry,
   ActiveOrdersCursor,
   AssetId,
+  AttachedTriggerOrderArgs,
   BalanceResponse,
   BalanceUpdate,
   Bar,
@@ -83,7 +84,7 @@ import type {
   WalletState,
   WireTriggerOrderArgs,
 } from "./models.js";
-import { depthPrecision, tradeAccountId } from "./models.js";
+import { depthPrecision, orderId, tradeAccountId } from "./models.js";
 import {
   capitalizeSide,
   ensureNumeric,
@@ -95,6 +96,15 @@ import {
 import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
+const PENDING_PARENT_ORDER_ID = orderId(`0x${"00".repeat(32)}`);
+
+/** Add the wire-only parent marker for a trigger attached to a new spot order. */
+function withPendingParentQuantity(args: AttachedTriggerOrderArgs): TriggerOrderArgs {
+  return {
+    ...args,
+    quantity: { ParentOrder: { parent_order_id: PENDING_PARENT_ORDER_ID } },
+  };
+}
 
 /** Convert a wire-format Market to the MarketInfo used by encoding helpers. */
 function toMarketInfo(market: Market): MarketInfo {
@@ -606,6 +616,8 @@ export class O2Client {
    * Avoids the race of creating an order then attaching a trigger separately
    * (the trigger needs the new order's on-chain ID, which doesn't exist yet).
    * If both `trigger1` and `trigger2` are given, they're linked as an OCO pair.
+   * Their quantities are inherited from the new spot order; the SDK supplies
+   * the protocol's pending-parent marker internally.
    * Triggers must be on the opposite side of the spot order; `"Limit"` order
    * type is rejected on-chain.
    *
@@ -624,8 +636,8 @@ export class O2Client {
     price: Numeric,
     quantity: Numeric,
     orderType: OrderType,
-    trigger1: TriggerOrderArgs,
-    trigger2: TriggerOrderArgs | null = null,
+    trigger1: AttachedTriggerOrderArgs,
+    trigger2: AttachedTriggerOrderArgs | null = null,
     session?: SessionState,
   ): Promise<SessionActionsResponse> {
     const activeSession = session ?? this.ensureSession();
@@ -651,9 +663,17 @@ export class O2Client {
                 price: scaledPrice.toString(),
                 quantity: scaledQuantity.toString(),
                 order_type: scaleOrderType(orderType, resolved),
-                trigger_1: this.normalizeTriggerOrderArgs(trigger1, resolved, "trigger_1"),
+                trigger_1: this.normalizeTriggerOrderArgs(
+                  withPendingParentQuantity(trigger1),
+                  resolved,
+                  "trigger_1",
+                ),
                 trigger_2: trigger2
-                  ? this.normalizeTriggerOrderArgs(trigger2, resolved, "trigger_2")
+                  ? this.normalizeTriggerOrderArgs(
+                      withPendingParentQuantity(trigger2),
+                      resolved,
+                      "trigger_2",
+                    )
                   : null,
               },
             },
@@ -733,7 +753,7 @@ export class O2Client {
     let cursor: ActiveOrdersCursor | undefined;
     const seenCursors = new Set<string>();
 
-    do {
+    while (true) {
       const page = await this.api.getActiveOrders(resolved.market_id, {
         contract: activeSession.tradeAccountId,
         direction: "desc",
@@ -757,7 +777,7 @@ export class O2Client {
         startId: page.next_id,
         startKind: page.next_kind,
       };
-    } while (cursor != null);
+    }
 
     if (activeEntries.length === 0) return null;
 

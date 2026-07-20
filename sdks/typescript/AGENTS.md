@@ -40,7 +40,7 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `createOrder(market, side, price, quantity, options?)` | market, `"buy"\|"sell"`, `Numeric`, `Numeric`, options incl. `session?` | `SessionActionsResponse` | Place order (nonce auto-managed) |
 | `createTriggerOrder(market, args, parent?, session?)` | market, `TriggerOrderArgs`, optional parent/session | `SessionActionsResponse` | Create one standalone or parent-linked TP/SL trigger |
 | `createTriggerOrders(market, first, second, parent?, session?)` | market, two trigger args, optional parent/session | `SessionActionsResponse` | Atomically create an OCO trigger pair |
-| `createOrderWithTriggers(market, side, price, quantity, orderType, trigger1, trigger2?, session?)` | spot order fields plus one or two triggers | `SessionActionsResponse` | Create a spot order with attached TP/SL triggers |
+| `createOrderWithTriggers(market, side, price, quantity, orderType, trigger1, trigger2?, session?)` | spot order fields plus one or two `AttachedTriggerOrderArgs` (quantity inherited) | `SessionActionsResponse` | Create a spot order with attached TP/SL triggers |
 | `cancelOrder(orderId, market, session?)` | orderId, market, session? | `SessionActionsResponse` | Cancel an order |
 | `cancelTriggerOrder(orderId, market, session?)` | trigger orderId, market, session? | `SessionActionsResponse` | Cancel a trigger order |
 | `cancelAllOrders(market, session?)` | market, session? | `SessionActionsResponse[] \| null` | Cancel all open spot and standalone trigger orders |

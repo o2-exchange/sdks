@@ -731,10 +731,8 @@ describe("O2Client trigger orders", () => {
     const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
       tx_id: `0x${"bb".repeat(32)}`,
     } as never);
-    const pendingParent = orderId(`0x${"00".repeat(32)}`);
     const trigger = {
       order_type: { MarketBounded: { max_price: "1.1", min_price: "0.9" } },
-      quantity: { ParentOrder: { parent_order_id: pendingParent } },
       trigger_price: "1",
       side: "sell" as const,
     };
@@ -751,7 +749,12 @@ describe("O2Client trigger orders", () => {
                 CreateOrderWithTriggers: expect.objectContaining({
                   price: "1000000000",
                   quantity: "2000000000",
-                  trigger_1: expect.objectContaining({ side: "Sell" }),
+                  trigger_1: expect.objectContaining({
+                    quantity: {
+                      ParentOrder: { parent_order_id: `0x${"00".repeat(32)}` },
+                    },
+                    side: "Sell",
+                  }),
                   trigger_2: null,
                 }),
               },

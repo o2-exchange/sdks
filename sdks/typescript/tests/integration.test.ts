@@ -41,7 +41,6 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Network, type Numeric, O2Client } from "../src/index.js";
 import type { Market, SessionActionsResponse, TradeAccountId, WalletState } from "../src/models.js";
-import { orderId } from "../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
 const INTEGRATION_WALLETS_FILE = fileURLToPath(
@@ -795,9 +794,6 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
     await makerClient.createSession(makerWallet, [market], 30);
 
-    // The parent order doesn't exist yet. A zeroed placeholder is the
-    // established convention (see tests/client.test.ts).
-    const pendingParent = orderId(`0x${"00".repeat(32)}`);
     const response = await makerClient.createOrderWithTriggers(
       market,
       "buy",
@@ -806,7 +802,6 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       "PostOnly",
       {
         order_type: "Market",
-        quantity: { ParentOrder: { parent_order_id: pendingParent } },
         trigger_price: triggerPriceStr,
         side: "sell",
       },
@@ -902,7 +897,6 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
     await makerClient.createSession(makerWallet, [market], 30);
 
-    const pendingParent = orderId(`0x${"00".repeat(32)}`);
     const response = await makerClient.createOrderWithTriggers(
       market,
       "buy",
@@ -911,13 +905,11 @@ describe.skipIf(!INTEGRATION)("integration", () => {
       "PostOnly",
       {
         order_type: "Market",
-        quantity: { ParentOrder: { parent_order_id: pendingParent } },
         trigger_price: triggerBelowStr,
         side: "sell",
       },
       {
         order_type: "Market",
-        quantity: { ParentOrder: { parent_order_id: pendingParent } },
         trigger_price: triggerAboveStr,
         side: "sell",
       },
