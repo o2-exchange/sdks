@@ -729,8 +729,7 @@ describe.skipIf(!INTEGRATION)("integration", () => {
 
     await makerClient.createSession(makerWallet, [market], 30);
 
-    // The parent order doesn't exist yet — the contract wires the real ID
-    // when it creates both atomically. A zeroed placeholder is the
+    // The parent order doesn't exist yet. A zeroed placeholder is the
     // established convention (see tests/client.test.ts).
     const pendingParent = orderId(`0x${"00".repeat(32)}`);
     const response = await makerClient.createOrderWithTriggers(
@@ -762,6 +761,207 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     try {
       await makerClient.cancelOrder(spotOrder!.order_id, market);
     } catch {}
+  });
+
+  it("integration: attaches a trigger to an already-resting order", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 50_000_000n);
+
+    const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+    const quantityStr = minQuantityStr(market, priceStr);
+    const triggerPriceStr = `0.${"0".repeat(market.quote.max_precision - 1)}2`;
+
+    await makerClient.createSession(makerWallet, [market], 30);
+
+    // A real parent order, unlike createOrderWithTriggers's zeroed placeholder.
+    const orderResponse = await createOrderWithWhitelistRetry(
+      makerClient,
+      market,
+      "buy",
+      priceStr,
+      quantityStr,
+      "PostOnly",
+      makerTradeAccountId,
+    );
+    expect(orderResponse.orders?.length).toBeGreaterThan(0);
+    const parentOrder = orderResponse.orders![0];
+    expect(parentOrder.order_id).toBeTruthy();
+    const fetchedParent = await makerClient.getOrder(market, parentOrder.order_id);
+    const triggerResponse = await makerClient.createTriggerOrder(
+      market,
+      {
+        order_type: "Market",
+        quantity: { ParentOrder: { parent_order_id: parentOrder.order_id } },
+        trigger_price: triggerPriceStr,
+        side: "sell",
+      },
+      {
+        order_id: parentOrder.order_id,
+        expected_quantity: fetchedParent.quantity,
+      },
+    );
+    expect(triggerResponse.txId).toBeTruthy();
+
+    const refreshed = await makerClient.getOrder(market, parentOrder.order_id);
+    expect(refreshed.active_trigger_orders?.length).toBe(1);
+    const triggerId = refreshed.active_trigger_orders![0].order_id;
+
+    const cancelTriggerResponse = await makerClient.cancelTriggerOrder(triggerId, market);
+    expect(cancelTriggerResponse.txId).toBeTruthy();
+
+    try {
+      await makerClient.cancelOrder(parentOrder.order_id, market);
+    } catch {}
+  });
+
+  it("integration: atomic order with an OCO trigger pair attached", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    // minQuantityStr targets ~min_order regardless of price, so fund well
+    // above that rather than relying on residual balance.
+    await ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 2_000_000_000n);
+
+    // The pair must straddle the spot's limit price: one leg below, one above.
+    const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}3`;
+    const triggerBelowStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+    const triggerAboveStr = `0.${"0".repeat(market.quote.max_precision - 1)}5`;
+    const quantityStr = minQuantityStr(market, triggerBelowStr);
+
+    await makerClient.createSession(makerWallet, [market], 30);
+
+    const pendingParent = orderId(`0x${"00".repeat(32)}`);
+    const response = await makerClient.createOrderWithTriggers(
+      market,
+      "buy",
+      priceStr,
+      quantityStr,
+      "PostOnly",
+      {
+        order_type: "Market",
+        quantity: { ParentOrder: { parent_order_id: pendingParent } },
+        trigger_price: triggerBelowStr,
+        side: "sell",
+      },
+      {
+        order_type: "Market",
+        quantity: { ParentOrder: { parent_order_id: pendingParent } },
+        trigger_price: triggerAboveStr,
+        side: "sell",
+      },
+    );
+
+    expect(response.txId).toBeTruthy();
+    expect(response.orders?.length).toBeGreaterThan(0);
+    const spotOrder = response.orders?.[0];
+    expect(spotOrder!.active_trigger_orders?.length).toBe(2);
+
+    for (const trigger of spotOrder!.active_trigger_orders!) {
+      try {
+        await makerClient.cancelTriggerOrder(trigger.order_id, market);
+      } catch {}
+    }
+
+    try {
+      await makerClient.cancelOrder(spotOrder!.order_id, market);
+    } catch {}
+  });
+
+  it("integration: standalone triggers with Spot and MarketBounded order types", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    // A min-step price inflates required quantity — use a realistic price.
+    await ensureFunded(makerClient, makerTradeAccountId, market.base.symbol, 500_000_000n);
+
+    const basePriceStr = await conservativePostOnlyBuyPriceStr(client, market);
+    const basePrice = Number.parseFloat(basePriceStr);
+    const spotPriceStr = basePriceStr;
+    const spotQuantityStr = minQuantityStr(market, spotPriceStr);
+    // A percentage spread can round to zero ticks at low precision, so use
+    // one tick each way instead
+    const tick = 10 ** -market.quote.max_precision;
+    const boundedMaxStr = (basePrice + tick).toFixed(market.quote.max_precision);
+    const boundedMinStr = Math.max(tick, basePrice - tick).toFixed(market.quote.max_precision);
+    const boundedQuantityStr = minQuantityStr(market, boundedMaxStr);
+
+    await makerClient.createSession(makerWallet, [market], 30);
+
+    const wsClient = new O2Client({ network: Network.TESTNET });
+    try {
+      const stream = await wsClient.streamOrders(makerTradeAccountId);
+      const firstMessage = firstStreamMessage(stream);
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      const spotResponse = await makerClient.createTriggerOrder(market, {
+        order_type: { Spot: { price: spotPriceStr } },
+        quantity: { Quantity: { quantity: spotQuantityStr } },
+        trigger_price: spotPriceStr,
+        side: "sell",
+      });
+      expect(spotResponse.txId).toBeTruthy();
+
+      const boundedResponse = await makerClient.createTriggerOrder(market, {
+        order_type: { MarketBounded: { max_price: boundedMaxStr, min_price: boundedMinStr } },
+        quantity: { Quantity: { quantity: boundedQuantityStr } },
+        trigger_price: boundedMaxStr,
+        side: "sell",
+      });
+      expect(boundedResponse.txId).toBeTruthy();
+
+      const update = await Promise.race([
+        firstMessage,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("WS orders timeout")), 30_000),
+        ),
+      ]);
+
+      expect(update?.standalone_trigger_orders?.length).toBeGreaterThanOrEqual(1);
+
+      for (const trigger of update?.standalone_trigger_orders ?? []) {
+        try {
+          await makerClient.cancelTriggerOrder(trigger.order_id, market);
+        } catch {}
+      }
+    } finally {
+      wsClient.disconnectWs();
+    }
+  }, 60_000);
+
+  it("integration: rejects an OCO pair with matching trigger prices", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await ensureFunded(makerClient, makerTradeAccountId, market.base.symbol, 50_000_000n);
+
+    const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+    const quantityStr = minQuantityStr(market, priceStr);
+
+    await makerClient.createSession(makerWallet, [market], 30);
+
+    const sameArgs = {
+      order_type: "Market" as const,
+      quantity: { Quantity: { quantity: quantityStr } },
+      trigger_price: priceStr,
+      side: "sell" as const,
+    };
+
+    // Rejected as a preflight validation, not an on-chain revert — doesn't
+    // exercise onchain-revert.ts, but confirms the rule is enforced.
+    await expect(makerClient.createTriggerOrders(market, sameArgs, sameArgs)).rejects.toThrow(
+      /same trigger_price/,
+    );
   });
 
   it("integration: fetches account info", async () => {

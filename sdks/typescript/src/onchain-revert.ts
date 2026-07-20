@@ -64,6 +64,17 @@ const ABI_ERROR_ENUMS: Map<bigint, [string, [string, string][]]> = new Map([
     ],
   ],
   [
+    2487585211828868623n,
+    [
+      "contract_libs::access_control::AccessControlError",
+      [
+        ["AccessControlNotAuthorized", "Caller is not authorized for this role-gated operation"],
+        ["AccessControlNoMsgSender", "No message sender context available for authorization check"],
+        ["AccessControlRoleOutOfBounds", "Role index is out of bounds"],
+      ],
+    ],
+  ],
+  [
     2735857006735158246n,
     [
       "contract_schema::trade_account::SessionError",
@@ -108,6 +119,7 @@ const ABI_ERROR_ENUMS: Map<bigint, [string, [string, string][]]> = new Map([
         ["InvalidPricePrecision", "Invalid price precision (admin)"],
         ["OwnerNotSet", "Owner not set (admin)"],
         ["InvalidMinOrder", "Invalid minimum order (admin)"],
+        ["InvalidTriggerMaxSlippage", "Invalid trigger max-slippage configuration (admin)"],
       ],
     ],
   ],
