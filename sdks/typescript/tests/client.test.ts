@@ -560,6 +560,86 @@ describe("O2Client trigger orders", () => {
     );
   });
 
+  it("makes the higher-priced buy leg canonical for the shared OCO lock", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createTriggerOrders(
+      MARKET,
+      {
+        order_type: { Spot: { price: "0.9" } },
+        quantity: { Quantity: { quantity: "2" } },
+        trigger_price: "0.8",
+        side: "buy",
+      },
+      {
+        order_type: { MarketBounded: { max_price: "1.2", min_price: "1" } },
+        quantity: { Quantity: { quantity: "2" } },
+        trigger_price: "1.1",
+        side: "buy",
+      },
+    );
+
+    const request = submitActionsSpy.mock.calls[0]![1];
+    const action = request.actions[0]!.actions[1]!;
+    expect(action).toEqual({
+      CreateTriggerOrders: expect.objectContaining({
+        first: expect.objectContaining({
+          order_type: { MarketBounded: { max_price: "1200000000", min_price: "1000000000" } },
+          trigger_price: "1100000000",
+        }),
+        second: expect.objectContaining({
+          order_type: { Spot: { price: "900000000" } },
+          trigger_price: "800000000",
+        }),
+      }),
+    });
+  });
+
+  it("makes the larger sell leg canonical for the shared OCO lock", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createTriggerOrders(
+      MARKET,
+      {
+        order_type: "Market",
+        quantity: { Quantity: { quantity: "1" } },
+        trigger_price: "0.8",
+        side: "sell",
+      },
+      {
+        order_type: "Market",
+        quantity: { Quantity: { quantity: "2" } },
+        trigger_price: "1.2",
+        side: "sell",
+      },
+    );
+
+    const request = submitActionsSpy.mock.calls[0]![1];
+    const action = request.actions[0]!.actions[1]!;
+    expect(action).toEqual({
+      CreateTriggerOrders: expect.objectContaining({
+        first: expect.objectContaining({
+          quantity: { Quantity: { quantity: "2000000000" } },
+          trigger_price: "1200000000",
+        }),
+        second: expect.objectContaining({
+          quantity: { Quantity: { quantity: "1000000000" } },
+          trigger_price: "800000000",
+        }),
+      }),
+    });
+  });
+
   it("submits a spot order with attached triggers and cancels a trigger", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());

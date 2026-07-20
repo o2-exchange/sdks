@@ -460,7 +460,12 @@ export function actionToCall(
 
   if ("CreateTriggerOrders" in action) {
     const data = action.CreateTriggerOrders;
+    // The high-level client canonicalizes the larger-lock leg as `first` so
+    // this exact amount matches both backend reconstruction and the contract.
     const lock = triggerLockParams(data.first, market);
+    if (triggerLockAmount(data.second, market.base.decimals) > lock.amount) {
+      throw new Error("CreateTriggerOrders must place the larger-lock leg first");
+    }
     return {
       contractId: contractIdBytes,
       functionSelector: functionSelector("create_trigger_orders"),
@@ -552,15 +557,12 @@ export function actionToCall(
   throw new Error(`Unknown action type: ${JSON.stringify(action)}`);
 }
 
-function triggerLockParams(
-  args: TriggerOrderArgsJSON,
-  market: MarketInfo,
-): { amount: bigint; assetId: Uint8Array } {
-  const isBuy = args.side === "Buy";
-  const assetId = hexToBytes(isBuy ? market.quote.asset : market.base.asset);
-  if ("ParentOrder" in args.quantity) return { amount: 0n, assetId };
-
+/** Required lock amount for a normalized trigger leg. */
+export function triggerLockAmount(args: TriggerOrderArgsJSON, baseDecimals: number): bigint {
+  if ("ParentOrder" in args.quantity) return 0n;
   const quantity = BigInt(args.quantity.Quantity.quantity);
+  if (args.side === "Sell") return quantity;
+
   const lockPrice =
     args.order_type === "Market"
       ? BigInt(args.trigger_price)
@@ -568,9 +570,16 @@ function triggerLockParams(
         ? BigInt(args.order_type.MarketBounded.max_price)
         : BigInt(args.order_type.Spot.price);
 
+  return (lockPrice * quantity) / 10n ** BigInt(baseDecimals);
+}
+
+function triggerLockParams(
+  args: TriggerOrderArgsJSON,
+  market: MarketInfo,
+): { amount: bigint; assetId: Uint8Array } {
   return {
-    amount: isBuy ? (lockPrice * quantity) / 10n ** BigInt(market.base.decimals) : quantity,
-    assetId,
+    amount: triggerLockAmount(args, market.base.decimals),
+    assetId: hexToBytes(args.side === "Buy" ? market.quote.asset : market.base.asset),
   };
 }
 

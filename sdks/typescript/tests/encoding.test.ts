@@ -355,6 +355,38 @@ describe("Encoding Module", () => {
       expect(call.callData?.slice(-8)).toEqual(u64BE(0));
     });
 
+    it("rejects a paired trigger call whose second leg needs a larger lock", () => {
+      const market = {
+        contractId: `0x${"11".repeat(32)}`,
+        marketId: `0x${"22".repeat(32)}`,
+        base: { asset: `0x${"33".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "BASE" },
+        quote: { asset: `0x${"44".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "QUOTE" },
+      };
+      const first = {
+        order_type: { Spot: { price: "100" } },
+        quantity: { Quantity: { quantity: "5" } },
+        trigger_price: "90",
+        side: "Buy" as const,
+      };
+
+      expect(() =>
+        actionToCall(
+          {
+            CreateTriggerOrders: {
+              first,
+              second: {
+                ...first,
+                order_type: { Spot: { price: "120" } },
+                trigger_price: "110",
+              },
+              parent: null,
+            },
+          },
+          market,
+        ),
+      ).toThrow("CreateTriggerOrders must place the larger-lock leg first");
+    });
+
     it("rejects a computed trigger lock amount above u64 when signing", () => {
       const market = {
         contractId: `0x${"11".repeat(32)}`,

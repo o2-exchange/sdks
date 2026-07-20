@@ -48,6 +48,7 @@ import {
   type MarketInfo,
   scaleDecimalString,
   scalePriceString,
+  triggerLockAmount,
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
@@ -548,7 +549,7 @@ export class O2Client {
           ],
         },
       ],
-      false,
+      true,
       activeSession,
     );
   }
@@ -564,6 +565,17 @@ export class O2Client {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const normalizedFirst = this.normalizeTriggerOrderArgs(first, resolved, "first");
+    const normalizedSecond = this.normalizeTriggerOrderArgs(second, resolved, "second");
+
+    // The contract makes trigger_order_1 canonical and requires its exact lock
+    // amount. Put the more expensive standalone leg first so the shared OCO
+    // lock can fund either sibling at its full requested quantity.
+    const shouldSwap =
+      triggerLockAmount(normalizedSecond, resolved.base.decimals) >
+      triggerLockAmount(normalizedFirst, resolved.base.decimals);
+    const canonicalFirst = shouldSwap ? normalizedSecond : normalizedFirst;
+    const canonicalSecond = shouldSwap ? normalizedFirst : normalizedSecond;
 
     return this.submitBatch(
       [
@@ -573,15 +585,15 @@ export class O2Client {
             { SettleBalance: { to: { ContractId: activeSession.tradeAccountId } } },
             {
               CreateTriggerOrders: {
-                first: this.normalizeTriggerOrderArgs(first, resolved, "first"),
-                second: this.normalizeTriggerOrderArgs(second, resolved, "second"),
+                first: canonicalFirst,
+                second: canonicalSecond,
                 parent: this.normalizeParentOrderRef(parent, resolved),
               },
             },
           ],
         },
       ],
-      false,
+      true,
       activeSession,
     );
   }
@@ -646,7 +658,7 @@ export class O2Client {
           ],
         },
       ],
-      false,
+      true,
       activeSession,
     );
   }
