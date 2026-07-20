@@ -604,19 +604,26 @@ export enum TriggerOrderErrorCode {
 }
 
 /** A trigger order returned in order subscription payloads. */
+/**
+ * A trigger order as returned by the API. Field availability depends on the
+ * source: the REST `/v1/session/actions` response nests the lean domain
+ * shape (no `market_id`, `status`, `possible_amount`/`available_amount`, or
+ * `parent_order_id`), while WebSocket streams and the active-orders endpoint
+ * send the richer subscription shape with all fields populated.
+ */
 export interface TriggerOrder {
   order_id: TriggerOrderId;
   owner: Identity;
   side: Side;
   order_type: TriggerOrderType;
-  market_id: MarketId;
+  market_id?: MarketId;
   trigger_price: bigint;
   timestamp: string | number;
-  status: TriggerOrderStatus;
+  status?: TriggerOrderStatus;
   sibling_order?: TriggerOrderId;
   parent_order_id?: OrderId;
-  possible_amount: bigint;
-  available_amount: bigint;
+  possible_amount?: bigint;
+  available_amount?: bigint;
   history: unknown[];
 }
 
@@ -1580,13 +1587,17 @@ export function parseTriggerOrder(raw: Record<string, unknown>): TriggerOrder {
 
   return {
     order_id: hexIdTrusted<"TriggerOrderId">(raw.order_id as string),
-    owner: raw.owner as Identity,
+    // REST /v1/session/actions nests the lean domain shape, keyed `account`;
+    // WebSocket and the active-orders endpoint send the subscription shape,
+    // keyed `owner`.
+    owner: (raw.owner ?? raw.account) as Identity,
     side: parseRequiredSide(raw.side),
     order_type: orderType,
-    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
+    market_id:
+      raw.market_id != null ? hexIdTrusted<"MarketId">(raw.market_id as string) : undefined,
     trigger_price: parseBigInt(raw.trigger_price),
     timestamp: raw.timestamp as string | number,
-    status: raw.status as TriggerOrderStatus,
+    status: raw.status != null ? (raw.status as TriggerOrderStatus) : undefined,
     sibling_order:
       raw.sibling_order != null
         ? hexIdTrusted<"TriggerOrderId">(raw.sibling_order as string)
@@ -1595,8 +1606,8 @@ export function parseTriggerOrder(raw: Record<string, unknown>): TriggerOrder {
       raw.parent_order_id != null
         ? hexIdTrusted<"OrderId">(raw.parent_order_id as string)
         : undefined,
-    possible_amount: parseBigInt(raw.possible_amount),
-    available_amount: parseBigInt(raw.available_amount),
+    possible_amount: raw.possible_amount != null ? parseBigInt(raw.possible_amount) : undefined,
+    available_amount: raw.available_amount != null ? parseBigInt(raw.available_amount) : undefined,
     history: Array.isArray(raw.history) ? raw.history : [],
   };
 }
