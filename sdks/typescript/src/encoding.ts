@@ -18,6 +18,9 @@
 export function u64BE(value: number | bigint): Uint8Array {
   const buf = new Uint8Array(8);
   const v = BigInt(value);
+  if (v < 0n || v > 0xffffffffffffffffn) {
+    throw new RangeError(`Value ${v.toString()} is outside the u64 range`);
+  }
   const view = new DataView(buf.buffer);
   view.setBigUint64(0, v, false);
   return buf;
@@ -107,6 +110,56 @@ export function encodeOrderArgs(
   }
 
   return concat(parts);
+}
+
+/** Wire-format trigger order type used by session action encoding. */
+export type TriggerOrderTypeJSON =
+  | "Market"
+  | { MarketBounded: { max_price: string; min_price: string } }
+  | { Spot: { price: string } };
+
+/** Wire-format trigger quantity used by session action encoding. */
+export type TriggerQuantityJSON =
+  | { Quantity: { quantity: string } }
+  | { ParentOrder: { parent_order_id: string } };
+
+/** Wire-format trigger arguments used by session action encoding. */
+export interface TriggerOrderArgsJSON {
+  order_type: TriggerOrderTypeJSON;
+  quantity: TriggerQuantityJSON;
+  trigger_price: string;
+  side: "Buy" | "Sell";
+}
+
+/** Encode the contract TriggerOrderArgs struct. */
+export function encodeTriggerOrderArgs(args: TriggerOrderArgsJSON): Uint8Array {
+  const quantity =
+    "Quantity" in args.quantity
+      ? concat([u64BE(0), u64BE(BigInt(args.quantity.Quantity.quantity))])
+      : concat([u64BE(1), hexToBytes(args.quantity.ParentOrder.parent_order_id)]);
+
+  let orderType: Uint8Array;
+  if (args.order_type === "Market") {
+    orderType = u64BE(0);
+  } else if ("MarketBounded" in args.order_type) {
+    orderType = concat([
+      u64BE(1),
+      u64BE(BigInt(args.order_type.MarketBounded.max_price)),
+      u64BE(BigInt(args.order_type.MarketBounded.min_price)),
+    ]);
+  } else {
+    orderType = concat([u64BE(2), u64BE(BigInt(args.order_type.Spot.price))]);
+  }
+
+  return concat([quantity, orderType, u64BE(BigInt(args.trigger_price))]);
+}
+
+function encodeOptionalU64(value: string | null): Uint8Array {
+  return value == null ? u64BE(0) : concat([u64BE(1), u64BE(BigInt(value))]);
+}
+
+function encodeOptionalTriggerOrderArgs(args: TriggerOrderArgsJSON | null): Uint8Array {
+  return args == null ? u64BE(0) : concat([u64BE(1), encodeTriggerOrderArgs(args)]);
 }
 
 // ── Session Signing Bytes ───────────────────────────────────────────
@@ -264,11 +317,45 @@ export interface RegisterRefererAction {
   RegisterReferer: { to: { Address?: string; ContractId?: string } };
 }
 
+export interface CreateTriggerOrderAction {
+  CreateTriggerOrder: {
+    args: TriggerOrderArgsJSON;
+    parent: { order_id: string; expected_quantity: string } | null;
+  };
+}
+
+export interface CreateTriggerOrdersAction {
+  CreateTriggerOrders: {
+    first: TriggerOrderArgsJSON;
+    second: TriggerOrderArgsJSON;
+    parent: { order_id: string; expected_quantity: string } | null;
+  };
+}
+
+export interface CreateOrderWithTriggersAction {
+  CreateOrderWithTriggers: {
+    side: "Buy" | "Sell";
+    price: string;
+    quantity: string;
+    order_type: OrderTypeJSON;
+    trigger_1: TriggerOrderArgsJSON;
+    trigger_2: TriggerOrderArgsJSON | null;
+  };
+}
+
+export interface CancelTriggerOrderAction {
+  CancelTriggerOrder: { order_id: string };
+}
+
 export type ActionJSON =
   | CreateOrderAction
   | CancelOrderAction
   | SettleBalanceAction
-  | RegisterRefererAction;
+  | RegisterRefererAction
+  | CreateTriggerOrderAction
+  | CreateTriggerOrdersAction
+  | CreateOrderWithTriggersAction
+  | CancelTriggerOrderAction;
 
 const ZERO_ASSET = new Uint8Array(32);
 
@@ -355,6 +442,70 @@ export function actionToCall(
     };
   }
 
+  if ("CreateTriggerOrder" in action) {
+    const data = action.CreateTriggerOrder;
+    const lock = triggerLockParams(data.args, market);
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("create_trigger_order"),
+      amount: lock.amount,
+      assetId: lock.assetId,
+      gas: GAS_MAX,
+      callData: concat([
+        encodeTriggerOrderArgs(data.args),
+        encodeOptionalU64(data.parent?.expected_quantity ?? null),
+      ]),
+    };
+  }
+
+  if ("CreateTriggerOrders" in action) {
+    const data = action.CreateTriggerOrders;
+    const lock = triggerLockParams(data.first, market);
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("create_trigger_orders"),
+      amount: "ParentOrder" in data.first.quantity ? 0n : lock.amount,
+      assetId: lock.assetId,
+      gas: GAS_MAX,
+      callData: concat([
+        encodeTriggerOrderArgs(data.first),
+        encodeTriggerOrderArgs(data.second),
+        encodeOptionalU64(data.parent?.expected_quantity ?? null),
+      ]),
+    };
+  }
+
+  if ("CreateOrderWithTriggers" in action) {
+    const data = action.CreateOrderWithTriggers;
+    const price = BigInt(data.price);
+    const quantity = BigInt(data.quantity);
+    const isBuy = data.side === "Buy";
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("create_order_with_triggers"),
+      amount: isBuy ? (price * quantity) / 10n ** BigInt(market.base.decimals) : quantity,
+      assetId: hexToBytes(isBuy ? market.quote.asset : market.base.asset),
+      gas: GAS_MAX,
+      callData: concat([
+        encodeOrderArgs(price, quantity, parseOrderTypeJSON(data.order_type)),
+        encodeTriggerOrderArgs(data.trigger_1),
+        encodeOptionalTriggerOrderArgs(data.trigger_2),
+      ]),
+    };
+  }
+
+  if ("CancelTriggerOrder" in action) {
+    return {
+      contractId: contractIdBytes,
+      // The contract dispatches spot and trigger IDs through the same entry point.
+      functionSelector: functionSelector("cancel_order"),
+      amount: 0n,
+      assetId: ZERO_ASSET,
+      gas: GAS_MAX,
+      callData: hexToBytes(action.CancelTriggerOrder.order_id),
+    };
+  }
+
   if ("CancelOrder" in action) {
     const orderId = hexToBytes(action.CancelOrder.order_id);
     return {
@@ -399,6 +550,28 @@ export function actionToCall(
   }
 
   throw new Error(`Unknown action type: ${JSON.stringify(action)}`);
+}
+
+function triggerLockParams(
+  args: TriggerOrderArgsJSON,
+  market: MarketInfo,
+): { amount: bigint; assetId: Uint8Array } {
+  const isBuy = args.side === "Buy";
+  const assetId = hexToBytes(isBuy ? market.quote.asset : market.base.asset);
+  if ("ParentOrder" in args.quantity) return { amount: 0n, assetId };
+
+  const quantity = BigInt(args.quantity.Quantity.quantity);
+  const lockPrice =
+    args.order_type === "Market"
+      ? BigInt(args.trigger_price)
+      : "MarketBounded" in args.order_type
+        ? BigInt(args.order_type.MarketBounded.max_price)
+        : BigInt(args.order_type.Spot.price);
+
+  return {
+    amount: isBuy ? (lockPrice * quantity) / 10n ** BigInt(market.base.decimals) : quantity,
+    assetId,
+  };
 }
 
 // ── Decimal Helpers ─────────────────────────────────────────────────

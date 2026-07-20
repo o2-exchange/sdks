@@ -218,6 +218,73 @@ const ABI_ERROR_ENUMS: Map<bigint, [string, [string, string][]]> = new Map([
       [["InvalidNonce", "Nonce is stale or out of sequence. Refresh the nonce and retry."]],
     ],
   ],
+  // Trigger-order (TP/SL) error enums. Appended at the end rather than in
+  // logId-sorted order so pre-existing enums keep priority in
+  // VARIANT_TO_QUALIFIED's "first wins" resolution for variant names that
+  // collide across enums (e.g. TraderNotWhiteListed, InvalidAsset).
+  [
+    1559614116885970782n,
+    [
+      "contract_schema::order_book::TriggerOrderCreationError",
+      [
+        ["InvalidArgs", "Trigger order arguments are invalid"],
+        [
+          "PricePrecision",
+          "A trigger-order price doesn't align with the market's tick size. Use Market.scale_price().",
+        ],
+        ["InvalidOrderType", "Invalid trigger order type for this market"],
+        ["InvalidMarketOrderArgs", "Invalid arguments for a bounded market trigger order"],
+        [
+          "FractionalPrice",
+          "The effective order price × quantity must be divisible by 10^base_decimals. Use Market.adjust_quantity().",
+        ],
+        ["InvalidAsset", "Wrong asset for this market"],
+        ["InvalidInputAmount", "Input amount doesn't match the required lock amount"],
+        ["ZeroTriggerPrice", "Trigger price cannot be zero"],
+        ["ZeroLimitPrice", "Limit price cannot be zero"],
+        [
+          "QuantityMustBeParentOrder",
+          "Standalone quantity is not allowed here; quantity must reference a parent order",
+        ],
+        ["ZeroResolvedQtyOrPrice", "Resolved quantity or price is zero"],
+        ["InvalidParentOrderId", "Parent order ID is invalid"],
+        ["ParentOrderIsNotSpot", "Parent order must be a spot order"],
+        ["ParentOrderFilled", "Parent order is already fully filled"],
+        ["ParentOrderNotFound", "Parent order not found"],
+        [
+          "ParentTriggerSlotsExhausted",
+          "Parent order already has the maximum number of attached trigger orders",
+        ],
+        ["ParentOrderOwnerMismatch", "Parent order does not belong to this account"],
+        ["TriggerPriceSameAsParent", "Trigger price cannot equal the parent order's price"],
+        ["TriggerSideSameAsParent", "Trigger side must be the opposite of the parent order's side"],
+        ["SlippageExceedsMax", "Bounded market slippage exceeds the allowed maximum"],
+        ["OcoSameTriggerPrice", "OCO pair legs cannot have the same trigger price"],
+        [
+          "OcoNotStopAndTakeProfit",
+          "OCO pair must consist of one stop-loss leg and one take-profit leg",
+        ],
+        ["LimitPriceCrossesParent", "Trigger limit price crosses the parent order's price"],
+        [
+          "ParentQuantityMismatch",
+          "Parent order's quantity no longer matches the expected_quantity snapshot",
+        ],
+        ["TraderNotWhiteListed", "Account not whitelisted. Call whitelist_account() first."],
+        ["TraderBlackListed", "Account is blacklisted and cannot trade on this market"],
+      ],
+    ],
+  ],
+  [
+    11872035487494935780n,
+    [
+      "contract_schema::order_book::TriggerOrderCancelError",
+      [
+        ["NotOrderOwner", "You can only cancel your own trigger orders"],
+        ["TraderNotBlacklisted", "Trader is not blacklisted"],
+        ["OrderDoesNotExist", "Trigger order does not exist"],
+      ],
+    ],
+  ],
 ]);
 
 // Reverse lookup: variant name → [fully qualified "EnumName::VariantName", description]

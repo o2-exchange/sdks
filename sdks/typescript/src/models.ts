@@ -42,6 +42,8 @@ export function hexId<B extends string>(raw: string): HexId<B> {
 export type TxId = HexId<"TxId">;
 /** Order identifier. */
 export type OrderId = HexId<"OrderId">;
+/** Trigger order identifier. */
+export type TriggerOrderId = HexId<"TriggerOrderId">;
 /** Market identifier. */
 export type MarketId = HexId<"MarketId">;
 /** Contract identifier. */
@@ -64,6 +66,8 @@ export function hexIdTrusted<B extends string>(raw: string): HexId<B> {
 export const txId = (raw: string): TxId => hexId<"TxId">(raw);
 /** Create an {@link OrderId} from a raw hex string (validated). */
 export const orderId = (raw: string): OrderId => hexId<"OrderId">(raw);
+/** Create a {@link TriggerOrderId} from a raw hex string (validated). */
+export const triggerOrderId = (raw: string): TriggerOrderId => hexId<"TriggerOrderId">(raw);
 /** Create a {@link MarketId} from a raw hex string (validated). */
 export const marketId = (raw: string): MarketId => hexId<"MarketId">(raw);
 /** Create a {@link ContractId} from a raw hex string (validated). */
@@ -532,6 +536,90 @@ export type OrderType =
   | { Limit: [Numeric, string] }
   | { BoundedMarket: { max_price: Numeric; min_price: Numeric } };
 
+/** Trigger order type. Price fields accept human-readable strings or raw chain bigints. */
+export type TriggerOrderType =
+  | "Market"
+  | { MarketBounded: { max_price: Numeric; min_price: Numeric } }
+  | { Spot: { price: Numeric } };
+
+/** Trigger quantity, either standalone or inherited from a parent spot order. */
+export type TriggerQuantity =
+  | { Quantity: { quantity: Numeric } }
+  | { ParentOrder: { parent_order_id: OrderId } };
+
+/** Reference to a parent spot order and its expected initial quantity. */
+export interface ParentOrderRef {
+  order_id: OrderId;
+  expected_quantity: Numeric;
+}
+
+/** User-facing arguments for a trigger order. Numeric values are scaled using market metadata. */
+export interface TriggerOrderArgs {
+  order_type: TriggerOrderType;
+  quantity: TriggerQuantity;
+  trigger_price: Numeric;
+  side: Side;
+}
+
+/** Wire-format trigger order type. All price fields are raw chain integer strings. */
+export type WireTriggerOrderType =
+  | "Market"
+  | { MarketBounded: { max_price: string; min_price: string } }
+  | { Spot: { price: string } };
+
+/** Wire-format trigger quantity. */
+export type WireTriggerQuantity =
+  | { Quantity: { quantity: string } }
+  | { ParentOrder: { parent_order_id: OrderId } };
+
+/** Wire-format trigger arguments submitted to the API. */
+export interface WireTriggerOrderArgs {
+  order_type: WireTriggerOrderType;
+  quantity: WireTriggerQuantity;
+  trigger_price: string;
+  side: "Buy" | "Sell";
+}
+
+/** Lifecycle status reported for a trigger order. */
+export type TriggerOrderStatus =
+  | "Active"
+  | "Activated"
+  | "CanceledByUser"
+  | "CanceledBySibling"
+  | "ForceCanceled"
+  | "NotEnoughFunds"
+  | "EjectedByAdmin"
+  | "ParentOrderCanceled";
+
+/** Trigger-order-specific API validation codes, verified against the backend source. */
+export enum TriggerOrderErrorCode {
+  ParentOrderAlreadyHasFills = 7006,
+  TriggerPairSameDirection = 7007,
+  ParentQuantityMismatch = 7008,
+  InvalidTriggerOrderArgs = 7009,
+  TriggerConflictsWithParent = 7010,
+  TriggerOrderQuotaExceeded = 7011,
+  ActiveSpotOrderLimitExceeded = 7012,
+  ParentOrderIdMismatch = 7013,
+}
+
+/** A trigger order returned in order subscription payloads. */
+export interface TriggerOrder {
+  order_id: TriggerOrderId;
+  owner: Identity;
+  side: Side;
+  order_type: TriggerOrderType;
+  market_id: MarketId;
+  trigger_price: bigint;
+  timestamp: string | number;
+  status: TriggerOrderStatus;
+  sibling_order?: TriggerOrderId;
+  parent_order_id?: OrderId;
+  possible_amount: bigint;
+  available_amount: bigint;
+  history: unknown[];
+}
+
 /**
  * Create a Limit order type with named parameters.
  *
@@ -629,6 +717,10 @@ export interface Order {
   market_id?: MarketId;
   /** The owner identity. */
   owner?: Identity;
+  /** Trigger orders currently attached to this spot order. */
+  active_trigger_orders?: TriggerOrder[];
+  /** Former child trigger IDs retained for order history. */
+  related_child_orders?: TriggerOrderId[];
 }
 
 /**
@@ -848,6 +940,40 @@ export interface RegisterRefererPayload {
   };
 }
 
+/** Payload for creating one trigger order. */
+export interface CreateTriggerOrderPayload {
+  CreateTriggerOrder: {
+    args: WireTriggerOrderArgs;
+    parent: { order_id: OrderId; expected_quantity: string } | null;
+  };
+}
+
+/** Payload for atomically creating an OCO pair of trigger orders. */
+export interface CreateTriggerOrdersPayload {
+  CreateTriggerOrders: {
+    first: WireTriggerOrderArgs;
+    second: WireTriggerOrderArgs;
+    parent: { order_id: OrderId; expected_quantity: string } | null;
+  };
+}
+
+/** Payload for creating a spot order with one or two attached trigger orders. */
+export interface CreateOrderWithTriggersPayload {
+  CreateOrderWithTriggers: {
+    side: "Buy" | "Sell";
+    price: string;
+    quantity: string;
+    order_type: WireOrderType;
+    trigger_1: WireTriggerOrderArgs;
+    trigger_2: WireTriggerOrderArgs | null;
+  };
+}
+
+/** Payload for cancelling a trigger order. */
+export interface CancelTriggerOrderPayload {
+  CancelTriggerOrder: { order_id: TriggerOrderId };
+}
+
 /**
  * Union of all possible action payloads for session actions (wire format).
  *
@@ -860,7 +986,11 @@ export type ActionPayload =
   | CreateOrderPayload
   | CancelOrderPayload
   | SettleBalancePayload
-  | RegisterRefererPayload;
+  | RegisterRefererPayload
+  | CreateTriggerOrderPayload
+  | CreateTriggerOrdersPayload
+  | CreateOrderWithTriggersPayload
+  | CancelTriggerOrderPayload;
 
 /**
  * Request body for submitting session actions.
@@ -1139,6 +1269,8 @@ export interface OrderUpdate {
   action: string;
   /** Updated orders. */
   orders: Order[];
+  /** Trigger orders not nested under an active parent spot order. */
+  standalone_trigger_orders: TriggerOrder[];
   /** On-chain timestamp. */
   onchain_timestamp?: string;
   /** Server-observed timestamp. */
@@ -1418,6 +1550,54 @@ export function parseOrder(raw: Record<string, unknown>): Order {
     desired_quantity: parseDesiredQuantity(raw.desired_quantity),
     market_id:
       raw.market_id != null ? hexIdTrusted<"MarketId">(raw.market_id as string) : undefined,
+    active_trigger_orders: Array.isArray(raw.active_trigger_orders)
+      ? (raw.active_trigger_orders as Record<string, unknown>[]).map(parseTriggerOrder)
+      : [],
+    related_child_orders: Array.isArray(raw.related_child_orders)
+      ? (raw.related_child_orders as string[]).map((id) => hexIdTrusted<"TriggerOrderId">(id))
+      : [],
+  };
+}
+
+/** Parse a raw trigger order returned by an order subscription. */
+export function parseTriggerOrder(raw: Record<string, unknown>): TriggerOrder {
+  let orderType = raw.order_type as TriggerOrderType;
+  if (typeof orderType === "object" && orderType !== null) {
+    if ("MarketBounded" in orderType) {
+      const value = (orderType as { MarketBounded: { max_price: unknown; min_price: unknown } })
+        .MarketBounded;
+      orderType = {
+        MarketBounded: {
+          max_price: parseBigInt(value.max_price),
+          min_price: parseBigInt(value.min_price),
+        },
+      };
+    } else if ("Spot" in orderType) {
+      const value = (orderType as { Spot: { price: unknown } }).Spot;
+      orderType = { Spot: { price: parseBigInt(value.price) } };
+    }
+  }
+
+  return {
+    order_id: hexIdTrusted<"TriggerOrderId">(raw.order_id as string),
+    owner: raw.owner as Identity,
+    side: parseRequiredSide(raw.side),
+    order_type: orderType,
+    market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
+    trigger_price: parseBigInt(raw.trigger_price),
+    timestamp: raw.timestamp as string | number,
+    status: raw.status as TriggerOrderStatus,
+    sibling_order:
+      raw.sibling_order != null
+        ? hexIdTrusted<"TriggerOrderId">(raw.sibling_order as string)
+        : undefined,
+    parent_order_id:
+      raw.parent_order_id != null
+        ? hexIdTrusted<"OrderId">(raw.parent_order_id as string)
+        : undefined,
+    possible_amount: parseBigInt(raw.possible_amount),
+    available_amount: parseBigInt(raw.available_amount),
+    history: Array.isArray(raw.history) ? raw.history : [],
   };
 }
 
@@ -1593,9 +1773,11 @@ export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
 /** Parse a raw order update (WebSocket) into a typed {@link OrderUpdate}. */
 export function parseOrderUpdate(raw: Record<string, unknown>): OrderUpdate {
   const rawOrders = (raw.orders ?? []) as Record<string, unknown>[];
+  const rawStandalone = (raw.standalone_trigger_orders ?? []) as Record<string, unknown>[];
   return {
     ...(raw as unknown as OrderUpdate),
     orders: rawOrders.map(parseOrder),
+    standalone_trigger_orders: rawStandalone.map(parseTriggerOrder),
   };
 }
 

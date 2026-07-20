@@ -359,7 +359,7 @@ export class O2WebSocket {
 
   /**
    * Subscribe to order updates.
-   * Returns an AsyncGenerator yielding OrderUpdate messages.
+   * Returns spot orders with nested active triggers and standalone trigger orders.
    */
   async *streamOrders(identities: Identity[]): AsyncGenerator<OrderUpdate> {
     const sub = { action: "subscribe_orders", identities };
