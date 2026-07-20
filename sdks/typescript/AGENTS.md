@@ -43,7 +43,7 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `createOrderWithTriggers(market, side, price, quantity, orderType, trigger1, trigger2?, session?)` | spot order fields plus one or two triggers | `SessionActionsResponse` | Create a spot order with attached TP/SL triggers |
 | `cancelOrder(orderId, market, session?)` | orderId, market, session? | `SessionActionsResponse` | Cancel an order |
 | `cancelTriggerOrder(orderId, market, session?)` | trigger orderId, market, session? | `SessionActionsResponse` | Cancel a trigger order |
-| `cancelAllOrders(market, session?)` | market, session? | `SessionActionsResponse[] \| null` | Cancel all open orders |
+| `cancelAllOrders(market, session?)` | market, session? | `SessionActionsResponse[] \| null` | Cancel all open spot and standalone trigger orders |
 | `settleBalance(market, session?)` | market, session? | `SessionActionsResponse` | Settle filled balances |
 | `batchActions(marketActions, collectOrders?, session?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
 | `getMarkets()` | — | `Market[]` | Fetch all markets |
