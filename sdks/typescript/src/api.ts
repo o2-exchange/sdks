@@ -17,6 +17,8 @@ import type { NetworkConfig } from "./config.js";
 import { isActionsSuccess, O2Error, parseApiError, RateLimitExceeded } from "./errors.js";
 import {
   type AccountInfo,
+  type ActiveOrdersCursor,
+  type ActiveOrdersResponse,
   type AggregatedAsset,
   type AggregatedOrderbook,
   type AssetId,
@@ -37,6 +39,7 @@ import {
   type PairSummary,
   type PairTicker,
   parseAccountInfo,
+  parseActiveOrderEntry,
   parseAggregatedTrade,
   parseBalanceResponse,
   parseDepthLevel,
@@ -440,6 +443,52 @@ export class O2Api {
     return {
       ...(raw as unknown as OrdersResponse),
       orders: rawOrders.map(parseOrder),
+    };
+  }
+
+  /** Fetch a merged page of active spot and standalone trigger orders. */
+  async getActiveOrders(
+    marketId: MarketId,
+    params: {
+      account?: string;
+      contract?: TradeAccountId;
+      direction?: "asc" | "desc";
+      count?: number;
+      cursor?: ActiveOrdersCursor;
+    },
+  ): Promise<ActiveOrdersResponse> {
+    const raw = await this.get<Record<string, unknown>>("/v1/orders/active", {
+      market_id: marketId,
+      account: params.account,
+      contract: params.contract,
+      direction: params.direction ?? "desc",
+      count: params.count ?? 200,
+      start_timestamp: params.cursor?.startTimestamp,
+      start_id: params.cursor?.startId,
+      start_kind: params.cursor?.startKind,
+    });
+    const rawEntries = (raw.entries ?? []) as Record<string, unknown>[];
+    const nextTimestamp = raw.next_timestamp != null ? String(raw.next_timestamp) : null;
+    const nextKind = raw.next_kind === "spot" || raw.next_kind === "trigger" ? raw.next_kind : null;
+    const nextId =
+      typeof raw.next_id === "string" && nextKind != null
+        ? nextKind === "trigger"
+          ? hexIdTrusted<"TriggerOrderId">(raw.next_id)
+          : hexIdTrusted<"OrderId">(raw.next_id)
+        : null;
+
+    const cursorParts = [nextTimestamp, nextId, nextKind].filter((part) => part != null).length;
+    if (cursorParts !== 0 && cursorParts !== 3) {
+      throw new TypeError("Invalid active-orders cursor: expected all next cursor fields or none");
+    }
+
+    return {
+      identity: raw.identity as Identity,
+      market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
+      entries: rawEntries.map(parseActiveOrderEntry),
+      next_timestamp: nextTimestamp,
+      next_id: nextId,
+      next_kind: nextKind,
     };
   }
 

@@ -603,13 +603,10 @@ export enum TriggerOrderErrorCode {
   ParentOrderIdMismatch = 7013,
 }
 
-/** A trigger order returned in order subscription payloads. */
 /**
  * A trigger order as returned by the API. Field availability depends on the
- * source: the REST `/v1/session/actions` response nests the lean domain
- * shape (no `market_id`, `status`, `possible_amount`/`available_amount`, or
- * `parent_order_id`), while WebSocket streams and the active-orders endpoint
- * send the richer subscription shape with all fields populated.
+ * source: active-order REST responses and WebSocket streams provide the
+ * richer subscription shape, while nested domain responses may omit fields.
  */
 export interface TriggerOrder {
   order_id: TriggerOrderId;
@@ -740,6 +737,29 @@ export interface OrdersResponse {
   market_id: MarketId;
   /** List of orders. */
   orders: Order[];
+}
+
+/** Cursor kind used by the merged active-orders endpoint. */
+export type ActiveOrderKind = "spot" | "trigger";
+
+/** One top-level entry returned by the merged active-orders endpoint. */
+export type ActiveOrderEntry = ({ kind: "order" } & Order) | ({ kind: "trigger" } & TriggerOrder);
+
+/** Pagination cursor for the merged active-orders endpoint. */
+export interface ActiveOrdersCursor {
+  startTimestamp: string;
+  startId: OrderId | TriggerOrderId;
+  startKind: ActiveOrderKind;
+}
+
+/** Response from the merged active-orders endpoint. */
+export interface ActiveOrdersResponse {
+  identity: Identity;
+  market_id: MarketId;
+  entries: ActiveOrderEntry[];
+  next_timestamp: string | null;
+  next_id: OrderId | TriggerOrderId | null;
+  next_kind: ActiveOrderKind | null;
 }
 
 // ── Trades ──────────────────────────────────────────────────────────
@@ -1587,9 +1607,8 @@ export function parseTriggerOrder(raw: Record<string, unknown>): TriggerOrder {
 
   return {
     order_id: hexIdTrusted<"TriggerOrderId">(raw.order_id as string),
-    // REST /v1/session/actions nests the lean domain shape, keyed `account`;
-    // WebSocket and the active-orders endpoint send the subscription shape,
-    // keyed `owner`.
+    // Domain trigger shapes may be keyed `account`; WebSocket and the
+    // active-orders endpoint use the subscription key `owner`.
     owner: (raw.owner ?? raw.account) as Identity,
     side: parseRequiredSide(raw.side),
     order_type: orderType,
@@ -1610,6 +1629,13 @@ export function parseTriggerOrder(raw: Record<string, unknown>): TriggerOrder {
     available_amount: raw.available_amount != null ? parseBigInt(raw.available_amount) : undefined,
     history: Array.isArray(raw.history) ? raw.history : [],
   };
+}
+
+/** Parse one flattened entry from `/v1/orders/active`. */
+export function parseActiveOrderEntry(raw: Record<string, unknown>): ActiveOrderEntry {
+  if (raw.kind === "order") return { kind: "order", ...parseOrder(raw) };
+  if (raw.kind === "trigger") return { kind: "trigger", ...parseTriggerOrder(raw) };
+  throw new TypeError(`Invalid active order kind: ${JSON.stringify(raw.kind)}`);
 }
 
 /** Parse a raw depth level into a typed {@link DepthLevel}. */

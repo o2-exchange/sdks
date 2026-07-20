@@ -55,6 +55,8 @@ import {
 import { O2Error, SessionExpired } from "./errors.js";
 import type {
   ActionPayload,
+  ActiveOrderEntry,
+  ActiveOrdersCursor,
   AssetId,
   BalanceResponse,
   BalanceUpdate,
@@ -716,7 +718,8 @@ export class O2Client {
   }
 
   /**
-   * Cancel all open orders for a market. Returns one result per chunk, or null if no orders.
+   * Cancel all open spot and standalone trigger orders for a market.
+   * Returns one result per chunk, or null if no orders are active.
    */
   async cancelAllOrders(
     market: MarketRef,
@@ -726,24 +729,48 @@ export class O2Client {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    const orders = await this.api.getOrders(
-      resolved.market_id,
-      activeSession.tradeAccountId,
-      "desc",
-      200,
-      true,
-    );
+    const activeEntries: ActiveOrderEntry[] = [];
+    let cursor: ActiveOrdersCursor | undefined;
+    const seenCursors = new Set<string>();
 
-    if (orders.orders.length === 0) return null;
+    do {
+      const page = await this.api.getActiveOrders(resolved.market_id, {
+        contract: activeSession.tradeAccountId,
+        direction: "desc",
+        count: 200,
+        cursor,
+      });
+      activeEntries.push(...page.entries);
+
+      if (page.next_timestamp == null || page.next_id == null || page.next_kind == null) {
+        cursor = undefined;
+        break;
+      }
+
+      const cursorKey = `${page.next_timestamp}:${page.next_id}:${page.next_kind}`;
+      if (seenCursors.has(cursorKey)) {
+        throw new O2Error("Active-orders pagination returned a repeated cursor");
+      }
+      seenCursors.add(cursorKey);
+      cursor = {
+        startTimestamp: page.next_timestamp,
+        startId: page.next_id,
+        startKind: page.next_kind,
+      };
+    } while (cursor != null);
+
+    if (activeEntries.length === 0) return null;
 
     const results: SessionActionsResponse[] = [];
 
     // Process in chunks of 5 (max actions per batch)
-    for (let i = 0; i < orders.orders.length; i += 5) {
-      const chunk = orders.orders.slice(i, i + 5);
-      const cancelActions: ActionPayload[] = chunk.map((o) => ({
-        CancelOrder: { order_id: o.order_id },
-      }));
+    for (let i = 0; i < activeEntries.length; i += 5) {
+      const chunk = activeEntries.slice(i, i + 5);
+      const cancelActions: ActionPayload[] = chunk.map((entry) =>
+        entry.kind === "trigger"
+          ? { CancelTriggerOrder: { order_id: entry.order_id } }
+          : { CancelOrder: { order_id: entry.order_id } },
+      );
 
       const result = await this.submitBatch(
         [{ market_id: resolved.market_id, actions: cancelActions }],

@@ -86,6 +86,10 @@ export {
 // ── Models ────────────────────────────────────────────────────────
 export type {
   AccountInfo,
+  ActiveOrderEntry,
+  ActiveOrderKind,
+  ActiveOrdersCursor,
+  ActiveOrdersResponse,
   AggregatedAsset,
   AggregatedOrderbook,
   AssetId,
