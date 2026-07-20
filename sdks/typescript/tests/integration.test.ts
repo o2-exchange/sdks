@@ -41,6 +41,7 @@ import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 import { Network, type Numeric, O2Client } from "../src/index.js";
 import type { Market, SessionActionsResponse, TradeAccountId, WalletState } from "../src/models.js";
+import { orderId } from "../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
 const INTEGRATION_WALLETS_FILE = fileURLToPath(
@@ -602,6 +603,164 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     } catch {}
     try {
       await takerClient.settleBalance(market);
+    } catch {}
+  });
+
+  it("integration: standalone trigger order, and cancels it", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await ensureFunded(makerClient, makerTradeAccountId, market.base.symbol, 50_000_000n);
+
+    const priceStr = await conservativePostOnlyBuyPriceStr(client, market);
+    const quantityStr = minQuantityStr(market, priceStr);
+
+    const wsClient = new O2Client({ network: Network.TESTNET });
+    try {
+      const stream = await wsClient.streamOrders(makerTradeAccountId);
+      const firstMessage = firstStreamMessage(stream);
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      await makerClient.createSession(makerWallet, [market], 30);
+      const response = await makerClient.createTriggerOrder(market, {
+        order_type: "Market",
+        quantity: { Quantity: { quantity: quantityStr } },
+        trigger_price: priceStr,
+        side: "sell",
+      });
+      expect(response.txId).toBeTruthy();
+
+      const update = await Promise.race([
+        firstMessage,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("WS orders timeout")), 30_000),
+        ),
+      ]);
+
+      expect(update?.standalone_trigger_orders?.length).toBeGreaterThan(0);
+      const trigger = update!.standalone_trigger_orders![0];
+
+      const cancelResponse = await makerClient.cancelTriggerOrder(trigger.order_id, market);
+      expect(cancelResponse.txId).toBeTruthy();
+    } finally {
+      wsClient.disconnectWs();
+    }
+  }, 60_000);
+
+  it("integration: standalone OCO trigger pair, and cancels both legs", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await ensureFunded(makerClient, makerTradeAccountId, market.base.symbol, 50_000_000n);
+
+    const priceStr = await conservativePostOnlyBuyPriceStr(client, market);
+    const price = Number.parseFloat(priceStr);
+    // Distinct trigger prices are required for an OCO pair (OcoSameTriggerPrice).
+    // Quantity is computed per-leg from its own effective price — a lower
+    // price needs a larger quantity to still satisfy min_order.
+    const takeProfitPrice = (price * 2).toFixed(market.quote.max_precision);
+    const stopLossPrice = (price * 0.5).toFixed(market.quote.max_precision);
+    const takeProfitQuantityStr = minQuantityStr(market, takeProfitPrice);
+    const stopLossQuantityStr = minQuantityStr(market, stopLossPrice);
+
+    const wsClient = new O2Client({ network: Network.TESTNET });
+    try {
+      const stream = await wsClient.streamOrders(makerTradeAccountId);
+      const firstMessage = firstStreamMessage(stream);
+
+      await new Promise((r) => setTimeout(r, 2000));
+
+      await makerClient.createSession(makerWallet, [market], 30);
+      const response = await makerClient.createTriggerOrders(
+        market,
+        {
+          order_type: "Market",
+          quantity: { Quantity: { quantity: takeProfitQuantityStr } },
+          trigger_price: takeProfitPrice,
+          side: "sell",
+        },
+        {
+          order_type: "Market",
+          quantity: { Quantity: { quantity: stopLossQuantityStr } },
+          trigger_price: stopLossPrice,
+          side: "sell",
+        },
+      );
+      expect(response.txId).toBeTruthy();
+
+      const update = await Promise.race([
+        firstMessage,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("WS orders timeout")), 30_000),
+        ),
+      ]);
+
+      expect(update?.standalone_trigger_orders?.length).toBeGreaterThanOrEqual(2);
+
+      for (const trigger of update!.standalone_trigger_orders!) {
+        try {
+          await makerClient.cancelTriggerOrder(trigger.order_id, market);
+        } catch {}
+      }
+    } finally {
+      wsClient.disconnectWs();
+    }
+  }, 60_000);
+
+  it("integration: spot order with attached trigger, and cancels the trigger", async () => {
+    const markets = await client.getMarkets();
+    const market = markets[0];
+
+    await whitelistWithRetry(makerClient.api, makerTradeAccountId, 2);
+    await cleanupOpenOrders(makerClient, makerWallet, market);
+    await ensureFunded(makerClient, makerTradeAccountId, market.quote.symbol, 50_000_000n);
+
+    // Minimum price step, matching "order placement and cancellation" —
+    // avoids crossing the book with a resting PostOnly buy.
+    const priceStr = `0.${"0".repeat(market.quote.max_precision - 1)}1`;
+    const quantityStr = minQuantityStr(market, priceStr);
+    // Trigger price must differ from the spot order's price (TriggerPriceSameAsParent).
+    const triggerPriceStr = `0.${"0".repeat(market.quote.max_precision - 1)}2`;
+
+    await makerClient.createSession(makerWallet, [market], 30);
+
+    // The parent order doesn't exist yet — the contract wires the real ID
+    // when it creates both atomically. A zeroed placeholder is the
+    // established convention (see tests/client.test.ts).
+    const pendingParent = orderId(`0x${"00".repeat(32)}`);
+    const response = await makerClient.createOrderWithTriggers(
+      market,
+      "buy",
+      priceStr,
+      quantityStr,
+      "PostOnly",
+      {
+        order_type: "Market",
+        quantity: { ParentOrder: { parent_order_id: pendingParent } },
+        trigger_price: triggerPriceStr,
+        side: "sell",
+      },
+    );
+
+    expect(response.txId).toBeTruthy();
+    expect(response.orders?.length).toBeGreaterThan(0);
+    const spotOrder = response.orders?.[0];
+    expect(spotOrder!.order_id).toBeTruthy();
+    expect(spotOrder!.active_trigger_orders?.length).toBe(1);
+    const triggerId = spotOrder!.active_trigger_orders![0].order_id;
+    expect(triggerId).toBeTruthy();
+
+    const cancelTriggerResponse = await makerClient.cancelTriggerOrder(triggerId, market);
+    expect(cancelTriggerResponse.txId).toBeTruthy();
+
+    // Cleanup: cancel the resting spot order too
+    try {
+      await makerClient.cancelOrder(spotOrder!.order_id, market);
     } catch {}
   });
 
