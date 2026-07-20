@@ -112,18 +112,14 @@ export function encodeOrderArgs(
   return concat(parts);
 }
 
-/** Wire-format trigger order type used by session action encoding. */
 export type TriggerOrderTypeJSON =
   | "Market"
   | { MarketBounded: { max_price: string; min_price: string } }
   | { Spot: { price: string } };
 
-/** Wire-format trigger quantity used by session action encoding. */
 export type TriggerQuantityJSON =
   | { Quantity: { quantity: string } }
   | { ParentOrder: { parent_order_id: string } };
-
-/** Wire-format trigger arguments used by session action encoding. */
 export interface TriggerOrderArgsJSON {
   order_type: TriggerOrderTypeJSON;
   quantity: TriggerQuantityJSON;
@@ -460,8 +456,6 @@ export function actionToCall(
 
   if ("CreateTriggerOrders" in action) {
     const data = action.CreateTriggerOrders;
-    // The high-level client canonicalizes the larger-lock leg as `first` so
-    // this exact amount matches both backend reconstruction and the contract.
     const lock = triggerLockParams(data.first, market);
     if (triggerLockAmount(data.second, market.base.decimals) > lock.amount) {
       throw new Error("CreateTriggerOrders must place the larger-lock leg first");
