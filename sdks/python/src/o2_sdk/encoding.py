@@ -173,10 +173,16 @@ def build_owner_action_signing_bytes(
 
 
 def build_set_proxy_signing_bytes(nonce: int, chain_id: int) -> bytes:
-    """Owner signing bytes for the non-typed account upgrade (set_proxy_target).
+    """Owner signing bytes for the non-typed account upgrade
+    (``set_proxy_target_with_signature``).
 
-    The legacy (non-typed) flow — required for proxies created before typed
-    signatures, which are non-upgradeable and only accept this scheme.
+    The trade-account proxy has two upgrade entry points, and the API picks
+    between them by signature format: a plain ``Secp256k1`` signature (these
+    bytes) reaches the legacy one, a ``TypedSecp256k1`` signature reaches
+    ``typed_set_proxy_target_with_signature``. Only the legacy entry point
+    exists on proxies deployed before typed signatures, so a typed upgrade
+    against one reverts on the missing selector; current proxies carry both.
+    Signing plainly therefore works on every proxy.
     """
     return build_owner_action_signing_bytes(nonce, chain_id, SET_PROXY_FN_NAME)
 

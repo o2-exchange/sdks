@@ -266,11 +266,13 @@ class O2Client:
         """Point the owner's trade-account proxy at the latest implementation.
 
         Uses the **non-typed** owner-signature flow (plain Secp256k1 over
-        ``calldata(nonce, chain_id, "set_proxy_target_with_signature")``). This is
-        required for proxies created before typed signatures: those proxies are
-        non-upgradeable and only understand the legacy scheme, and it is accepted
-        by newer proxies too. The owner key signs via ``owner.personal_sign``
-        (Fuel or EVM framing per the owner address type).
+        ``calldata(nonce, chain_id, "set_proxy_target_with_signature")``), which
+        every proxy understands. The API routes on the signature format: a
+        ``TypedSecp256k1`` signature instead reaches the proxy's
+        ``typed_set_proxy_target_with_signature``, which exists only on proxies
+        deployed after typed signatures, so a typed upgrade against an older
+        proxy reverts on the missing selector. The owner key signs via
+        ``owner.personal_sign`` (Fuel or EVM framing per the owner address type).
 
         Deliberately **unconditional**: nothing the API exposes says whether the
         proxy already points at a parallel-capable implementation (see

@@ -101,8 +101,9 @@ Upgrading an account
 --------------------
 
 :meth:`~o2_sdk.client.O2Client.upgrade_account` points the account's proxy at
-the current implementation using the non-typed owner-signature flow, which is
-required for proxies created before typed signatures and accepted by newer ones.
+the current implementation using the non-typed owner-signature flow, the one
+upgrade entry point every proxy has (a ``TypedSecp256k1`` signature would route
+to a typed entry point that older proxies do not carry).
 It is deliberately unconditional: a gate here would either be wrong or refuse to
 act on the accounts that need it. Re-upgrading a current account is a no-op on
 chain and costs one transaction.
