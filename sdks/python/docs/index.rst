@@ -73,6 +73,7 @@ Quick example
    guides/websocket_streams
    guides/identifiers
    guides/external_signers
+   guides/parallel_nonces
    guides/error_handling
 
 .. toctree::

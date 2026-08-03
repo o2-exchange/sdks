@@ -1203,9 +1203,9 @@ class TestWebSocket:
 
 @pytest.mark.integration
 async def test_parallel_nonce_read_path_devnet():
-    """Validate the parallel-nonce read path against the live devnet V3 account
-    (the golden-vector account). No keys needed — account/window are public GETs.
-    Exercises get_account version gate + get_account_window + WindowResponse +
+    """Validate the parallel-nonce read path against a live devnet account.
+    No keys needed — account/window are public GETs. Exercises
+    get_account + get_account_window + WindowResponse +
     ParallelNonceManager.init/next_nonce end-to-end."""
     from o2_sdk.client import O2Client
     from o2_sdk.config import Network
@@ -1217,8 +1217,7 @@ async def test_parallel_nonce_read_path_devnet():
     client = O2Client(network=Network.DEVNET)
     try:
         acct = await client.api.get_account(owner=owner)
-        assert acct.version == 3
-        assert acct.is_parallel_capable
+        assert acct.trade_account is not None
 
         async def _fetch():
             return WindowResponse.from_dict(
@@ -1242,8 +1241,11 @@ async def test_parallel_nonce_concurrent_submission():
     no nonce conflicts and the cursor advances by N (one distinct slot each).
 
     This is the core guarantee: concurrent submissions never collide on a nonce
-    (sequential would fail N-1 of them with 'nonce too low'). Requires a
-    gen-3 (parallel-capable) account; testnet accounts are created at V3."""
+    (sequential would fail N-1 of them with 'nonce too low').
+
+    Goes through ensure_parallel_session, which is also the assertion that the
+    probe-and-upgrade startup path works against a live API: it probes the
+    account and upgrades it only if the parallel entry points are missing."""
     from o2_sdk.client import O2Client
     from o2_sdk.config import Network
 
@@ -1258,17 +1260,15 @@ async def test_parallel_nonce_concurrent_submission():
         ta = acct.trade_account_id
         with contextlib.suppress(Exception):
             await client.api.mint_to_contract(ta)
-        # Ensure parallel-capable (upgrade is a no-op on already-V3 testnet accts).
-        await client.upgrade_account(wallet)
-        acct = await client.api.get_account(owner=wallet.b256_address)
-        if not acct.is_parallel_capable:
-            pytest.skip("account not parallel-capable (gen<3) and upgrade did not land")
 
         market = (await client.get_markets())[0]
-        session = await client.create_session(
-            owner=wallet, markets=[market.pair], expiry_days=1,
-            nonce_strategy="parallel", nonce_session_id=0,
+        session = await client.ensure_parallel_session(
+            owner=wallet,
+            markets=[market.pair],
+            expiry_days=1,
+            nonce_session_id=0,
         )
+        assert session.nonce_manager is not None
         before = session.nonce_manager.cursor
         price = 10 ** (-market.quote.max_precision)
         qty = _min_quantity_for_min_order(market, price)
@@ -1276,9 +1276,14 @@ async def test_parallel_nonce_concurrent_submission():
         async def place():
             try:
                 r = await client.create_order(
-                    market=market.pair, side=OrderSide.BUY, price=price, quantity=qty,
-                    order_type=OrderType.POST_ONLY, settle_first=True,
-                    collect_orders=True, session=session,
+                    market=market.pair,
+                    side=OrderSide.BUY,
+                    price=price,
+                    quantity=qty,
+                    order_type=OrderType.POST_ONLY,
+                    settle_first=True,
+                    collect_orders=True,
+                    session=session,
                 )
                 return ("ok", str(r.tx_id))
             except Exception as e:

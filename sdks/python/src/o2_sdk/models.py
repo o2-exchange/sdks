@@ -10,7 +10,10 @@ import time
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .nonce import ParallelNonceManager
 
 
 @dataclass(frozen=True)
@@ -394,21 +397,24 @@ class TradeAccount:
         )
 
     @property
-    def version(self) -> int:
-        """Trade-account implementation generation from ``sync_state``
-        (None -> 0, V1 -> 1, V2 -> 2, V3 -> 3). The contract gained parallel
-        nonce support at generation 3."""
+    def sync_generation(self) -> int:
+        """The indexer's sync generation for this account, parsed from
+        ``sync_state`` (absent -> 0, ``{"V1": ...}`` -> 1, and so on).
+
+        **This is not the deployed implementation version, and it must never be
+        used to decide whether an account supports parallel nonces.** It tracks
+        the shape of the record the INDEXER holds, not the target the account's
+        proxy points at: on mainnet (observed 2026-07-09) every synced account
+        reports V3, including legacy accounts that were never upgraded and whose
+        parallel entry points revert on every call. The only working detector is
+        a live probe (see :meth:`o2_sdk.client.O2Client.probe_parallel_support`).
+        """
         ss = self.sync_state
         if isinstance(ss, dict):
             for key in ss:
                 if len(key) >= 2 and key[0] == "V" and key[1:].isdigit():
                     return int(key[1:])
         return 0
-
-    @property
-    def is_parallel_capable(self) -> bool:
-        """True if the account supports parallel nonces (generation >= 3)."""
-        return self.version >= 3
 
 
 @dataclass
@@ -437,14 +443,11 @@ class AccountInfo:
         return int(self.trade_account.nonce)
 
     @property
-    def version(self) -> int:
-        """Trade-account implementation generation (0 if no account)."""
-        return self.trade_account.version if self.trade_account else 0
-
-    @property
-    def is_parallel_capable(self) -> bool:
-        """True if the account exists and supports parallel nonces (>= gen 3)."""
-        return self.trade_account is not None and self.trade_account.is_parallel_capable
+    def sync_generation(self) -> int:
+        """Indexer sync generation, 0 if no account. See
+        :attr:`TradeAccount.sync_generation` — **not** a parallel-nonce
+        capability signal."""
+        return self.trade_account.sync_generation if self.trade_account else 0
 
 
 @dataclass
@@ -474,9 +477,9 @@ class SessionInfo:
     session_private_key: bytes | None = None
     owner_address: str | None = None
     nonce: int = 0
-    # Parallel-track nonce source (o2_sdk.nonce.ParallelNonceManager) when the
-    # session was created with nonce_strategy="parallel"; None => sequential track.
-    nonce_manager: Any = None
+    # Parallel-track nonce source when the session was created with
+    # nonce_strategy="parallel"; None => sequential track.
+    nonce_manager: ParallelNonceManager | None = None
 
     @classmethod
     def from_response(cls, d: dict, **kwargs: Any) -> SessionInfo:

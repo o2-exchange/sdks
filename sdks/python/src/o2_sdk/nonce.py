@@ -1,22 +1,23 @@
 """Parallel-nonce support for concurrent action submission.
 
-Two nonce *tracks* coexist behind a common `NonceProvider` interface:
+Two nonce *tracks* coexist, chosen once per session via
+``create_session(nonce_strategy=...)`` and transparent to callers thereafter:
 
 * **Sequential** (legacy): one monotonic u64 per account; serializes submissions
   and needs rollback/refetch on revert. Still first-class — it is the only track
   that can perform trade-account upgrades, and is the right choice for
   low-frequency clients (e.g. a rebalancer sharing a key with trading bots).
-* **Parallel** (this module): the trade-account contract (impl version >= 3)
-  exposes a sliding-window bitmap of 8 words x 128 bits = 1024 concurrent nonce
-  slots, with 5 independent lanes (`nonce_session_id` 0..4) per account. Any free
-  bit in the window is a valid nonce, so many actions can be in flight at once
-  without serialization or rollback.
+* **Parallel** (this module): a parallel-capable trade account exposes a
+  sliding-window bitmap of 8 words x 128 bits = 1024 concurrent nonce slots, with
+  5 independent lanes (``nonce_session_id`` 0..4) per account. Any free bit in
+  the window is a valid nonce, so many actions can be in flight at once without
+  serialization or rollback.
 
-This module ports the proven client logic (cursor + window resync) from the
-production Rust reference. The packing/window math here MUST match
-``parallel_nonce.sw`` in the trade-account contract.
+Whether an account is parallel-capable cannot be read from the API: see
+``docs/guides/parallel_nonces.rst`` and ``O2Client.probe_parallel_support``.
 
-See PARALLEL_NONCES_PLAN.md.
+The packing/window math here MUST match ``parallel_nonce.sw`` in the
+trade-account contract.
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
 
 from .errors import O2Error
 
@@ -38,8 +38,6 @@ NONCE_SESSION_SLIDING_WINDOW_SIZE = 8
 NONCE_BITMAP_SIZE = 128
 #: Highest ``nonce_session_id`` (lane) the contract accepts.
 MAX_NONCE_SESSION_ID = 4
-#: Minimum trade-account ``implementation_version`` that supports parallel nonces.
-MIN_PARALLEL_VERSION = 3
 #: Default nonce TTL — long enough for any REST round-trip, short enough that a
 #: leaked signed nonce can't be replayed indefinitely.
 DEFAULT_NONCE_TTL_SECS = 120
@@ -202,23 +200,47 @@ _SESSION_ERROR_MARKERS = (
 )
 
 
-def is_parallel_nonce_out_of_window(reason: str | None) -> bool:
-    if not reason:
-        return False
-    return any(m in reason for m in _NONCE_OUT_OF_WINDOW_MARKERS)
+def _error_text(error: str | BaseException | None) -> str:
+    """Searchable text for an error, whether given as a reason string or as the
+    exception itself. A submission failure surfaces its marker in ``message`` or
+    in either form of ``reason``, so all of them are searched."""
+    if error is None:
+        return ""
+    if isinstance(error, str):
+        return error
+    return (
+        "\n".join(
+            str(getattr(error, attr, "") or "") for attr in ("message", "reason", "raw_reason")
+        )
+        + f"\n{error}"
+    )
 
 
-def is_nonce_too_low(reason: str | None) -> bool:
-    """Sequential-track "nonce < db" conflict."""
-    if not reason:
-        return False
-    return _NONCE_TOO_LOW_MARKER in reason
+def is_parallel_nonce_out_of_window(error: str | BaseException | None) -> bool:
+    """The chain rejected the parallel nonce because the window has moved on:
+    resync the cursor (:meth:`ParallelNonceManager.resync_from_chain`) and retry."""
+    text = _error_text(error)
+    return any(m in text for m in _NONCE_OUT_OF_WINDOW_MARKERS)
 
 
-def is_session_error(reason: str | None) -> bool:
-    if not reason:
-        return False
-    return any(m in reason for m in _SESSION_ERROR_MARKERS)
+def is_nonce_too_low(error: str | BaseException | None) -> bool:
+    """Sequential-track "nonce < db" conflict: re-fetch the nonce and retry."""
+    return _NONCE_TOO_LOW_MARKER in _error_text(error)
+
+
+def is_session_error(error: str | BaseException | None) -> bool:
+    """The trade account rejected the session itself, so no nonce will help.
+
+    Sessions are not immortal: the contract holds one registered session per
+    account, and anything that registers another one for the same account (a
+    redeployment whose outgoing pod is still working, a second client sharing the
+    owner key, a process racing its own restart) invalidates the earlier one.
+    Every action signed with the stale session then reverts this way until a new
+    session is created; nothing about it is retryable on its own. Resyncing the
+    nonce window here would burn slots for nothing.
+    """
+    text = _error_text(error)
+    return any(m in text for m in _SESSION_ERROR_MARKERS)
 
 
 # --- Manager ----------------------------------------------------------------
@@ -248,9 +270,7 @@ class ParallelNonceManager:
         clock: Callable[[], float] = time.time,
     ) -> None:
         if not (0 <= nonce_session_id <= MAX_NONCE_SESSION_ID):
-            raise ValueError(
-                f"nonce_session_id must be in [0, {MAX_NONCE_SESSION_ID}]"
-            )
+            raise ValueError(f"nonce_session_id must be in [0, {MAX_NONCE_SESSION_ID}]")
         self._fetch_window = window_fetcher
         self._session_id = nonce_session_id
         self._ttl = ttl_secs
@@ -306,26 +326,3 @@ class ParallelNonceManager:
         word, bit = window.first_free_position()
         with self._lock:
             self._word, self._bit = word, bit
-
-
-# --- Provider abstraction ---------------------------------------------------
-# A common interface over the two tracks so submission code is track-agnostic.
-# Concrete providers + client wiring land in the next increment (see plan
-# steps 1 & 4); the parallel provider here is the forward-looking shape.
-
-
-@runtime_checkable
-class NonceProvider(Protocol):
-    """Track-agnostic nonce source used by the submission path."""
-
-    async def acquire(self) -> int:
-        """Return the nonce value for the next submission."""
-        ...
-
-    def signing_bytes(self, nonce: int, calls: list[dict]) -> bytes:
-        """Encode (nonce, calls) into the bytes to sign for this track."""
-        ...
-
-    async def recover(self, error: O2Error) -> bool:
-        """Handle a submission error; return True if the caller should retry."""
-        ...

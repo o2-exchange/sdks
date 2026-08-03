@@ -23,6 +23,12 @@ ordinal).  The signal constants are:
 * ``0xffffffffffff0004`` — ``FAILED_ASSERT``
 * ``0xffffffffffff0005`` — ``FAILED_ASSERT_NE``
 * ``0xffffffffffff0006`` — ``REVERT_WITH_LOG``
+
+One further code comes from the compiler rather than from ``std``: ``123``, which
+Sway's generated contract dispatcher emits when the called selector does not
+exist on the deployed contract.  It is the only reliable signal that a trade
+account's proxy still targets a pre-parallel-nonce implementation — see
+:func:`is_selector_mismatch_revert`.
 """
 
 from __future__ import annotations
@@ -204,6 +210,20 @@ _SIGNAL_NAMES: dict[int, str] = {
     0xFFFF_FFFF_FFFF_0006: "REVERT_WITH_LOG",
 }
 
+# Revert code emitted by Sway's compiler-generated contract dispatcher when the
+# called selector does not exist on the deployed contract (sway-core
+# compiler_constants.rs: MISMATCHED_SELECTOR_REVERT_CODE = 123).  Unlike the
+# signals above it is not a std error_signal, so it carries no LOG receipt and
+# nothing decodes it into a variant name.
+MISMATCHED_SELECTOR_REVERT_CODE = 123
+
+#: Stable reason text :func:`augment_revert_reason` emits for that revert, so
+#: callers can match on a string instead of re-parsing receipts.
+MISMATCHED_SELECTOR_REASON = (
+    "MismatchedSelector — the deployed contract has no such method "
+    "(the account's proxy targets an older implementation)"
+)
+
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
 _OK_RE = re.compile(r'Ok\(\\"([^"\\]+)\\"\)|Ok\("([^"]+)"\)')
 
@@ -358,6 +378,46 @@ def _extract_revert_codes(text: str) -> list[int]:
     return codes
 
 
+def _as_revert_code(value: Any) -> int | None:
+    """Coerce a receipt's ``ra`` field to an int (it arrives as either)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _revert_codes_from_receipts(node: Any) -> list[int]:
+    """Collect revert codes from *structured* receipts.
+
+    ``_extract_revert_codes`` reads the fuels-rs debug text the backend embeds in
+    ``reason``; when receipts arrive as parsed JSON instead, that text does not
+    exist. Walk the structure for Revert receipts under either tagging style
+    (``{"Revert": {"ra": ...}}`` and ``{"type": "Revert", "ra": ...}``), and read
+    the code only out of a Revert receipt — an ``ra`` on any other receipt (a
+    LogData carries one too) means something else entirely.
+    """
+    codes: list[int] = []
+    if isinstance(node, dict):
+        if node.get("type") == "Revert":
+            code = _as_revert_code(node.get("ra"))
+            if code is not None:
+                codes.append(code)
+        for key, value in node.items():
+            if key == "Revert":
+                code = _as_revert_code(value.get("ra") if isinstance(value, dict) else value)
+                if code is not None:
+                    codes.append(code)
+                    continue
+            codes.extend(_revert_codes_from_receipts(value))
+    elif isinstance(node, list):
+        for item in node:
+            codes.extend(_revert_codes_from_receipts(item))
+    return codes
+
+
 def _recognize_signal(text: str) -> str | None:
     """Identify Fuel VM signal constants from revert codes in text."""
     for code in _extract_revert_codes(text):
@@ -409,15 +469,22 @@ def augment_revert_reason(
     if decoded is not None:
         return decoded
 
-    # 3. Recognize signal constant (tells what KIND of failure, not which variant)
+    # 3. Dispatcher selector mismatch — no LOG receipt exists to decode, and the
+    #    generic "and error:" summary below would bury it, so name it here.
+    if MISMATCHED_SELECTOR_REVERT_CODE in _extract_revert_codes(
+        context
+    ) or MISMATCHED_SELECTOR_REVERT_CODE in _revert_codes_from_receipts(receipts):
+        return MISMATCHED_SELECTOR_REASON
+
+    # 4. Recognize signal constant (tells what KIND of failure, not which variant)
     signal = _recognize_signal(context)
 
-    # 4. Check for PanicInstruction
+    # 5. Check for PanicInstruction
     panic = _extract_panic_reason(context)
     if panic:
         return panic
 
-    # 5. Extract "and error:" summary
+    # 6. Extract "and error:" summary
     err_idx = context.find("and error:")
     if err_idx != -1:
         after = context[err_idx + len("and error:") :].strip()
@@ -426,11 +493,50 @@ def augment_revert_reason(
         if summary:
             return summary
 
-    # 6. If we recognized a signal, return it as context
+    # 7. If we recognized a signal, return it as context
     if signal is not None:
         return f"{signal} (specific error unknown \u2014 check .receipts)"
 
-    # 7. Truncate raw reason
+    # 8. Truncate raw reason
     if len(reason_str) > 200:
         return f"{reason_str[:200]}... (truncated, full receipts on .receipts)"
     return reason_str
+
+
+def is_selector_mismatch_revert(error: Any) -> bool:
+    """True iff ``error`` is the FuelVM "no such method" revert (``Revert(123)``).
+
+    On a parallel-nonce submission this means one thing: the trade account's
+    proxy still targets an implementation built before parallel nonces existed,
+    so the dispatcher does not recognize the parallel entry selector.  It is the
+    ONLY reliable capability signal \u2014 the indexer's ``sync_state`` reports V3 for
+    every synced account, upgraded or not (see
+    :attr:`o2_sdk.models.TradeAccount.sync_generation`), so a version gate never
+    fires where it matters.
+
+    Accepts an exception (``O2Error`` or otherwise) or a raw string, and searches
+    the message, both the augmented and the raw reason, and the receipts, so it
+    works whether or not :func:`augment_revert_reason` has already run.
+    """
+    if isinstance(error, str):
+        context = error
+        receipts = None
+    else:
+        parts = [
+            str(getattr(error, "message", "") or ""),
+            str(getattr(error, "reason", "") or ""),
+            str(getattr(error, "raw_reason", "") or ""),
+            str(error),
+        ]
+        receipts = getattr(error, "receipts", None)
+        if receipts is not None:
+            try:
+                parts.append(json.dumps(receipts))
+            except (TypeError, ValueError):
+                parts.append(str(receipts))
+        context = "\n".join(parts)
+    if MISMATCHED_SELECTOR_REASON in context:
+        return True
+    if MISMATCHED_SELECTOR_REVERT_CODE in _extract_revert_codes(context):
+        return True
+    return MISMATCHED_SELECTOR_REVERT_CODE in _revert_codes_from_receipts(receipts)

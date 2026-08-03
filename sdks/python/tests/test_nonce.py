@@ -139,6 +139,7 @@ class TestWindow:
 def _fetcher(window):
     async def fetch():
         return window
+
     return fetch
 
 
@@ -168,7 +169,9 @@ class TestManager:
 
     def test_session_id_packed(self):
         mgr = ParallelNonceManager(
-            window_fetcher=_fetcher(_window(0, [], session_id=3)), nonce_session_id=3, clock=lambda: 0
+            window_fetcher=_fetcher(_window(0, [], session_id=3)),
+            nonce_session_id=3,
+            clock=lambda: 0,
         )
         assert ParallelNonce.decode(mgr.next_nonce()).nonce_session_id == 3
 

@@ -360,10 +360,7 @@ class TestSetProxyUpgradeSigningBytes:
         b = build_set_proxy_signing_bytes(nonce, chain_id)
         # u64(nonce) + u64(chain_id) + u64(len(fn)) + fn  (no args for SetProxy)
         expected = (
-            u64_be(nonce)
-            + u64_be(chain_id)
-            + u64_be(len(SET_PROXY_FN_NAME))
-            + SET_PROXY_FN_NAME
+            u64_be(nonce) + u64_be(chain_id) + u64_be(len(SET_PROXY_FN_NAME)) + SET_PROXY_FN_NAME
         )
         assert b == expected
         assert SET_PROXY_FN_NAME == b"set_proxy_target_with_signature"
@@ -379,14 +376,16 @@ class TestSetProxyUpgradeSigningBytes:
 
 class TestParallelActionsSigningBytes:
     def _calls(self):
-        return [{
-            "contract_id": bytes(range(32)),
-            "function_selector": b"create_order",
-            "amount": 1000,
-            "asset_id": bytes(range(32, 64)),
-            "gas": 5_000_000,
-            "call_data": b"\x01\x02\x03",
-        }]
+        return [
+            {
+                "contract_id": bytes(range(32)),
+                "function_selector": b"create_order",
+                "amount": 1000,
+                "asset_id": bytes(range(32, 64)),
+                "gas": 5_000_000,
+                "call_data": b"\x01\x02\x03",
+            }
+        ]
 
     def test_parallel_equals_sequential_except_nonce_width(self):
         from o2_sdk.encoding import (
@@ -394,6 +393,7 @@ class TestParallelActionsSigningBytes:
             build_parallel_actions_signing_bytes,
             u64_be,
         )
+
         calls = self._calls()
         seq = build_actions_signing_bytes(7, calls)
         par = build_parallel_actions_signing_bytes(7, calls)
@@ -404,6 +404,7 @@ class TestParallelActionsSigningBytes:
 
     def test_u256_nonce_full_width(self):
         from o2_sdk.encoding import build_parallel_actions_signing_bytes
+
         big = (1 << 168) | 5  # a realistic packed parallel nonce (session_id bits set)
         par = build_parallel_actions_signing_bytes(big, self._calls())
         assert par[:32] == big.to_bytes(32, "big")

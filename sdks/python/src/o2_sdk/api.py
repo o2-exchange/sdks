@@ -141,7 +141,13 @@ class O2Api:
                                 from .onchain_revert import augment_revert_reason
 
                                 message = augment_revert_reason(message, reason, receipts)
-                            raise error_cls(message=message, code=code)
+                            # Carry reason and receipts through: a code-based
+                            # error can still be an on-chain revert, and callers
+                            # classify those from the untouched fields (see
+                            # onchain_revert.is_selector_mismatch_revert).
+                            raise error_cls(
+                                message=message, code=code, reason=reason, receipts=receipts
+                            )
                         if ("message" in data or "error" in data) and "tx_id" not in data:
                             raise_for_error(data)
                     else:
@@ -336,9 +342,7 @@ class O2Api:
         data = await self._request("GET", "/v1/accounts", params=params)
         return AccountInfo.from_dict(data)
 
-    async def get_account_window(
-        self, trade_account_id: str, nonce_session_id: int = 0
-    ) -> dict:
+    async def get_account_window(self, trade_account_id: str, nonce_session_id: int = 0) -> dict:
         """Fetch the parallel-nonce sliding window for one (account, lane).
 
         Returns the raw JSON (``nonce_session_id``, ``base``, ``slots`` of

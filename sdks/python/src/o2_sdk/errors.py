@@ -20,11 +20,18 @@ class O2Error(Exception):
         code: int | None = None,
         reason: str | None = None,
         receipts: list | None = None,
+        raw_reason: str | None = None,
     ):
         self.message = message
         self.code = code
         self.reason = reason
         self.receipts = receipts
+        # The backend's untouched ``reason``.  ``reason`` gets rewritten by
+        # augment_revert_reason into something human-readable, which necessarily
+        # discards detail; keeping the original lets callers classify failures
+        # the decoder has no variant name for (e.g. a dispatcher selector
+        # mismatch — see onchain_revert.is_selector_mismatch_revert).
+        self.raw_reason = raw_reason if raw_reason is not None else reason
         super().__init__(message)
 
 
@@ -287,6 +294,11 @@ def raise_for_error(data: dict[str, Any]) -> None:
             from .onchain_revert import augment_revert_reason
 
             augmented_reason = augment_revert_reason(message, reason, receipts)
-            raise OnChainRevert(message=message, reason=augmented_reason, receipts=receipts)
+            raise OnChainRevert(
+                message=message,
+                reason=augmented_reason,
+                receipts=receipts,
+                raw_reason=reason,
+            )
 
         raise O2Error(message=message)
