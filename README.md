@@ -184,8 +184,9 @@ just integration rust
 
 > **Note:** Integration tests require testnet connectivity and may take several minutes due to faucet cooldowns and on-chain confirmation times.
 
-The integration suites include faucet-funded withdrawals to both an owner address
-and another trading account's `ContractId`.
+Each SDK's integration suite starts with a dedicated devnet regression that creates
+disposable accounts, uses the faucet, then withdraws to both an owner address and
+another trading account's `ContractId`.
 
 ## 📁 Repository Structure
 

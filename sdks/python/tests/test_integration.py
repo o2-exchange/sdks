@@ -14,7 +14,6 @@ import pytest
 
 from o2_sdk import (
     BalanceUpdate,
-    ContractIdentity,
     Network,
     NonceUpdate,
     O2Client,
@@ -455,47 +454,6 @@ class TestTradingFlow:
         client, _wallet, account = funded_account
         result = await client.get_balances(account.trade_account_id)
         assert isinstance(result, dict)
-
-    async def test_withdraw_to_address_and_contract_id(self, funded_accounts):
-        client = funded_accounts["client"]
-        maker_wallet, maker_account = funded_accounts["maker"]
-        _taker_wallet, taker_account = funded_accounts["taker"]
-
-        markets = await client.get_markets()
-        assert markets, "No markets available"
-        asset = markets[0].base
-
-        before_response = await client.api.get_balance(
-            asset_id=asset.asset,
-            contract=maker_account.trade_account_id,
-        )
-        before = int(before_response.trading_account_balance)
-        assert before >= 2, f"Insufficient {asset.symbol} faucet balance for withdrawals"
-
-        atomic_amount = 10.0 ** (-asset.decimals)
-        assert int(atomic_amount * (10**asset.decimals)) == 1
-
-        address_result = await client.withdraw(
-            owner=maker_wallet,
-            asset=asset.asset,
-            amount=atomic_amount,
-            to=maker_wallet.b256_address,
-        )
-        assert address_result.success, address_result.message
-
-        contract_result = await client.withdraw(
-            owner=maker_wallet,
-            asset=asset.asset,
-            amount=atomic_amount,
-            to=ContractIdentity(str(taker_account.trade_account_id)),
-        )
-        assert contract_result.success, contract_result.message
-
-        after_response = await client.api.get_balance(
-            asset_id=asset.asset,
-            contract=maker_account.trade_account_id,
-        )
-        assert int(after_response.trading_account_balance) == before - 2
 
     async def test_order_placement(self, funded_accounts):
         client = funded_accounts["client"]

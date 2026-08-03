@@ -478,33 +478,6 @@ describe.skipIf(!INTEGRATION)("integration", () => {
     expect(second.tradeAccountId).toBe(tradeAccountId);
   });
 
-  it("integration: withdraws to an address and ContractId", async () => {
-    const markets = await client.getMarkets();
-    const asset = markets[0].base;
-    const before = await makerClient.api.getBalance(asset.asset, {
-      contract: makerTradeAccountId,
-    });
-    expect(before.trading_account_balance).toBeGreaterThanOrEqual(2n);
-
-    const addressResult = await makerClient.withdraw(
-      makerWallet,
-      asset.asset,
-      1n,
-      makerWallet.b256Address,
-    );
-    expect(addressResult.tx_id).toBeTruthy();
-
-    const contractResult = await makerClient.withdraw(makerWallet, asset.asset, 1n, {
-      ContractId: takerTradeAccountId,
-    });
-    expect(contractResult.tx_id).toBeTruthy();
-
-    const after = await makerClient.api.getBalance(asset.asset, {
-      contract: makerTradeAccountId,
-    });
-    expect(after.trading_account_balance).toBe(before.trading_account_balance - 2n);
-  });
-
   it("integration: resolves market by pair", async () => {
     const markets = await client.getMarkets();
     expect(markets.length).toBeGreaterThan(0);

@@ -36,7 +36,7 @@ jobs:
         env:
           PY_INTEGRATION_WALLETS: ${{ secrets.PY_INTEGRATION_WALLETS }}
         run: echo "$PY_INTEGRATION_WALLETS" > .integration-wallets.json
-      - run: pytest tests/test_integration.py -m integration -v --timeout=600
+      - run: pytest tests/test_withdrawal_integration.py tests/test_integration.py -m integration -v --timeout=600
 
   typescript-integration:
     name: TypeScript Integration
@@ -61,7 +61,7 @@ jobs:
         run: echo "$TS_INTEGRATION_WALLETS" > .integration-wallets.json
       - run: npm ci
       - run: npm run build
-      - run: npm test
+      - run: npm run test:integration
 
   rust-integration:
     name: Rust Integration
@@ -81,4 +81,5 @@ jobs:
         env:
           RUST_INTEGRATION_WALLETS: ${{ secrets.RUST_INTEGRATION_WALLETS }}
         run: echo "$RUST_INTEGRATION_WALLETS" > .integration-wallets.json
+      - run: cargo test --features integration --test withdrawal_integration -- --test-threads=1
       - run: cargo test --features integration --test integration_tests -- --test-threads=1
