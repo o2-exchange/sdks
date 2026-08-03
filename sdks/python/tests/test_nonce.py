@@ -43,6 +43,26 @@ class TestParallelNonceCodec:
         ]:
             assert ParallelNonce.decode(n.encode()) == n
 
+    def test_encode_rejects_what_decode_rejects(self):
+        """Otherwise an out-of-range field bleeds into its neighbour and encodes
+        a well-formed nonce that means something else."""
+        for bad, match in [
+            (ParallelNonce(0, 0, 0, NONCE_BITMAP_SIZE), "bitmap_position"),
+            (ParallelNonce(MAX_NONCE_SESSION_ID + 1, 0, 0, 0), "nonce_session_id"),
+            (ParallelNonce(0, 0, 1 << 128, 0), "word_position"),
+            (ParallelNonce(0, -1, 0, 0), "timestamp"),
+        ]:
+            with pytest.raises(ParallelNonceError, match=match):
+                bad.encode()
+
+    def test_encode_does_not_corrupt_neighbouring_fields(self):
+        """The concrete failure the validation prevents: a word_position one bit
+        past its field would have landed inside the timestamp."""
+        with pytest.raises(ParallelNonceError):
+            ParallelNonce(
+                nonce_session_id=0, timestamp=1000, word_position=1 << 128, bitmap_position=0
+            ).encode()
+
     def test_timestamp_truncated_to_u32(self):
         # encode masks timestamp to 32 bits; decode reflects the stored value.
         n = ParallelNonce(0, 0x1_0000_0001, 0, 0)

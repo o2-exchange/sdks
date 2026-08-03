@@ -80,9 +80,35 @@ class ParallelNonce:
     bitmap_position: int
 
     def encode(self) -> int:
-        """Pack into the U256 integer carried in the signed request."""
+        """Pack into the U256 integer carried in the signed request.
+
+        Validates the same invariants :meth:`decode` enforces, so the pair stay
+        inverses. Without this an out-of-range field silently bleeds into its
+        neighbour (a ``word_position`` past 128 bits corrupts the timestamp),
+        producing a well-formed nonce that means something other than what the
+        caller asked for. ``timestamp`` is the one exception: it is masked to
+        u32 rather than rejected, matching the width the contract stores.
+        """
+        if not 0 <= self.bitmap_position < NONCE_BITMAP_SIZE:
+            raise ParallelNonceError(
+                message=f"bitmap_position must be in [0, {NONCE_BITMAP_SIZE}), "
+                f"got {self.bitmap_position}"
+            )
+        if not 0 <= self.nonce_session_id <= MAX_NONCE_SESSION_ID:
+            raise ParallelNonceError(
+                message=f"nonce_session_id must be in [0, {MAX_NONCE_SESSION_ID}], "
+                f"got {self.nonce_session_id}"
+            )
+        if not 0 <= self.word_position <= _U128_MASK:
+            raise ParallelNonceError(
+                message=f"word_position must fit in 128 bits, got {self.word_position}"
+            )
+        if self.timestamp < 0:
+            raise ParallelNonceError(
+                message=f"timestamp must not be negative, got {self.timestamp}"
+            )
         return (
-            (self.bitmap_position & _U8_MASK)
+            self.bitmap_position
             | (self.word_position << _WORD_POSITION_SHIFT)
             | ((self.timestamp & _U32_MASK) << _TIMESTAMP_SHIFT)
             | (self.nonce_session_id << _SESSION_ID_SHIFT)
