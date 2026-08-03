@@ -229,3 +229,23 @@ class TestErrorClassification:
         assert is_session_error(msg)
         assert not is_parallel_nonce_out_of_window(msg)
         assert not is_nonce_too_low(msg)
+
+    def test_classifiers_accept_exceptions(self):
+        """Callers hold an exception, not a reason string. The marker can be in
+        the message or in either reason, so all of them are searched."""
+        from o2_sdk.errors import O2Error
+
+        in_message = O2Error(message="Parallel nonce is not usable", code=1000)
+        assert is_parallel_nonce_out_of_window(in_message)
+
+        in_raw_reason = O2Error(
+            message="Failed to process transaction",
+            code=1000,
+            reason="decoded summary",
+            raw_reason="word position out of sliding window",
+        )
+        assert is_parallel_nonce_out_of_window(in_raw_reason)
+
+        assert is_session_error(O2Error(message="Expired session"))
+        assert not is_session_error(O2Error(message="Insufficient balance"))
+        assert not is_parallel_nonce_out_of_window(RuntimeError("connection reset"))

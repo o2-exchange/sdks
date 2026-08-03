@@ -1298,9 +1298,14 @@ async def test_parallel_nonce_concurrent_submission():
         after = session.nonce_manager.cursor
 
         # The guarantee: concurrent submissions never collide on a nonce, and the
-        # cursor advances by exactly n (one slot per call).
+        # cursor advances by exactly n (one slot per call). Carry across the
+        # 128-bit word boundary, or this fails whenever the run starts near the
+        # end of a word.
+        from o2_sdk.nonce import NONCE_BITMAP_SIZE
+
         assert not nonce_conflicts, f"nonce conflicts under concurrency: {nonce_conflicts}"
         word, bit = before
-        assert after == (word, bit + n), f"cursor {before} -> {after}, expected +{n}"
+        expected = divmod(word * NONCE_BITMAP_SIZE + bit + n, NONCE_BITMAP_SIZE)
+        assert after == expected, f"cursor {before} -> {after}, expected {expected}"
     finally:
         await client.close()

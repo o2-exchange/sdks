@@ -115,36 +115,37 @@ Upgrades run on the **sequential** track. A parallel nonce cannot be used
 against an account that does not yet understand parallel nonces.
 
 
-Lanes and shared keys
----------------------
+Lanes, and one session per account
+----------------------------------
 
-Each session owns one lane, chosen with ``nonce_session_id``. Two clients
-sharing an owner key must not share a lane. The usual split:
+An account has 5 independent nonce lanes, and a session draws from exactly one
+of them, chosen with ``nonce_session_id``. Lanes exist so that submitters who
+cannot coordinate a shared cursor do not contend for the same window slots.
+
+.. warning::
+
+   Lanes do **not** let you register more than one session. The contract holds
+   **one registered session per account**: anything that registers another
+   session for the same account, including a redeployment whose outgoing
+   process is still working, invalidates the earlier one, and every action
+   signed with the stale session then reverts until a new session is created.
+   Recognize this with :func:`~o2_sdk.nonce.is_session_error`. It is a session
+   problem, not a nonce problem, and resyncing the window will not help.
+
+So a second lane is for a second *submitter of the same session*, not a second
+session:
 
 .. code-block:: python
 
-   # Trading bot
+   # Registered once, for the account.
    session = await client.ensure_parallel_session(
        owner=owner, markets=["FUEL/USDC"], nonce_session_id=0
    )
 
-   # A second bot on the same key
-   session = await client.ensure_parallel_session(
-       owner=owner, markets=["FUEL/USDC"], nonce_session_id=1
-   )
-
-   # A low-frequency rebalancer: sequential, no contention with either
-   session = await client.create_session(owner=owner, markets=["FUEL/USDC"])
-
-.. warning::
-
-   The contract holds **one registered session per account**. Anything that
-   registers another session for the same account, including a redeployment
-   whose outgoing process is still working, invalidates the earlier one, and
-   every action signed with the stale session then reverts until a new session
-   is created. Use :func:`~o2_sdk.nonce.is_session_error` to recognize this: it
-   is a session problem, not a nonce problem, and resyncing the window will not
-   help.
+Give each account its own owner key and its own session. If a process must run
+alongside a bot on the same account, hand it the same ``SessionInfo`` (via
+:meth:`~o2_sdk.client.O2Client.set_session`) rather than creating its own, and
+give it a manager on a different lane if it will not share the bot's cursor.
 
 
 Window management
