@@ -400,3 +400,44 @@ async def test_code_based_revert_still_classifiable(monkeypatch: pytest.MonkeyPa
     err = exc_info.value
     assert err.code == 1000  # went through the code-based branch, not raise_for_error
     assert is_selector_mismatch_revert(err)
+
+
+@pytest.mark.asyncio
+async def test_non_json_response_raises_o2_error(monkeypatch: pytest.MonkeyPatch):
+    """Infrastructure in front of the API answers 502/503 in plain text. Letting
+    the JSON decoder's error escape hands the caller no status and no body."""
+    from o2_sdk.api import O2Api
+    from o2_sdk.config import Network, get_config
+
+    api = O2Api(get_config(Network.TESTNET))
+
+    class FakeResponse:
+        status = 503
+
+        async def json(self, content_type=None):
+            raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+        async def text(self):
+            return "no healthy upstream"
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc):
+            return False
+
+    class FakeSession:
+        def request(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    async def fake_ensure_session():
+        return FakeSession()
+
+    monkeypatch.setattr(api, "_ensure_session", fake_ensure_session)
+
+    with pytest.raises(O2Error) as exc_info:
+        await api.get_account(owner=OWNER)
+    message = str(exc_info.value)
+    assert "Non-JSON response" in message
+    assert "503" in message
+    assert "no healthy upstream" in message

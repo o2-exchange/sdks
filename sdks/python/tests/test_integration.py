@@ -17,6 +17,7 @@ from o2_sdk import (
     Network,
     NonceUpdate,
     O2Client,
+    O2Error,
     OrderSide,
     OrderType,
     OrderUpdate,
@@ -1216,7 +1217,15 @@ async def test_parallel_nonce_read_path_devnet():
 
     client = O2Client(network=Network.DEVNET)
     try:
-        acct = await client.api.get_account(owner=owner)
+        try:
+            acct = await client.api.get_account(owner=owner)
+        except O2Error as exc:
+            # Devnet is a development environment and goes away sometimes
+            # ("no healthy upstream" from the gateway). That says nothing about
+            # the read path under test.
+            if "Non-JSON response" in str(exc):
+                pytest.skip(f"devnet unavailable: {exc}")
+            raise
         assert acct.trade_account is not None
 
         async def _fetch():

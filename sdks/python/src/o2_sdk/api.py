@@ -87,7 +87,21 @@ class O2Api:
                 async with session.request(
                     method, url, json=json, params=params, headers=hdrs
                 ) as resp:
-                    data = await resp.json(content_type=None)
+                    try:
+                        data = await resp.json(content_type=None)
+                    except ValueError as err:
+                        # Not JSON at all. An infrastructure error in front of
+                        # the API (load balancer 502/503, a redirect to an error
+                        # page) answers with plain text, and letting the decoder
+                        # error escape gives the caller a JSONDecodeError with no
+                        # status and no body to act on.
+                        body = (await resp.text())[:200]
+                        raise O2Error(
+                            message=(
+                                f"Non-JSON response from {method} {path} "
+                                f"(HTTP {resp.status}): {body}"
+                            )
+                        ) from err
                     elapsed_ms = (time.monotonic() - t0) * 1000
 
                     # Rate limit: check both code 1003 and HTTP 429
