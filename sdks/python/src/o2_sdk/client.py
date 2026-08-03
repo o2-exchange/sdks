@@ -67,11 +67,12 @@ from .models import (
     WithdrawResponse,
 )
 from .nonce import (
+    MAX_NONCE_SESSION_ID,
     ParallelNonceManager,
     WindowResponse,
     is_parallel_nonce_out_of_window,
 )
-from .onchain_revert import is_selector_mismatch_revert
+from .onchain_revert import is_no_upgrade_available, is_selector_mismatch_revert
 from .websocket import ConnectionEvent, O2WebSocket
 
 logger = logging.getLogger("o2_sdk.client")
@@ -279,12 +280,20 @@ class O2Client:
         :attr:`o2_sdk.models.TradeAccount.sync_generation`), so a gate here would
         either be wrong or refuse to act on exactly the accounts that need it.
         Decide with :meth:`probe_parallel_support`, or let
-        :meth:`ensure_parallel_session` do both; re-upgrading an already-current
-        account is a no-op on chain and costs one transaction.
+        :meth:`ensure_parallel_session` do both.
 
-        With ``wait`` (the default) this returns only once the owner's sequential
-        nonce has advanced, which is the sole available confirmation that the
-        upgrade landed. Returns the upgrade tx id.
+        Idempotent, but not free. The proxy itself rejects an upgrade with
+        nothing to do (``require(new_impl != current, "No upgrade available")``),
+        which this treats as success and reports by returning ``None`` rather
+        than a tx id. The submission still happened, so an unnecessary call
+        costs a transaction.
+
+        With ``wait`` (the default) a submitted upgrade returns only once the
+        owner's sequential nonce has advanced, which is the sole available
+        confirmation that it landed.
+
+        Returns the upgrade tx id, or ``None`` if the account was already
+        current.
         """
         account = await self.api.get_account(owner=owner.b256_address)
         if account.trade_account is None or account.trade_account_id is None:
@@ -307,7 +316,16 @@ class O2Client:
             account.trade_account_id,
             nonce,
         )
-        resp = await self.api.upgrade_account(owner.b256_address, request)
+        try:
+            resp = await self.api.upgrade_account(owner.b256_address, request)
+        except O2Error as exc:
+            if not is_no_upgrade_available(exc):
+                raise
+            logger.info(
+                "Account %s already targets the current implementation; nothing to upgrade",
+                account.trade_account_id,
+            )
+            return None
         tx_id = resp.get("tx_id")
         logger.info("Account upgrade submitted: tx_id=%s", tx_id)
         if wait:
@@ -423,7 +441,7 @@ class O2Client:
             "Parallel entry points missing on the deployed implementation "
             "(Revert(123) selector mismatch); upgrading the account proxy"
         )
-        await self.upgrade_account(owner)
+        upgrade_tx = await self.upgrade_account(owner)
         session = await self.create_session(
             owner=owner,
             markets=markets,
@@ -432,10 +450,22 @@ class O2Client:
             nonce_session_id=nonce_session_id,
         )
         if not await self.probe_parallel_support(session, probe_market):
+            # Which of the two this is matters to whoever gets paged: an upgrade
+            # that landed and did not help is a different problem from an
+            # account that was already current and still cannot go parallel.
+            if upgrade_tx is None:
+                raise O2Error(
+                    message=(
+                        "Parallel submissions revert with a selector mismatch, but "
+                        "the proxy already targets the current implementation, so "
+                        "there is no upgrade to apply. The deployed implementation "
+                        "does not have the parallel entry points."
+                    )
+                )
             raise O2Error(
                 message=(
                     "Parallel submissions still revert with a selector mismatch "
-                    "after the account upgrade landed"
+                    f"after the account upgrade landed (tx {upgrade_tx})"
                 )
             )
         return session
@@ -557,8 +587,20 @@ class O2Client:
             nonce_session_id: Parallel-nonce lane (0..4) this session owns. Use
                 distinct lanes for clients sharing one key (e.g. bot=0, rebalancer=1).
         """
+        # Validate before anything reaches the network. Registering a session is
+        # destructive: it consumes the owner's sequential nonce and invalidates
+        # whatever session the account already had. Raising afterwards, when the
+        # nonce manager rejects the lane, would mean a bad argument had already
+        # killed a live session.
         if nonce_strategy not in ("sequential", "parallel"):
             raise O2Error(message=f"unknown nonce_strategy: {nonce_strategy}")
+        if nonce_strategy == "parallel" and not (0 <= nonce_session_id <= MAX_NONCE_SESSION_ID):
+            raise O2Error(
+                message=(
+                    f"nonce_session_id must be in [0, {MAX_NONCE_SESSION_ID}], "
+                    f"got {nonce_session_id}"
+                )
+            )
         logger.info("Creating session for markets=%s, expiry_days=%d", markets, expiry_days)
 
         # Resolve markets
@@ -888,12 +930,20 @@ class O2Client:
         # Each submission draws a fresh window slot, so many can be in flight at
         # once with no rollback. If we burned slots faster than the chain slid
         # ("out of window"), resync the cursor from chain once and retry.
+        #
+        # Only errors that PROVE the actions did not execute are retried here:
+        # these actions are not idempotent, so re-submitting one that already
+        # landed would place a second order. See nonce.is_parallel_nonce_*.
         if session.nonce_manager is not None:
             manager = session.nonce_manager
             # Resync at most once per submission: every attempt burns a fresh
             # slot, so retrying past a resync that did not help only burns more.
             resynced = False
             while True:
+                # Read before submitting: on failure this says whether the
+                # resync we are about to ask for has already been done by a
+                # concurrent submission that failed on the same stale window.
+                generation = manager.resync_generation
                 par_nonce = manager.next_nonce()
                 signing_bytes = build_parallel_actions_signing_bytes(par_nonce, calls)
                 signature = raw_sign(session.session_private_key, signing_bytes)
@@ -914,7 +964,7 @@ class O2Client:
                         raise
                     logger.warning("parallel nonce out of window; resyncing cursor")
                     resynced = True
-                    await manager.resync_from_chain()
+                    await manager.resync_from_chain(generation)
 
         # --- Sequential nonce track (legacy) --------------------------------
         nonce = await self._get_nonce(session.trade_account_id)

@@ -224,6 +224,12 @@ MISMATCHED_SELECTOR_REASON = (
     "(the account's proxy targets an older implementation)"
 )
 
+# require() message from trade-account-proxy's set_proxy_target_with_signature
+# when the oracle's current implementation already equals the stored target.
+# It is a plain Sway require, not a typed error, so there is no variant to
+# decode and the literal string is the signal.
+NO_UPGRADE_AVAILABLE_MESSAGE = "No upgrade available"
+
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
 _OK_RE = re.compile(r'Ok\(\\"([^"\\]+)\\"\)|Ok\("([^"]+)"\)')
 
@@ -518,25 +524,47 @@ def is_selector_mismatch_revert(error: Any) -> bool:
     the message, both the augmented and the raw reason, and the receipts, so it
     works whether or not :func:`augment_revert_reason` has already run.
     """
-    if isinstance(error, str):
-        context = error
-        receipts = None
-    else:
-        parts = [
-            str(getattr(error, "message", "") or ""),
-            str(getattr(error, "reason", "") or ""),
-            str(getattr(error, "raw_reason", "") or ""),
-            str(error),
-        ]
-        receipts = getattr(error, "receipts", None)
-        if receipts is not None:
-            try:
-                parts.append(json.dumps(receipts))
-            except (TypeError, ValueError):
-                parts.append(str(receipts))
-        context = "\n".join(parts)
+    context, receipts = _error_context(error)
     if MISMATCHED_SELECTOR_REASON in context:
         return True
     if MISMATCHED_SELECTOR_REVERT_CODE in _extract_revert_codes(context):
         return True
     return MISMATCHED_SELECTOR_REVERT_CODE in _revert_codes_from_receipts(receipts)
+
+
+def is_no_upgrade_available(error: Any) -> bool:
+    """True iff ``error`` is the proxy refusing an upgrade it has nothing to do.
+
+    ``set_proxy_target_with_signature`` ends in
+    ``require(new_impl != current_target, "No upgrade available")``, so calling
+    it on an account whose proxy already points at the oracle's current
+    implementation reverts rather than doing nothing. For a caller that just
+    wants the account to end up current, that revert is the desired state, not
+    a failure.
+    """
+    context, _ = _error_context(error)
+    return NO_UPGRADE_AVAILABLE_MESSAGE in context
+
+
+def _error_context(error: Any) -> tuple[str, Any]:
+    """All the text an error carries, plus its structured receipts.
+
+    Classification has to work on an error however it reached the caller, so
+    this searches the message, both the augmented and the raw reason, and the
+    receipts, whether or not :func:`augment_revert_reason` has already run.
+    """
+    if isinstance(error, str):
+        return error, None
+    parts = [
+        str(getattr(error, "message", "") or ""),
+        str(getattr(error, "reason", "") or ""),
+        str(getattr(error, "raw_reason", "") or ""),
+        str(error),
+    ]
+    receipts = getattr(error, "receipts", None)
+    if receipts is not None:
+        try:
+            parts.append(json.dumps(receipts))
+        except (TypeError, ValueError):
+            parts.append(str(receipts))
+    return "\n".join(parts), receipts

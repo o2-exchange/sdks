@@ -188,11 +188,24 @@ class WindowResponse:
 # --- Error classification (response ``reason`` strings) ---------------------
 # Distinguish NONCE problems (resync + retry) from SESSION problems (rotate);
 # resyncing on a session error would burn parallel nonces for nothing.
+#
+# The API reports EVERY parallel-nonce rejection as
+# ``"Parallel nonce is not usable: {reason}"`` (fuel-o2
+# services/registry/service.rs), where reason is one of the six
+# ParallelNonceError variants. That prefix therefore says nothing about what
+# went wrong and must never be matched on its own — match the reason.
 
-_NONCE_OUT_OF_WINDOW_MARKERS = (
-    "Parallel nonce is not usable",
+#: Rejections that prove the submission was refused at nonce validation, so the
+#: actions did not execute and re-submitting under a fresh nonce is safe.
+_NONCE_RETRYABLE_MARKERS = (
     "word position out of sliding window",
+    "nonce expired",
 )
+#: The slot was already consumed on chain. This does NOT prove our actions did
+#: not execute: a submission that landed but whose response was lost (the API
+#: client retries POSTs on network errors) comes back exactly this way, so
+#: re-submitting would duplicate non-idempotent actions such as create_order.
+_NONCE_ALREADY_USED_MARKER = "nonce already used"
 _NONCE_TOO_LOW_MARKER = "Nonce in the request"
 _SESSION_ERROR_MARKERS = (
     "Invalid session address",
@@ -217,10 +230,29 @@ def _error_text(error: str | BaseException | None) -> str:
 
 
 def is_parallel_nonce_out_of_window(error: str | BaseException | None) -> bool:
-    """The chain rejected the parallel nonce because the window has moved on:
-    resync the cursor (:meth:`ParallelNonceManager.resync_from_chain`) and retry."""
+    """The nonce was refused at validation and the actions did not execute, so
+    resyncing the cursor (:meth:`ParallelNonceManager.resync_from_chain`) and
+    re-submitting is safe.
+
+    Deliberately does not match "nonce already used" — see
+    :func:`is_parallel_nonce_already_used`.
+    """
     text = _error_text(error)
-    return any(m in text for m in _NONCE_OUT_OF_WINDOW_MARKERS)
+    return any(m in text for m in _NONCE_RETRYABLE_MARKERS)
+
+
+def is_parallel_nonce_already_used(error: str | BaseException | None) -> bool:
+    """The nonce's slot was already consumed on chain.
+
+    **Never auto-retry this.** It is ambiguous in the one way that matters: it
+    happens both when another submitter took the slot (our actions never ran)
+    and when our own submission landed but its response was lost in transit,
+    which the API client's POST retry can produce on its own. Re-submitting the
+    batch under a fresh nonce would place a second order in the latter case,
+    so the error has to reach the caller, who alone knows whether the actions
+    are safe to repeat.
+    """
+    return _NONCE_ALREADY_USED_MARKER in _error_text(error)
 
 
 def is_nonce_too_low(error: str | BaseException | None) -> bool:
@@ -279,6 +311,7 @@ class ParallelNonceManager:
         self._resync_lock = asyncio.Lock()  # single-flight async resync
         self._word = 0
         self._bit = 0
+        self._resync_generation = 0
 
     @property
     def nonce_session_id(self) -> int:
@@ -309,12 +342,34 @@ class ParallelNonceManager:
         """Fetch the window and seat the cursor at the first free position."""
         self._seat(await self._fetch_window())
 
-    async def resync_from_chain(self) -> None:
+    @property
+    def resync_generation(self) -> int:
+        """Counter incremented by every completed resync.
+
+        Read it before a submission and pass it to :meth:`resync_from_chain` on
+        failure, so a resync another task already performed is not repeated.
+        """
+        with self._lock:
+            return self._resync_generation
+
+    async def resync_from_chain(self, seen_generation: int | None = None) -> None:
         """Re-fetch the window and reset the cursor past the highest consumed bit.
 
-        Single-flight: concurrent callers don't stampede the window endpoint.
+        Genuinely single-flight, which matters for correctness and not just for
+        sparing the endpoint. Re-seating moves the cursor BACKWARDS onto slots
+        the chain has not seen consumed yet, so a second resync running after
+        the first can hand out a position the first resync's retry already took,
+        and the two collide. Concurrent submissions fail together (they share
+        one window), so this is the common case, not a rare one.
+
+        Pass ``seen_generation`` (from :attr:`resync_generation`, read before the
+        failed submission) to make this a no-op when someone else has already
+        resynced since: whatever they seated is at least as fresh as what this
+        call would fetch.
         """
         async with self._resync_lock:
+            if seen_generation is not None and self.resync_generation != seen_generation:
+                return  # another task resynced while this one waited for the lock
             self._seat(await self._fetch_window())
 
     def _seat(self, window: WindowResponse) -> None:
@@ -326,3 +381,4 @@ class ParallelNonceManager:
         word, bit = window.first_free_position()
         with self._lock:
             self._word, self._bit = word, bit
+            self._resync_generation += 1

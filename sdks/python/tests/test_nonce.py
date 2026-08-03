@@ -15,6 +15,7 @@ from o2_sdk.nonce import (
     WindowResponse,
     WindowSlot,
     is_nonce_too_low,
+    is_parallel_nonce_already_used,
     is_parallel_nonce_out_of_window,
     is_session_error,
 )
@@ -235,7 +236,10 @@ class TestErrorClassification:
         the message or in either reason, so all of them are searched."""
         from o2_sdk.errors import O2Error
 
-        in_message = O2Error(message="Parallel nonce is not usable", code=1000)
+        in_message = O2Error(
+            message="Parallel nonce is not usable: word position out of sliding window",
+            code=1000,
+        )
         assert is_parallel_nonce_out_of_window(in_message)
 
         in_raw_reason = O2Error(
@@ -249,3 +253,113 @@ class TestErrorClassification:
         assert is_session_error(O2Error(message="Expired session"))
         assert not is_session_error(O2Error(message="Insufficient balance"))
         assert not is_parallel_nonce_out_of_window(RuntimeError("connection reset"))
+
+    def test_already_used_is_not_treated_as_retryable(self):
+        """The API wraps EVERY nonce rejection as "Parallel nonce is not usable:
+        {reason}". Matching that prefix classified "nonce already used" as
+        retryable, and retrying it re-submits actions that may already have
+        landed (a POST whose response was lost), duplicating an order."""
+        already_used = "Parallel nonce is not usable: nonce already used"
+        assert is_parallel_nonce_already_used(already_used)
+        assert not is_parallel_nonce_out_of_window(already_used)
+
+    def test_out_of_window_and_expired_are_retryable(self):
+        """Both prove the submission was refused at validation, so the actions
+        did not execute and a fresh nonce is safe."""
+        assert is_parallel_nonce_out_of_window(
+            "Parallel nonce is not usable: word position out of sliding window"
+        )
+        assert is_parallel_nonce_out_of_window("Parallel nonce is not usable: nonce expired")
+
+    def test_client_side_nonce_faults_are_not_retryable(self):
+        """Malformed nonces are our own bug. Retrying cannot fix them and the
+        error should surface."""
+        for reason in (
+            "Parallel nonce is not usable: reserved bits set",
+            "Parallel nonce is not usable: bitmap position out of range",
+            "Parallel nonce is not usable: nonce session id out of range",
+        ):
+            assert not is_parallel_nonce_out_of_window(reason), reason
+            assert not is_parallel_nonce_already_used(reason), reason
+
+
+class TestResyncCoalescing:
+    """A second resync must not undo a first one.
+
+    Concurrent submissions share a window, so they fail together. Re-seating
+    moves the cursor backwards onto slots the chain has not seen consumed, so a
+    second resync can hand out the position the first resync's retry already
+    took.
+    """
+
+    def _window(self, base=0, bitmap=0):
+        return WindowResponse(
+            nonce_session_id=0,
+            base=base,
+            slots=[
+                WindowSlot(word_position=w, bitmap=bitmap if w == base else 0) for w in range(8)
+            ],
+        )
+
+    def test_second_resync_is_skipped_when_generation_moved(self):
+        fetches = []
+
+        async def fetcher():
+            fetches.append(1)
+            return self._window(bitmap=0b111)  # highest consumed bit 2 -> seat (0, 3)
+
+        mgr = ParallelNonceManager(window_fetcher=fetcher)
+
+        async def scenario():
+            await mgr.init()
+            assert mgr.cursor == (0, 3)
+            # Two concurrent submissions both read the generation, then both fail.
+            gen_a = mgr.resync_generation
+            gen_b = mgr.resync_generation
+            await mgr.resync_from_chain(gen_a)
+            a_nonce = ParallelNonce.decode(mgr.next_nonce())
+            # B's resync must not reseat the cursor back onto A's position.
+            await mgr.resync_from_chain(gen_b)
+            b_nonce = ParallelNonce.decode(mgr.next_nonce())
+            return a_nonce, b_nonce
+
+        a, b = asyncio.run(scenario())
+        assert (a.word_position, a.bitmap_position) != (b.word_position, b.bitmap_position)
+        assert len(fetches) == 2  # init + A's resync; B's was coalesced away
+
+    def test_resync_without_a_generation_still_reseats(self):
+        """The argument is optional, so an explicit unconditional resync (a
+        caller recovering by hand) keeps working."""
+
+        async def fetcher():
+            return self._window(bitmap=0b1)  # seat (0, 1)
+
+        mgr = ParallelNonceManager(window_fetcher=fetcher)
+
+        async def scenario():
+            await mgr.init()
+            mgr.next_nonce()
+            mgr.next_nonce()
+            assert mgr.cursor == (0, 3)
+            await mgr.resync_from_chain()
+            return mgr.cursor
+
+        assert asyncio.run(scenario()) == (0, 1)
+
+    def test_generation_advances_on_each_seat(self):
+        async def fetcher():
+            return self._window()
+
+        mgr = ParallelNonceManager(window_fetcher=fetcher)
+
+        async def scenario():
+            before = mgr.resync_generation
+            await mgr.init()
+            after_init = mgr.resync_generation
+            await mgr.resync_from_chain()
+            return before, after_init, mgr.resync_generation
+
+        before, after_init, after_resync = asyncio.run(scenario())
+        assert before == 0
+        assert after_init == 1
+        assert after_resync == 2

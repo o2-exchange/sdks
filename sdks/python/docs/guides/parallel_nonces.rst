@@ -105,8 +105,11 @@ the current implementation using the non-typed owner-signature flow, the one
 upgrade entry point every proxy has (a ``TypedSecp256k1`` signature would route
 to a typed entry point that older proxies do not carry).
 It is deliberately unconditional: a gate here would either be wrong or refuse to
-act on the accounts that need it. Re-upgrading a current account is a no-op on
-chain and costs one transaction.
+act on the accounts that need it. It is idempotent but not free. The proxy
+rejects an upgrade with nothing to do
+(``require(new_impl != current, "No upgrade available")``), which the SDK treats
+as success and reports by returning ``None`` instead of a tx id, but the
+submission still cost a transaction.
 
 The upgrade is an on-chain owner action and no endpoint reports the new proxy
 target, so confirmation means watching the owner's sequential nonce advance.
@@ -166,6 +169,26 @@ chain window, the API rejects the nonce as out of window and
 :meth:`~o2_sdk.client.O2Client.batch_actions` resyncs the cursor from chain once
 and retries. :func:`~o2_sdk.nonce.is_parallel_nonce_out_of_window` recognizes
 that class of error if you need to handle it yourself.
+
+.. warning::
+
+   If you classify these errors yourself, do not match on the API's
+   ``"Parallel nonce is not usable"`` prefix. It wraps **every** nonce
+   rejection, including ``nonce already used``, which is the one you must never
+   retry automatically: it is what a submission that landed but lost its
+   response looks like, so re-submitting would place the order twice. Use
+   :func:`~o2_sdk.nonce.is_parallel_nonce_out_of_window` (safe to retry, the
+   actions provably did not execute) and
+   :func:`~o2_sdk.nonce.is_parallel_nonce_already_used` (surface to the caller).
+
+Resyncing is single-flight, and that is a correctness property rather than an
+optimization. Re-seating moves the cursor backwards onto slots the chain has not
+recorded as consumed, so two resyncs racing can hand the same position to two
+retries. Concurrent submissions share one window and therefore fail together,
+which makes this the common case. If you drive
+:meth:`~o2_sdk.nonce.ParallelNonceManager.resync_from_chain` yourself, read
+:attr:`~o2_sdk.nonce.ParallelNonceManager.resync_generation` before submitting
+and pass it in, so a resync someone else already did is not repeated.
 
 Each nonce carries an expiry, ``DEFAULT_NONCE_TTL_SECS`` (120s) past issue,
 matching the contract's expiry check.

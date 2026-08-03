@@ -137,12 +137,15 @@ from .nonce import (
     WindowResponse,
     WindowSlot,
     is_nonce_too_low,
+    is_parallel_nonce_already_used,
     is_parallel_nonce_out_of_window,
     is_session_error,
 )
 from .onchain_revert import (
     MISMATCHED_SELECTOR_REASON,
     MISMATCHED_SELECTOR_REVERT_CODE,
+    NO_UPGRADE_AVAILABLE_MESSAGE,
+    is_no_upgrade_available,
     is_selector_mismatch_revert,
 )
 from .websocket import ConnectionEvent, ConnectionState
@@ -155,6 +158,7 @@ __all__ = [
     "MISMATCHED_SELECTOR_REVERT_CODE",
     "NONCE_BITMAP_SIZE",
     "NONCE_SESSION_SLIDING_WINDOW_SIZE",
+    "NO_UPGRADE_AVAILABLE_MESSAGE",
     "AccountCreateResponse",
     "AccountInfo",
     "AccountNotFound",
@@ -272,7 +276,9 @@ __all__ = [
     "generate_keypair",
     "generate_wallet",
     "get_config",
+    "is_no_upgrade_available",
     "is_nonce_too_low",
+    "is_parallel_nonce_already_used",
     "is_parallel_nonce_out_of_window",
     "is_selector_mismatch_revert",
     "is_session_error",

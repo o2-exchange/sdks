@@ -17,3 +17,9 @@ revert, so `AccountInfo.version` and `AccountInfo.is_parallel_capable` are gone,
 replaced by `sync_generation` documented as the indexer signal it actually is.
 Use `probe_parallel_support()` or `is_selector_mismatch_revert()` instead.
 `O2Error` now also carries `raw_reason`, the backend's untouched reason string.
+
+Retries on the parallel track only cover rejections that prove the actions did
+not execute. `nonce already used` is surfaced rather than retried, since it is
+also what a submission that landed but lost its response looks like, and
+`is_parallel_nonce_already_used()` identifies it. Resyncing the nonce window is
+single-flight so two retries cannot draw the same slot.
