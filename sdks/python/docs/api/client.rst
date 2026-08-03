@@ -607,7 +607,7 @@ Withdrawals
 .. method:: O2Client.withdraw(owner, asset, amount, to=None)
    :async:
 
-   Withdraw funds from the trading account to an external address.
+   Withdraw funds from the trading account to an address or contract identity.
 
    This method signs the withdrawal with the **owner** key (using
    ``personalSign``), not the session key.
@@ -618,8 +618,8 @@ Withdrawals
    :type asset: str
    :param amount: Human-readable amount to withdraw.
    :type amount: float
-   :param to: Destination address. Defaults to the owner's address.
-   :type to: str | None
+   :param to: Destination identity or address string. Defaults to the owner's address.
+   :type to: Identity | str | None
    :returns: The withdrawal result.
    :rtype: :class:`~o2_sdk.models.WithdrawResponse`
 
@@ -628,6 +628,9 @@ Withdrawals
       result = await client.withdraw(owner=owner, asset="fUSDC", amount=10.0)
       if result.success:
           print(f"Withdrawal tx: {result.tx_id}")
+
+   To withdraw to a contract, pass a
+   :class:`~o2_sdk.models.ContractIdentity` as ``to``.
 
 
 Nonce management

@@ -194,7 +194,7 @@ def build_withdraw_signing_bytes(
     Layout:
       u64(nonce) + u64(chain_id) + u64(len("withdraw")) + "withdraw"
       + u64(to_discriminant) + to_address(32)
-      + asset_id(32) + u64(amount)
+      + u64(amount) + asset_id(32)
     """
     func_name = b"withdraw"
 
@@ -206,10 +206,10 @@ def build_withdraw_signing_bytes(
     # to identity
     result += u64_be(to_discriminant)
     result += to_address
-    # asset_id
-    result += asset_id
     # amount
     result += u64_be(amount)
+    # asset_id
+    result += asset_id
 
     return bytes(result)
 

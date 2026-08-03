@@ -34,6 +34,7 @@ from .models import (
     AccountInfo,
     Action,
     ActionsResponse,
+    AddressIdentity,
     Balance,
     BalanceUpdate,
     Bar,
@@ -46,6 +47,7 @@ from .models import (
     DepthUpdate,
     FaucetResponse,
     Id,
+    Identity,
     LimitOrder,
     Market,
     MarketActionGroup,
@@ -1076,7 +1078,7 @@ class O2Client:
         owner: Signer,
         asset: str,
         amount: float,
-        to: str | None = None,
+        to: Identity | str | None = None,
     ) -> WithdrawResponse:
         """Withdraw funds from the trading account.
 
@@ -1085,7 +1087,7 @@ class O2Client:
                 ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
             asset: Asset symbol (e.g., "USDC") or asset_id
             amount: Human-readable amount to withdraw
-            to: Destination address (defaults to owner address)
+            to: Destination identity or address string (defaults to owner address)
         """
         logger.info("Withdrawing %s %s", amount, asset)
 
@@ -1095,7 +1097,11 @@ class O2Client:
             raise O2Error(message="Account not found")
 
         nonce = account.nonce
-        destination = to or owner.b256_address
+        destination = (
+            AddressIdentity(to)
+            if isinstance(to, str)
+            else (to or AddressIdentity(owner.b256_address))
+        )
 
         # Resolve asset
         asset_id, decimals = self._resolve_asset(markets_resp, asset)
@@ -1108,10 +1114,10 @@ class O2Client:
         signing_bytes = build_withdraw_signing_bytes(
             nonce=nonce,
             chain_id=markets_resp.chain_id_int,
-            to_discriminant=0,  # Address discriminant
-            to_address=bytes.fromhex(destination[2:]),
-            asset_id=bytes.fromhex(asset_id[2:]),
+            to_discriminant=destination.discriminant,
+            to_address=destination.address_bytes,
             amount=scaled_amount,
+            asset_id=bytes.fromhex(asset_id[2:]),
         )
 
         logger.debug("Signing withdrawal, payload=%d bytes", len(signing_bytes))
@@ -1121,7 +1127,7 @@ class O2Client:
             "trade_account_id": account.trade_account_id,
             "signature": {"Secp256k1": "0x" + signature.hex()},
             "nonce": str(nonce),
-            "to": {"Address": destination},
+            "to": destination.to_dict(),
             "asset_id": asset_id,
             "amount": str(scaled_amount),
         }

@@ -270,6 +270,42 @@ describe("O2Client sign paths", () => {
           expect(personalSign).toHaveBeenCalledTimes(1);
           expect(decodeNonceFromSigningBytes(personalSign.mock.calls[0][0])).toBe(7n);
         });
+
+        it("withdraw signs and sends a ContractId destination", async () => {
+          const client = new O2Client({ network: Network.TESTNET });
+          const { signer, personalSign } = makeSigner();
+
+          vi.spyOn(client.api, "getAccount")
+            .mockResolvedValueOnce({
+              trade_account_id: TRADE_ACCOUNT_ID,
+              trade_account: null,
+              session: null,
+            })
+            .mockResolvedValueOnce({
+              trade_account_id: TRADE_ACCOUNT_ID,
+              trade_account: {
+                last_modification: 0,
+                nonce: 3n,
+                owner: { Address: OWNER },
+              },
+              session: null,
+            });
+          vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+          const withdrawSpy = vi
+            .spyOn(client.api, "withdraw")
+            .mockResolvedValue({} as Awaited<ReturnType<typeof client.api.withdraw>>);
+
+          await client.withdraw(signer, BASE_ASSET_ID, 123n, { ContractId: DESTINATION });
+
+          expect(withdrawSpy).toHaveBeenCalledWith(
+            OWNER,
+            expect.objectContaining({ to: { ContractId: DESTINATION } }),
+          );
+          const signingBytes = personalSign.mock.calls[0][0];
+          expect(signingBytes.slice(32, 40)).toEqual(new Uint8Array([0, 0, 0, 0, 0, 0, 0, 1]));
+          expect(signingBytes.slice(72, 80)).toEqual(new Uint8Array([0, 0, 0, 0, 0, 0, 0, 123]));
+          expect(signingBytes.slice(80, 112)).toEqual(new Uint8Array(32).fill(0x55));
+        });
       });
 
       describe("O2Client faucet top-up", () => {

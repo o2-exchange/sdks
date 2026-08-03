@@ -259,7 +259,7 @@ pub fn settle_balance_to_call(
 /// Layout:
 ///   u64(nonce) + u64(chain_id) + u64(len("withdraw")) + "withdraw"
 ///   + u64(to_discriminant) + to_address(32)
-///   + asset_id(32) + u64(amount)
+///   + u64(amount) + asset_id(32)
 pub fn build_withdraw_signing_bytes(
     nonce: u64,
     chain_id: u64,
@@ -278,10 +278,10 @@ pub fn build_withdraw_signing_bytes(
     // to identity
     result.extend_from_slice(&u64_be(to_discriminant));
     result.extend_from_slice(to_address);
-    // asset_id
-    result.extend_from_slice(asset_id);
     // amount
     result.extend_from_slice(&u64_be(amount));
+    // asset_id
+    result.extend_from_slice(asset_id);
 
     result
 }

@@ -36,6 +36,32 @@ impl Default for MetadataPolicy {
     }
 }
 
+/// Convert a withdrawal destination into the Fuel [`Identity`] sent to the API.
+///
+/// `Option<&str>` preserves the address-only API from SDK 0.2.0 (`None` uses the
+/// owner's address), while [`Identity`] and `&Identity` support contract destinations.
+pub trait IntoWithdrawDestination {
+    fn into_withdraw_destination(self, owner_address: &str) -> Identity;
+}
+
+impl IntoWithdrawDestination for Option<&str> {
+    fn into_withdraw_destination(self, owner_address: &str) -> Identity {
+        Identity::Address(self.unwrap_or(owner_address).to_string())
+    }
+}
+
+impl IntoWithdrawDestination for Identity {
+    fn into_withdraw_destination(self, _owner_address: &str) -> Identity {
+        self
+    }
+}
+
+impl IntoWithdrawDestination for &Identity {
+    fn into_withdraw_destination(self, _owner_address: &str) -> Identity {
+        self.clone()
+    }
+}
+
 /// Validate that a REST depth precision value is within the supported range (1–18).
 fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
     if !(1..=18).contains(&precision) {
@@ -1234,7 +1260,7 @@ impl O2Client {
     // Withdrawals
     // -----------------------------------------------------------------------
 
-    /// Withdraw assets from the trading account to the owner wallet.
+    /// Withdraw assets from the trading account to an address or contract identity.
     /// Works with both [`Wallet`] (Fuel-native) and [`EvmWallet`].
     pub async fn withdraw<W: SignableWallet>(
         &mut self,
@@ -1242,14 +1268,18 @@ impl O2Client {
         session: &Session,
         asset_id: &AssetId,
         amount: &str,
-        to: Option<&str>,
+        to: impl IntoWithdrawDestination,
     ) -> Result<WithdrawResponse, O2Error> {
+        let owner_hex = to_hex_string(owner.b256_address());
+        let destination = to.into_withdraw_destination(&owner_hex);
         debug!(
             "client.withdraw trade_account_id={} asset_id={} amount={} to={:?}",
-            session.trade_account_id, asset_id, amount, to
+            session.trade_account_id, asset_id, amount, destination
         );
-        let owner_hex = to_hex_string(owner.b256_address());
-        let to_address_hex = to.unwrap_or(&owner_hex);
+        let (to_discriminant, to_address_hex) = match &destination {
+            Identity::Address(address) => (0, address.as_str()),
+            Identity::ContractId(contract_id) => (1, contract_id.as_str()),
+        };
         let to_address_bytes = parse_hex_32(to_address_hex)?;
         let asset_id_bytes = parse_hex_32(asset_id.as_str())?;
         let amount_u64: u64 = amount
@@ -1263,7 +1293,7 @@ impl O2Client {
         let signing_bytes = build_withdraw_signing_bytes(
             nonce,
             chain_id,
-            0, // Address discriminant
+            to_discriminant,
             &to_address_bytes,
             &asset_id_bytes,
             amount_u64,
@@ -1275,7 +1305,7 @@ impl O2Client {
             trade_account_id: session.trade_account_id.clone(),
             signature: Signature::Secp256k1(sig_hex),
             nonce: nonce.to_string(),
-            to: Identity::Address(to_address_hex.to_string()),
+            to: destination,
             asset_id: asset_id.clone(),
             amount: amount.to_string(),
         };
@@ -1410,12 +1440,12 @@ mod tests {
     use crate::{
         config::{Network, NetworkConfig},
         models::{
-            Action, AssetId, ContractId, Market, MarketAsset, MarketId, MarketsResponse, OrderId,
-            OrderType, Side,
+            Action, AssetId, ContractId, Identity, Market, MarketAsset, MarketId, MarketsResponse,
+            OrderId, OrderType, Side,
         },
     };
 
-    use super::{MarketActionsBuilder, MetadataPolicy, O2Client};
+    use super::{IntoWithdrawDestination, MarketActionsBuilder, MetadataPolicy, O2Client};
 
     fn dummy_markets_response() -> MarketsResponse {
         MarketsResponse {
@@ -1500,6 +1530,23 @@ mod tests {
     fn metadata_policy_refreshes_when_cache_empty() {
         let client = O2Client::new(Network::Testnet);
         assert!(client.should_refresh_markets());
+    }
+
+    #[test]
+    fn withdraw_destination_preserves_address_api_and_supports_contracts() {
+        fn resolve(to: impl IntoWithdrawDestination) -> Identity {
+            to.into_withdraw_destination("0xowner")
+        }
+
+        assert_eq!(resolve(None), Identity::Address("0xowner".to_string()));
+        assert_eq!(
+            resolve(Some("0xaddress")),
+            Identity::Address("0xaddress".to_string())
+        );
+        assert_eq!(
+            resolve(Identity::ContractId("0xcontract".to_string())),
+            Identity::ContractId("0xcontract".to_string())
+        );
     }
 
     #[test]

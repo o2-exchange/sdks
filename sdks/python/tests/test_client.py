@@ -8,6 +8,7 @@ from o2_sdk import (
     ActionsResponse,
     AddressIdentity,
     ChainInt,
+    ContractIdentity,
     Market,
     MarketActions,
     MarketsResponse,
@@ -414,6 +415,53 @@ async def test_top_up_from_faucet_requires_existing_account(monkeypatch: pytest.
 
     with pytest.raises(O2Error, match="Call setup_account\\(\\) first"):
         await client.top_up_from_faucet(owner)
+
+
+@pytest.mark.asyncio
+async def test_withdraw_supports_contract_identity(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    market = _test_market()
+    client._markets_cache = _test_markets_response(market)
+    owner = client.generate_wallet()
+    trade_account_id = "0x" + "12" * 32
+    destination = "0x" + "34" * 32
+
+    account = type(
+        "Account",
+        (),
+        {"exists": True, "trade_account_id": trade_account_id, "nonce": 7},
+    )()
+
+    async def fake_get_account(**_kwargs):
+        return account
+
+    captured: dict = {}
+
+    def fake_build_withdraw_signing_bytes(**kwargs):
+        captured["encoding"] = kwargs
+        return b"withdraw-payload"
+
+    async def fake_withdraw(owner_id: str, request: dict):
+        captured["owner_id"] = owner_id
+        captured["request"] = request
+        return object()
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+    monkeypatch.setattr(client.api, "withdraw", fake_withdraw)
+    monkeypatch.setattr(
+        "o2_sdk.client.build_withdraw_signing_bytes", fake_build_withdraw_signing_bytes
+    )
+
+    await client.withdraw(
+        owner=owner,
+        asset=market.base.symbol,
+        amount=1.0,
+        to=ContractIdentity(destination),
+    )
+
+    assert captured["encoding"]["to_discriminant"] == 1
+    assert captured["encoding"]["to_address"] == bytes.fromhex(destination[2:])
+    assert captured["request"]["to"] == {"ContractId": destination}
 
 
 @pytest.mark.asyncio
