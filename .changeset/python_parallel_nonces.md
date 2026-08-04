@@ -13,9 +13,10 @@ are missing.
 
 Parallel capability cannot be read from the API. `sync_state` reports V3 for
 every synced account, including legacy accounts whose parallel submissions
-revert, so `AccountInfo.version` and `AccountInfo.is_parallel_capable` are gone,
-replaced by `sync_generation` documented as the indexer signal it actually is.
-Use `probe_parallel_support()` or `is_selector_mismatch_revert()` instead.
+revert, so capability is established by probing with `probe_parallel_support()`
+and classified with `is_selector_mismatch_revert()`. `TradeAccount` exposes
+`sync_generation`, documented as the indexer signal it actually is rather than
+anything to gate on.
 `O2Error` now also carries `raw_reason`, the backend's untouched reason string.
 
 Retries on the parallel track only cover rejections that prove the actions did
