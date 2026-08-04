@@ -181,6 +181,13 @@ that class of error if you need to handle it yourself.
    actions provably did not execute) and
    :func:`~o2_sdk.nonce.is_parallel_nonce_already_used` (surface to the caller).
 
+On an already-used rejection the SDK still **reseats the cursor from chain**
+before raising, even though it does not retry. The slot being consumed means
+the cursor is pointing into territory the chain has already used, and one
+resync jumps the whole consumed run, where simply advancing would re-offer the
+next consumed slot and cost a round-trip per position. Heal, then hand the
+error to the caller.
+
 Resyncing is single-flight, and that is a correctness property rather than an
 optimization. Re-seating moves the cursor backwards onto slots the chain has not
 recorded as consumed, so two resyncs racing can hand the same position to two

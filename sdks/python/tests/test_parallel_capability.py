@@ -708,3 +708,78 @@ async def test_ensure_parallel_session_reports_an_unupgradeable_account(
 
     with pytest.raises(O2Error, match="no upgrade to apply"):
         await client.ensure_parallel_session(FakeOwner(), ["FUEL/USDC"])
+
+
+@pytest.mark.asyncio
+async def test_already_used_heals_the_cursor_without_retrying(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The cursor must be reseated even though the submission is not retried.
+
+    Session recreation used to be what reseated a cursor pointing into consumed
+    territory, but only as a side effect of building a fresh nonce manager.
+    Doing the window fetch here heals it directly: one resync jumps the whole
+    consumed run, where merely advancing would re-offer the next consumed slot
+    and burn a round-trip per position.
+    """
+    from o2_sdk.models import MarketActions, SettleBalanceAction
+
+    client = _market_client()
+    session = _parallel_session()
+    await session.nonce_manager.init()
+    manager = session.nonce_manager
+    submissions: list = []
+
+    async def fake_submit(_owner, request):
+        submissions.append(request)
+        raise O2Error(message="Parallel nonce is not usable: nonce already used", code=1001)
+
+    monkeypatch.setattr(client.api, "submit_actions", fake_submit)
+    monkeypatch.setattr(
+        "o2_sdk.client.action_to_call",
+        lambda _a, _m: {"contract_id": b"", "asset_id": b"", "amount": 0},
+    )
+    monkeypatch.setattr("o2_sdk.client.build_parallel_actions_signing_bytes", lambda _n, _c: b"x")
+    monkeypatch.setattr("o2_sdk.client.raw_sign", lambda _k, _p: b"\x99" * 64)
+
+    generation_before = manager.resync_generation
+    actions = [MarketActions(market_id=MARKET_ID, actions=[SettleBalanceAction(to=TRADE_ACCOUNT)])]
+    with pytest.raises(O2Error, match="already used"):
+        await client.batch_actions(actions, session=session)
+
+    assert len(submissions) == 1, "must not re-submit non-idempotent actions"
+    assert manager.resync_generation > generation_before, (
+        "the cursor must be reseated from chain, or nothing heals it now that "
+        "the failure no longer feeds a session recreation"
+    )
+
+
+@pytest.mark.asyncio
+async def test_already_used_still_raises_when_the_heal_fails(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A failing resync must not replace the error the caller needs to see."""
+    from o2_sdk.models import MarketActions, SettleBalanceAction
+
+    client = _market_client()
+    session = _parallel_session()
+    await session.nonce_manager.init()
+
+    async def broken_resync(_generation=None):
+        raise RuntimeError("window endpoint down")
+
+    async def fake_submit(_owner, _request):
+        raise O2Error(message="Parallel nonce is not usable: nonce already used", code=1001)
+
+    monkeypatch.setattr(session.nonce_manager, "resync_from_chain", broken_resync)
+    monkeypatch.setattr(client.api, "submit_actions", fake_submit)
+    monkeypatch.setattr(
+        "o2_sdk.client.action_to_call",
+        lambda _a, _m: {"contract_id": b"", "asset_id": b"", "amount": 0},
+    )
+    monkeypatch.setattr("o2_sdk.client.build_parallel_actions_signing_bytes", lambda _n, _c: b"x")
+    monkeypatch.setattr("o2_sdk.client.raw_sign", lambda _k, _p: b"\x99" * 64)
+
+    actions = [MarketActions(market_id=MARKET_ID, actions=[SettleBalanceAction(to=TRADE_ACCOUNT)])]
+    with pytest.raises(O2Error, match="already used"):
+        await client.batch_actions(actions, session=session)

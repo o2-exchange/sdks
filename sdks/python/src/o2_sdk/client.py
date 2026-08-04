@@ -70,6 +70,7 @@ from .nonce import (
     MAX_NONCE_SESSION_ID,
     ParallelNonceManager,
     WindowResponse,
+    is_parallel_nonce_already_used,
     is_parallel_nonce_out_of_window,
 )
 from .onchain_revert import is_no_upgrade_available, is_selector_mismatch_revert
@@ -960,6 +961,21 @@ class O2Client:
                     logger.info("Actions submitted (parallel): tx_id=%s", result.tx_id)
                     return result
                 except O2Error as e:
+                    if is_parallel_nonce_already_used(e):
+                        # The slot is consumed, so the cursor is pointing into
+                        # territory the chain has already used. Heal it before
+                        # giving up: resync jumps past the whole consumed run in
+                        # one step, where simply advancing would re-offer the
+                        # next consumed slot and burn a round-trip per position.
+                        #
+                        # Heal but do NOT retry. Whether OUR actions ran is
+                        # exactly what this error cannot tell us, so re-sending
+                        # them could duplicate an order. The caller decides.
+                        try:
+                            await manager.resync_from_chain(generation)
+                        except Exception:
+                            logger.warning("cursor resync after an already-used nonce failed")
+                        raise
                     if resynced or not is_parallel_nonce_out_of_window(e):
                         raise
                     logger.warning("parallel nonce out of window; resyncing cursor")
