@@ -383,3 +383,61 @@ class TestResyncCoalescing:
         assert before == 0
         assert after_init == 1
         assert after_resync == 2
+
+    def test_is_nonce_rejection_covers_every_reason_and_both_layers(self):
+        """The broad predicate: any nonce refusal, whichever layer caught it.
+
+        A consumer asking "is my session dead" must see all of these as "no",
+        so a gap here silently turns a nonce collision into session churn.
+        """
+        from o2_sdk.errors import InternalError, InvalidRequest
+        from o2_sdk.nonce import is_nonce_rejection
+
+        for reason in (
+            "reserved bits set",
+            "bitmap position out of range",
+            "nonce session id out of range",
+            "nonce expired",
+            "word position out of sliding window",
+            "nonce already used",
+        ):
+            err = InvalidRequest(message=f"Parallel nonce is not usable: {reason}", code=1001)
+            assert is_nonce_rejection(err), reason
+
+        # The contract's own form, where the signal is only in `reason`.
+        for variant in (
+            "ReservedBitsSet",
+            "BitmapPositionOutOfRange",
+            "NonceSessionIdOutOfRange",
+            "Expired",
+            "WordPosOutOfWindow",
+            "AlreadyUsed",
+        ):
+            err = InternalError(
+                message="transaction reverted: Revert(18446744073709486086)",
+                code=1000,
+                reason=f'failed with logs: LogResult {{ results: [Ok("{variant}")] }}',
+            )
+            assert is_nonce_rejection(err), variant
+
+        # Sequential track.
+        assert is_nonce_rejection(
+            "Nonce in the request(5) is less than the nonce in the database(7)."
+        )
+
+    def test_is_nonce_rejection_excludes_everything_else(self):
+        """Negative control. Treating a session error as a nonce problem would
+        suppress the one signal that means the session must be recreated."""
+        from o2_sdk.errors import InternalError, OnChainRevert
+        from o2_sdk.nonce import is_nonce_rejection
+
+        assert not is_nonce_rejection(InternalError(message="Invalid session address"))
+        assert not is_nonce_rejection(InternalError(message="Expired session"))
+        assert not is_nonce_rejection(RuntimeError("connection reset"))
+        assert not is_nonce_rejection(None)
+        assert not is_nonce_rejection(
+            OnChainRevert(
+                message="Failed to process transaction",
+                reason='failed with logs: LogResult { results: [Ok("OrderPartiallyFilled")] }',
+            )
+        )

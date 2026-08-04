@@ -23,3 +23,10 @@ not execute. `nonce already used` is surfaced rather than retried, since it is
 also what a submission that landed but lost its response looks like, and
 `is_parallel_nonce_already_used()` identifies it. Resyncing the nonce window is
 single-flight so two retries cannot draw the same slot.
+
+An already-consumed nonce slot is reported two ways depending on whether the
+indexer has caught up: the API rejects before submitting, or the contract
+reverts with `ExtendedNonceError::AlreadyUsed`. `is_parallel_nonce_already_used`
+covers both. `is_nonce_rejection` is the broad companion, true for any nonce
+refusal at either layer, for callers deciding whether a failure implicates the
+session rather than whether a submission may be retried.

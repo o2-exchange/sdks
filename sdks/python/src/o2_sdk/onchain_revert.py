@@ -243,6 +243,20 @@ NO_UPGRADE_AVAILABLE_MESSAGE = "No upgrade available"
 # must handle both, so see nonce.is_parallel_nonce_already_used.
 ONCHAIN_ALREADY_USED_VARIANT = "AlreadyUsed"
 
+#: Every variant of that same contract enum, in declaration order. Mirrors
+#: ExtendedNonceError; kept whole because a caller deciding "is this a nonce
+#: problem at all" needs all six, not just the interesting one.
+ONCHAIN_NONCE_ERROR_VARIANTS = frozenset(
+    {
+        "ReservedBitsSet",
+        "BitmapPositionOutOfRange",
+        "NonceSessionIdOutOfRange",
+        "Expired",
+        "WordPosOutOfWindow",
+        "AlreadyUsed",
+    }
+)
+
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
 _OK_RE = re.compile(r'Ok\(\\"([^"\\]+)\\"\)|Ok\("([^"]+)"\)')
 
@@ -291,6 +305,16 @@ def is_onchain_already_used(error: Any) -> bool:
     """
     context, _ = _error_context(error)
     return ONCHAIN_ALREADY_USED_VARIANT in logged_variants(context)
+
+
+def is_onchain_nonce_error(error: Any) -> bool:
+    """True iff the CONTRACT rejected the nonce, for any of its six reasons.
+
+    The on-chain half of :func:`o2_sdk.nonce.is_nonce_rejection`; see that for
+    why both halves exist.
+    """
+    context, _ = _error_context(error)
+    return bool(logged_variants(context) & ONCHAIN_NONCE_ERROR_VARIANTS)
 
 
 def _extract_log_result_error(text: str) -> str | None:

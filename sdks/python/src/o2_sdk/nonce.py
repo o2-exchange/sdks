@@ -29,7 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from .errors import O2Error
-from .onchain_revert import is_onchain_already_used
+from .onchain_revert import is_onchain_already_used, is_onchain_nonce_error
 
 # --- Constants (must match the trade-account contract) ----------------------
 
@@ -254,6 +254,36 @@ def _error_text(error: str | BaseException | None) -> str:
         )
         + f"\n{error}"
     )
+
+
+#: Prefix the API puts on every parallel-nonce rejection, whatever the reason.
+_NONCE_REJECT_PREFIX = "Parallel nonce is not usable"
+
+
+def is_nonce_rejection(error: str | BaseException | None) -> bool:
+    """True iff the venue refused this nonce, for ANY reason, at EITHER layer.
+
+    Deliberately broad, and deliberately separate from the narrow predicates
+    above, because callers ask two different questions about the same error:
+
+    * "May I retry this submission?" needs the reason. Out-of-window and expired
+      prove nothing executed; already-used does not. Use
+      :func:`is_parallel_nonce_out_of_window` and
+      :func:`is_parallel_nonce_already_used`.
+    * "Is my session dead?" does not need the reason, because none of the six
+      say anything about the session. That is this predicate.
+
+    A caller answering the second question with the first pair would silently
+    let four of the six reasons through, so the broad form is provided here
+    rather than being reassembled, differently and wrongly, in each consumer.
+
+    Covers the API-layer prefix, the contract's own ExtendedNonceError variants,
+    and the sequential track's stale-nonce conflict.
+    """
+    text = _error_text(error)
+    if _NONCE_REJECT_PREFIX in text or _NONCE_TOO_LOW_MARKER in text:
+        return True
+    return is_onchain_nonce_error(error)
 
 
 def is_parallel_nonce_out_of_window(error: str | BaseException | None) -> bool:
