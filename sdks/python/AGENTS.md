@@ -72,7 +72,7 @@ asyncio.run(main())
 | `stream_trades(market)` | - | `AsyncIterator[TradeUpdate]` | WS trades |
 | `stream_balances(account)` | - | `AsyncIterator[BalanceUpdate]` | WS balances |
 | `stream_nonce(account)` | - | `AsyncIterator[NonceUpdate]` | WS nonce |
-| `withdraw(owner, asset, amount, to=None)` | - | `WithdrawResponse` | Withdraw funds |
+| `withdraw(owner, asset, amount, to=None)` | destination is `Identity \| str \| None` | `WithdrawResponse` | Withdraw funds |
 | `get_nonce(trade_account_id)` | - | `int` | Current nonce |
 | `refresh_nonce(session)` | - | `int` | Re-fetch nonce from API |
 | `close()` | - | `None` | Close all connections |
@@ -141,6 +141,7 @@ High-level batch action models:
 | `encode_order_args(price, qty, type, data)` | `bytes` | Tightly packed OrderArgs |
 | `build_session_signing_bytes(...)` | `bytes` | Session creation payload |
 | `build_actions_signing_bytes(nonce, calls)` | `bytes` | Action signing payload |
+| `build_withdraw_signing_bytes(...)` | `bytes` | Withdrawal signing payload in `(Identity, amount, AssetId)` ABI order |
 | `action_to_call(action, market_info)` | `dict` | High-level action to low-level call |
 
 ## Common Patterns

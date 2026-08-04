@@ -294,6 +294,9 @@ let result = client.withdraw(
 println!("Withdrawal tx: {}", result.tx_id.unwrap_or_default());
 ```
 
+Pass `Identity::ContractId(contract_id)` to withdraw to a contract;
+`None` defaults to the owner's address.
+
 > **Note:** Withdrawals require the **owner wallet** (not the session key)
 > and use `personalSign`.
 

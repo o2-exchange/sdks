@@ -61,6 +61,7 @@ import type {
   DepthSnapshot,
   DepthUpdate,
   FaucetResponse,
+  Identity,
   Market,
   MarketActions,
   MarketRef,
@@ -957,9 +958,9 @@ export class O2Client {
    * @param wallet - The owner wallet (not session key).
    * @param asset - Asset symbol (e.g., `"fUSDC"`) or hex asset ID.
    * @param amount - Amount as human-readable string or raw bigint.
-   * @param to - Destination address (defaults to wallet address).
+   * @param to - Destination identity, or an address string (defaults to wallet address).
    */
-  async withdraw(wallet: Signer, asset: string, amount: Numeric, to?: string) {
+  async withdraw(wallet: Signer, asset: string, amount: Numeric, to?: Identity | string) {
     // Resolve trade account from wallet
     const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
     const tradeAccountId = accountInfo.trade_account_id;
@@ -994,7 +995,8 @@ export class O2Client {
       scaledAmount = scaleDecimalString(normalizedAmount, decimals);
     }
 
-    const destination = to ? { Address: to } : { Address: wallet.b256Address };
+    const destination: Identity =
+      typeof to === "string" ? { Address: to } : (to ?? { Address: wallet.b256Address });
     const toDiscriminant: 0 | 1 = "ContractId" in destination ? 1 : 0;
     const toAddressHex = (
       "ContractId" in destination ? destination.ContractId : destination.Address

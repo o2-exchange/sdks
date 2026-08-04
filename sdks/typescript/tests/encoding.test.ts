@@ -393,7 +393,7 @@ describe("Encoding Module", () => {
       const result = buildWithdrawSigningBytes(nonce, chainId, 0, toAddress, assetId, amount);
 
       // Layout: u64(nonce) + u64(chain_id) + u64(8) + "withdraw"
-      //       + u64(0) + to_address(32) + asset_id(32) + u64(amount)
+      //       + u64(0) + to_address(32) + u64(amount) + asset_id(32)
       const expectedLen = 8 + 8 + 8 + 8 + 8 + 32 + 32 + 8; // = 112
       expect(result.length).toBe(expectedLen);
 
@@ -417,11 +417,11 @@ describe("Encoding Module", () => {
       // to_address
       expect(result.slice(offset, offset + 32)).toEqual(toAddress);
       offset += 32;
-      // asset_id
-      expect(result.slice(offset, offset + 32)).toEqual(assetId);
-      offset += 32;
       // amount
       expect(bytesToHex(result.slice(offset, offset + 8))).toBe("0x000000003b9aca00");
+      offset += 8;
+      // asset_id
+      expect(result.slice(offset, offset + 32)).toEqual(assetId);
     });
 
     it("handles ContractId discriminant", () => {

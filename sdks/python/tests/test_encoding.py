@@ -8,6 +8,7 @@ from o2_sdk.encoding import (
     action_to_call,
     build_actions_signing_bytes,
     build_session_signing_bytes,
+    build_withdraw_signing_bytes,
     encode_identity,
     encode_option_call_data,
     encode_option_none,
@@ -232,6 +233,34 @@ class TestBuildSessionSigningBytes:
         # The contract IDs should both be present
         assert cid1 in result
         assert cid2 in result
+
+
+class TestBuildWithdrawSigningBytes:
+    def test_matches_abi_argument_order(self):
+        destination = bytes([0xAA]) * 32
+        asset_id = bytes([0xBB]) * 32
+        amount = 1_000_000_000
+
+        result = build_withdraw_signing_bytes(
+            nonce=5,
+            chain_id=0,
+            to_discriminant=1,
+            to_address=destination,
+            amount=amount,
+            asset_id=asset_id,
+        )
+
+        expected = (
+            u64_be(5)
+            + u64_be(0)
+            + u64_be(8)
+            + b"withdraw"
+            + u64_be(1)
+            + destination
+            + u64_be(amount)
+            + asset_id
+        )
+        assert result == expected
 
 
 class TestBuildActionsSigningBytes:

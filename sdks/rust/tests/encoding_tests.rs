@@ -261,6 +261,27 @@ fn test_build_session_signing_bytes_multiple_contracts() {
 }
 
 #[test]
+fn test_build_withdraw_signing_bytes_matches_abi_argument_order() {
+    let destination = [0xAA; 32];
+    let asset_id = [0xBB; 32];
+    let amount = 1_000_000_000;
+
+    let bytes = build_withdraw_signing_bytes(5, 0, 1, &destination, &asset_id, amount);
+
+    let mut expected = Vec::new();
+    expected.extend_from_slice(&u64_be(5));
+    expected.extend_from_slice(&u64_be(0));
+    expected.extend_from_slice(&u64_be(8));
+    expected.extend_from_slice(b"withdraw");
+    expected.extend_from_slice(&u64_be(1));
+    expected.extend_from_slice(&destination);
+    expected.extend_from_slice(&u64_be(amount));
+    expected.extend_from_slice(&asset_id);
+
+    assert_eq!(bytes, expected);
+}
+
+#[test]
 fn test_build_actions_signing_bytes_empty() {
     let bytes = build_actions_signing_bytes(0, &[]);
     assert_eq!(&bytes[..8], &u64_be(0)); // nonce

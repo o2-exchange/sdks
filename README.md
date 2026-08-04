@@ -38,7 +38,7 @@ All three SDKs share the same capabilities:
 
 - **Testnet/Devnet** — `setup_account()` creates the trading account, applies whitelist rules, and attempts faucet minting.
 - **Mainnet** — no faucet is available; you must fund externally (for example via bridge/on-chain flows), then trade via SDK.
-- **Withdrawals** — all SDKs expose `withdraw(...)` to move assets from the trading account back to an owner/destination address.
+- **Withdrawals** — all SDKs expose `withdraw(...)` to move assets from the trading account to an address or contract identity.
 
 > [!IMPORTANT]
 > Mainnet note: account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
@@ -183,6 +183,10 @@ just integration rust
 ```
 
 > **Note:** Integration tests require testnet connectivity and may take several minutes due to faucet cooldowns and on-chain confirmation times.
+
+Each SDK's integration suite starts with a dedicated devnet regression that creates
+disposable accounts, uses the faucet, then withdraws to both an owner address and
+another trading account's `ContractId`.
 
 ## 📁 Repository Structure
 

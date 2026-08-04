@@ -184,7 +184,7 @@ mod onchain_revert;
 pub mod websocket;
 
 // Re-export primary types for convenience.
-pub use client::{MarketActionsBuilder, MetadataPolicy, O2Client};
+pub use client::{IntoWithdrawDestination, MarketActionsBuilder, MetadataPolicy, O2Client};
 pub use config::{Network, NetworkConfig};
 pub use crypto::{EvmWallet, SignableWallet, Wallet};
 pub use decimal::UnsignedDecimal;

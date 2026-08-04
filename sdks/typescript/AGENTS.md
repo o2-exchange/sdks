@@ -58,7 +58,7 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `streamNonce(tradeAccountId)` | id | `AsyncGenerator<NonceUpdate>` | Stream nonce updates |
 | `getNonce(tradeAccountId)` | id | `bigint` | Fetch current nonce |
 | `refreshNonce(session?)` | session? | `bigint` | Re-fetch nonce and update a session |
-| `withdraw(wallet, asset, amount, to?)` | owner signer, symbol/assetId, `Numeric`, address? | `WithdrawResponse` | Withdraw funds |
+| `withdraw(wallet, asset, amount, to?)` | owner signer, symbol/assetId, `Numeric`, `Identity \| string`? | `WithdrawResponse` | Withdraw funds |
 | `disconnectWs()` | — | `void` | Close WebSocket connection |
 | `close()` | — | `void` | Close all resources (WebSocket + cache) |
 
@@ -110,6 +110,7 @@ import { ... } from "@o2exchange/sdk/internals";
 | `encodeOrderArgs(price, qty, type)` | bigints, variant | `Uint8Array` | OrderArgs struct |
 | `buildSessionSigningBytes(...)` | nonce, chainId, addr, cids, expiry | `Uint8Array` | Session signing payload |
 | `buildActionsSigningBytes(nonce, calls)` | nonce, calls | `Uint8Array` | Action signing payload |
+| `buildWithdrawSigningBytes(...)` | nonce, chainId, toDiscriminant, toAddress, assetId, amount | `Uint8Array` | Signing payload; emitted in `(Identity, amount, AssetId)` ABI order |
 | `actionToCall(action, market, registryId?)` | JSON action, market info | `ContractCall` | High-to-low level conversion |
 | `scaleDecimalString(value, decimals)` | decimal string, int | `bigint` | Decimal string to chain integer |
 | `scalePriceString(value, decimals, maxPrecision)` | decimal string, ints | `bigint` | Decimal string price to chain integer |

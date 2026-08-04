@@ -244,6 +244,11 @@ console.log(`Withdrawal tx: ${result.tx_id}`);
 The asset accepts symbol names (`"fUSDC"`) or hex asset IDs. The amount
 is `Numeric` — pass a human-readable string or raw `bigint`. The trade
 account ID and destination are resolved from the wallet automatically.
+Pass an explicit `Identity` to withdraw to an address or contract:
+
+```ts
+await client.withdraw(wallet, "fUSDC", "100.0", { ContractId: contractId });
+```
 
 > **Note:** Withdrawals require the **owner wallet** (not the session key).
 

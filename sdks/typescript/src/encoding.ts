@@ -156,7 +156,7 @@ export function buildSessionSigningBytes(
  * Layout:
  *   u64(nonce) + u64(chain_id) + u64(len("withdraw")) + "withdraw"
  *   + u64(to_discriminant) + to_address(32)
- *   + asset_id(32) + u64(amount)
+ *   + u64(amount) + asset_id(32)
  */
 export function buildWithdrawSigningBytes(
   nonce: bigint,
@@ -174,8 +174,8 @@ export function buildWithdrawSigningBytes(
     funcName,
     u64BE(toDiscriminant),
     toAddress,
-    assetId,
     u64BE(amount),
+    assetId,
   ];
   return concat(parts);
 }

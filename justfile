@@ -68,7 +68,7 @@ test-python:
     cd sdks/python && {{ pytest }} tests/ -m "not integration" -v
 
 integration-python:
-    cd sdks/python && {{ pytest }} tests/test_integration.py -m integration -v --timeout=600
+    cd sdks/python && {{ pytest }} tests/test_withdrawal_integration.py tests/test_integration.py -m integration -v --timeout=600
 
 # --- TypeScript ---
 lint-typescript:
@@ -84,7 +84,7 @@ test-typescript:
     cd sdks/typescript && npx vitest run
 
 integration-typescript:
-    cd sdks/typescript && O2_INTEGRATION=1 npx vitest run tests/integration.test.ts
+    cd sdks/typescript && npm run test:integration
 
 # --- Rust ---
 lint-rust:
@@ -100,4 +100,5 @@ test-rust:
     cd sdks/rust && cargo test --all-features
 
 integration-rust:
+    cd sdks/rust && cargo test --features integration --test withdrawal_integration -- --test-threads=1
     cd sdks/rust && cargo test --features integration --test integration_tests -- --test-threads=1
