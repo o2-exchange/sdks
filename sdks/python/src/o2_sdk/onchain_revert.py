@@ -230,6 +230,19 @@ MISMATCHED_SELECTOR_REASON = (
 # decode and the literal string is the signal.
 NO_UPGRADE_AVAILABLE_MESSAGE = "No upgrade available"
 
+# The trade-account contract logs this variant when a parallel-nonce slot is
+# already consumed (ExtendedNonceError::AlreadyUsed, fuel-o2-exports
+# contracts/schema/src/trade_account_errors.sw). It is NOT in ABI_ERROR_ENUMS:
+# the bundled ABI predates the enum, carrying only NonceError::InvalidNonce, so
+# the decoder cannot name it and the logged variant is the signal.
+#
+# This is the on-chain twin of the API's "nonce already used". Which one you get
+# depends on whether the indexer has caught up: if the indexed window already
+# shows the slot gone the API rejects before submitting, and if it still shows
+# the slot free the transaction is submitted and the contract reverts. Callers
+# must handle both, so see nonce.is_parallel_nonce_already_used.
+ONCHAIN_ALREADY_USED_VARIANT = "AlreadyUsed"
+
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
 _OK_RE = re.compile(r'Ok\(\\"([^"\\]+)\\"\)|Ok\("([^"]+)"\)')
 
@@ -251,6 +264,33 @@ def _format_error(enum_name: str, variant: str, description: str) -> str:
 # ---------------------------------------------------------------------------
 # Extraction helpers
 # ---------------------------------------------------------------------------
+
+
+def logged_variants(text: str) -> set[str]:
+    """Error-variant names the backend decoded out of the LOG receipts.
+
+    The backend renders them as ``LogResult { results: [Ok("VariantName")] }``,
+    sometimes with the quotes escaped. Reading the decoded names is far tighter
+    than searching the blob for a substring, which would also hit a variant
+    mentioned in an unrelated position.
+    """
+    names = set()
+    for m in _OK_RE.finditer(text):
+        name = m.group(1) or m.group(2)
+        if name:
+            names.add(name)
+    return names
+
+
+def is_onchain_already_used(error: Any) -> bool:
+    """True iff the contract itself rejected the nonce as already consumed.
+
+    Distinct from the API-layer rejection of the same condition; see
+    :data:`ONCHAIN_ALREADY_USED_VARIANT`. Most callers want
+    :func:`o2_sdk.nonce.is_parallel_nonce_already_used`, which covers both.
+    """
+    context, _ = _error_context(error)
+    return ONCHAIN_ALREADY_USED_VARIANT in logged_variants(context)
 
 
 def _extract_log_result_error(text: str) -> str | None:

@@ -29,6 +29,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from .errors import O2Error
+from .onchain_revert import is_onchain_already_used
 
 # --- Constants (must match the trade-account contract) ----------------------
 
@@ -270,6 +271,12 @@ def is_parallel_nonce_out_of_window(error: str | BaseException | None) -> bool:
 def is_parallel_nonce_already_used(error: str | BaseException | None) -> bool:
     """The nonce's slot was already consumed on chain.
 
+    Covers BOTH ways the venue reports it, which differ only in whether the
+    indexer had caught up: the API rejects before submitting when the indexed
+    window already shows the slot gone, and the contract reverts with
+    ExtendedNonceError::AlreadyUsed when the window still shows it free. Both
+    carry the same meaning and the same ambiguity.
+
     **Never auto-retry this.** It is ambiguous in the one way that matters: it
     happens both when another submitter took the slot (our actions never ran)
     and when our own submission landed but its response was lost in transit,
@@ -278,7 +285,9 @@ def is_parallel_nonce_already_used(error: str | BaseException | None) -> bool:
     so the error has to reach the caller, who alone knows whether the actions
     are safe to repeat.
     """
-    return _NONCE_ALREADY_USED_MARKER in _error_text(error)
+    if _NONCE_ALREADY_USED_MARKER in _error_text(error):
+        return True
+    return is_onchain_already_used(error)
 
 
 def is_nonce_too_low(error: str | BaseException | None) -> bool:

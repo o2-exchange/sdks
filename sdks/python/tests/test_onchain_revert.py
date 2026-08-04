@@ -383,3 +383,88 @@ def test_selector_mismatch_from_internally_tagged_receipts():
         raw_reason=None,
     )
     assert is_selector_mismatch_revert(err)
+
+
+# ---------------------------------------------------------------------------
+# On-chain already-used (ExtendedNonceError::AlreadyUsed)
+#
+# The venue reports an already-consumed nonce slot two ways depending on
+# whether the indexer has caught up. This is the on-chain form, captured
+# VERBATIM from testnet on 2026-08-04 by
+# experiments/nonce_collision_experiment.py. Note it arrives as InternalError
+# code 1000, not OnChainRevert, and the signal is in `reason`.
+# ---------------------------------------------------------------------------
+
+ONCHAIN_ALREADY_USED_REASON = (
+    "Transaction a43280780d9e33eec24c5f355c4065759e095fa04fbba75924ab1e74192ef1d7 "
+    'failed with logs: LogResult { results: [Ok("AlreadyUsed")] } and error: '
+    "transaction reverted: Revert(18446744073709486086), receipts: [Call { id: "
+    "0000000000000000000000000000000000000000000000000000000000000000, to: "
+    "487c1e35622760958ba2e76f12995ebd5f61c55120d9ac3e9947c004e1f54d9b, amount: 0, "
+    "asset_id: f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07, "
+    "gas: 998623, param1: 10480, param2: 10514, pc: 12456, is: 12456 }]"
+)
+
+
+def _real_onchain_already_used():
+    from o2_sdk.errors import InternalError
+
+    return InternalError(
+        message="transaction reverted: Revert(18446744073709486086)",
+        code=1000,
+        reason=ONCHAIN_ALREADY_USED_REASON,
+    )
+
+
+def test_onchain_already_used_is_recognised():
+    from o2_sdk.onchain_revert import is_onchain_already_used
+
+    assert is_onchain_already_used(_real_onchain_already_used())
+
+
+def test_parallel_nonce_already_used_covers_the_onchain_form():
+    """The whole point of the fix: one predicate, both forms."""
+    from o2_sdk.nonce import is_parallel_nonce_already_used
+
+    assert is_parallel_nonce_already_used(_real_onchain_already_used())
+    # and the API form still works
+    assert is_parallel_nonce_already_used("Parallel nonce is not usable: nonce already used")
+
+
+def test_onchain_already_used_does_not_match_other_logged_variants():
+    """Negative control. Matching a decoded variant rather than a substring is
+    what keeps an unrelated revert from being read as a nonce collision."""
+    from o2_sdk.nonce import is_parallel_nonce_already_used
+    from o2_sdk.onchain_revert import is_onchain_already_used
+
+    for variant in (
+        "OrderPartiallyFilled",
+        "TraderNotWhiteListed",
+        "TraderAlreadyWhitelisted",  # contains "Already", must not match
+        "OwnerAlreadyHasTradeAccount",
+        "NotEnoughBalance",
+    ):
+        err = OnChainRevert(
+            message="Failed to process transaction",
+            reason=f'failed with logs: LogResult {{ results: [Ok("{variant}")] }}',
+        )
+        assert not is_onchain_already_used(err), variant
+        assert not is_parallel_nonce_already_used(err), variant
+
+
+def test_logged_variants_extracts_decoded_names():
+    from o2_sdk.onchain_revert import logged_variants
+
+    text = 'LogResult { results: [Ok("IncrementNonceEvent"), Ok("AlreadyUsed")] }'
+    assert logged_variants(text) == {"IncrementNonceEvent", "AlreadyUsed"}
+    # Escaped form, which is how it arrives when the backend JSON-encodes it.
+    assert "AlreadyUsed" in logged_variants('[Ok(\\"AlreadyUsed\\")]')
+
+
+def test_onchain_already_used_is_not_confused_with_out_of_window():
+    """The two must stay separable: one is safe to retry, one is not."""
+    from o2_sdk.nonce import is_parallel_nonce_already_used, is_parallel_nonce_out_of_window
+
+    err = _real_onchain_already_used()
+    assert is_parallel_nonce_already_used(err)
+    assert not is_parallel_nonce_out_of_window(err)

@@ -59,7 +59,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from o2_sdk import Network, O2Client, O2Error
+from o2_sdk import Network, O2Client
 from o2_sdk.nonce import (
     ParallelNonceManager,
     WindowResponse,
@@ -122,6 +122,7 @@ async def _build_managers(client, trade_account_id, lane, resync_enabled):
 
 
 SAMPLES: dict[str, str] = {}
+MISSES: list[str] = []
 
 
 def _classify(exc: BaseException) -> str:
@@ -170,10 +171,14 @@ async def _run_arm(client, session, market, managers, ops: int) -> Counter:
         try:
             await client.settle_balance(market, session=sess)
             return "ok"
-        except O2Error as exc:
-            return _classify(exc)
         except Exception as exc:
-            return _classify(exc)
+            bucket = _classify(exc)
+            # The harness classifies independently of the SDK on purpose, so an
+            # SDK gap shows up as a mismatch instead of being invisible. This is
+            # precisely the gap the experiment found on its first run.
+            if bucket.startswith("already_used") and not is_parallel_nonce_already_used(exc):
+                MISSES.append(f"{bucket}: {str(getattr(exc, 'reason', '') or exc)[:200]}")
+            return bucket
 
     tasks = [one(sessions[i % len(sessions)]) for i in range(ops)]
     return Counter(await asyncio.gather(*tasks))
@@ -251,6 +256,22 @@ async def main() -> int:
 
     if SAMPLES.get("other"):
         print(f"\nsample 'other' error: {SAMPLES['other']}")
+    collisions = sum(
+        totals[k]["already_used_api"] + totals[k]["already_used_chain"] for k in totals
+    )
+    if MISSES:
+        print(
+            f"\nCLASSIFIER GAP: {len(MISSES)} of {collisions} collisions NOT matched "
+            f"by is_parallel_nonce_already_used"
+        )
+        for m in MISSES[:3]:
+            print(f"  {m}")
+    else:
+        print(
+            f"\nclassifier check: {collisions}/{collisions} collisions matched by "
+            f"is_parallel_nonce_already_used"
+        )
+
     print(f"\ncollision rate (api + chain)  resync={rate(a):.1f}%  noresync={rate(b):.1f}%")
     print(
         "(share of submissions that reached nonce validation; rate-limited and "
