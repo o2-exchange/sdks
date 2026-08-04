@@ -530,3 +530,58 @@ class TestFaucetResponse:
         data = {"error": "You can request faucet funds only once every 60 seconds"}
         resp = FaucetResponse.from_dict(data)
         assert not resp.success
+
+
+class TestTradeAccountSyncGeneration:
+    """sync_state -> sync_generation (shapes captured from the live devnet API).
+
+    Note what these do NOT assert: sync_generation says nothing about parallel
+    capability. Mainnet reports V3 for every synced account, including legacy
+    accounts whose parallel entry points revert, which is why the SDK gates on a
+    probe instead (see test_onchain_revert's selector-mismatch tests).
+    """
+
+    def _account(self, sync_state):
+        from o2_sdk.models import AccountInfo
+
+        return AccountInfo.from_dict(
+            {
+                "trade_account_id": "0x18f9d6f5e708d01ddf2249318b906dd2d7d954c3b8b2399c912565ea78f272b1",
+                "trade_account": {
+                    "nonce": "2",
+                    "owner": {
+                        "Address": "0x000000000000000000000000dd89c413f054398c0f6903786477a2f26875ad80"
+                    },
+                    "sync_state": sync_state,
+                },
+                "session": None,
+            }
+        )
+
+    def test_v3(self):
+        # Exact shape captured from devnet GET /v1/accounts?owner=...
+        acct = self._account({"V3": {"completed": 10532378, "started": 10532378}})
+        assert acct.sync_generation == 3
+
+    def test_v2(self):
+        acct = self._account({"V2": {"completed": 1, "started": 1}})
+        assert acct.sync_generation == 2
+
+    def test_none_sync_state(self):
+        acct = self._account("None")
+        assert acct.sync_generation == 0
+
+    def test_missing_account(self):
+        from o2_sdk.models import AccountInfo
+
+        acct = AccountInfo.from_dict({"trade_account_id": None, "trade_account": None})
+        assert acct.sync_generation == 0
+
+    def test_no_parallel_capability_attribute(self):
+        """The capability property is gone on purpose: it was derived from
+        sync_state, which reports V3 for legacy mainnet accounts, so every
+        caller that trusted it opened a parallel session that reverted on every
+        submission. Keep it gone."""
+        acct = self._account({"V3": {"completed": 1, "started": 1}})
+        assert not hasattr(acct, "is_parallel_capable")
+        assert not hasattr(acct, "version")

@@ -13,7 +13,11 @@ from __future__ import annotations
 import pytest
 
 from o2_sdk.errors import OnChainRevert, raise_for_error
-from o2_sdk.onchain_revert import augment_revert_reason
+from o2_sdk.onchain_revert import (
+    MISMATCHED_SELECTOR_REASON,
+    augment_revert_reason,
+    is_selector_mismatch_revert,
+)
 
 # ---------------------------------------------------------------------------
 # Realistic reason string from a real backend error response.
@@ -259,3 +263,208 @@ def test_raise_for_error_no_revert_code_keeps_original_reason():
 def test_on_chain_revert_str_without_reason():
     err = OnChainRevert(message="raw msg", reason=None)
     assert str(err) == "On-chain revert: raw msg"
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher selector mismatch (Revert(123))
+#
+# This is the ONLY reliable signal that a trade account's proxy still targets a
+# pre-parallel-nonce implementation: the indexer reports V3 for every synced
+# account, so the version field can never tell these apart.
+# ---------------------------------------------------------------------------
+
+# Shape of a parallel submission against a legacy proxy: the dispatcher does not
+# recognize the selector, so there is no LOG receipt and nothing to decode.
+SELECTOR_MISMATCH_REASON = (
+    "Failed to process SessionCallPayload { parallel_nonce: Some(123456789) } "
+    "with error: Transaction def456 failed with logs: LogResult { results: [] } "
+    "and error: transaction reverted: Revert(123), "
+    "receipts: [Call { id: 0000, to: 18f9, amount: 0 }, "
+    "Revert { id: 18f9, ra: 123 }, "
+    "ScriptResult { result: Revert, gas_used: 12345 }]"
+)
+
+
+def test_selector_mismatch_reason_is_named():
+    decoded = augment_revert_reason("Failed to process transaction", SELECTOR_MISMATCH_REASON, None)
+    assert decoded == MISMATCHED_SELECTOR_REASON
+
+
+def test_selector_mismatch_detected_from_raised_error():
+    data = {
+        "message": "Failed to process transaction",
+        "reason": SELECTOR_MISMATCH_REASON,
+        "receipts": None,
+    }
+    with pytest.raises(OnChainRevert) as exc_info:
+        raise_for_error(data)
+    assert is_selector_mismatch_revert(exc_info.value)
+
+
+def test_selector_mismatch_detected_from_receipts_alone():
+    """The augmented reason is not the only evidence: even when the decoder
+    picks a different summary, the raw reason and receipts are still searched."""
+    err = OnChainRevert(
+        message="Failed to process transaction",
+        reason="something else entirely",
+        receipts=[{"Revert": {"id": "0x18f9", "ra": 123}}],
+        raw_reason=None,
+    )
+    assert is_selector_mismatch_revert(err)
+
+
+def test_selector_mismatch_detected_from_raw_reason():
+    err = OnChainRevert(
+        message="Failed to process transaction",
+        reason="truncated summary with no revert code",
+        receipts=None,
+        raw_reason=SELECTOR_MISMATCH_REASON,
+    )
+    assert is_selector_mismatch_revert(err)
+
+
+def test_raw_reason_preserved_through_augmentation():
+    data = {
+        "message": "Failed to process transaction",
+        "reason": REALISTIC_REASON,
+        "receipts": None,
+    }
+    with pytest.raises(OnChainRevert) as exc_info:
+        raise_for_error(data)
+    err = exc_info.value
+    assert err.raw_reason == REALISTIC_REASON
+    assert err.reason != REALISTIC_REASON  # augmented
+
+
+def test_other_reverts_are_not_selector_mismatches():
+    """A real order-book revert must never be mistaken for a missing selector,
+    or a healthy account would be needlessly upgraded on every startup."""
+    data = {
+        "message": "Failed to process transaction",
+        "reason": REALISTIC_REASON,
+        "receipts": None,
+    }
+    with pytest.raises(OnChainRevert) as exc_info:
+        raise_for_error(data)
+    assert not is_selector_mismatch_revert(exc_info.value)
+
+
+def test_selector_mismatch_accepts_plain_strings():
+    assert is_selector_mismatch_revert("transaction reverted: Revert(123)")
+    assert is_selector_mismatch_revert(MISMATCHED_SELECTOR_REASON)
+    assert not is_selector_mismatch_revert("transaction reverted: Revert(1234)")
+    assert not is_selector_mismatch_revert("")
+
+
+def test_selector_mismatch_ignores_unrelated_exceptions():
+    assert not is_selector_mismatch_revert(RuntimeError("connection reset"))
+
+
+def test_ra_on_a_non_revert_receipt_is_not_a_selector_mismatch():
+    """LogData receipts carry an ``ra`` too. Reading a revert code out of one
+    would upgrade healthy accounts on a coincidence."""
+    err = OnChainRevert(
+        message="Failed to process transaction",
+        reason="some other failure",
+        receipts=[
+            {"LogData": {"id": "0x18f9", "ra": 123, "rb": 0}},
+            {"ScriptResult": {"result": "Success", "gas_used": 1}},
+        ],
+        raw_reason=None,
+    )
+    assert not is_selector_mismatch_revert(err)
+
+
+def test_selector_mismatch_from_internally_tagged_receipts():
+    err = OnChainRevert(
+        message="Failed to process transaction",
+        reason="some other failure",
+        receipts=[{"type": "Revert", "id": "0x18f9", "ra": "123"}],
+        raw_reason=None,
+    )
+    assert is_selector_mismatch_revert(err)
+
+
+# ---------------------------------------------------------------------------
+# On-chain already-used (ExtendedNonceError::AlreadyUsed)
+#
+# The venue reports an already-consumed nonce slot two ways depending on
+# whether the indexer has caught up. This is the on-chain form, captured
+# VERBATIM from testnet on 2026-08-04 by
+# experiments/nonce_collision_experiment.py. Note it arrives as InternalError
+# code 1000, not OnChainRevert, and the signal is in `reason`.
+# ---------------------------------------------------------------------------
+
+ONCHAIN_ALREADY_USED_REASON = (
+    "Transaction a43280780d9e33eec24c5f355c4065759e095fa04fbba75924ab1e74192ef1d7 "
+    'failed with logs: LogResult { results: [Ok("AlreadyUsed")] } and error: '
+    "transaction reverted: Revert(18446744073709486086), receipts: [Call { id: "
+    "0000000000000000000000000000000000000000000000000000000000000000, to: "
+    "487c1e35622760958ba2e76f12995ebd5f61c55120d9ac3e9947c004e1f54d9b, amount: 0, "
+    "asset_id: f8f8b6283d7fa5b672b530cbb84fcccb4ff8dc40f8176ef4544ddb1f1952ad07, "
+    "gas: 998623, param1: 10480, param2: 10514, pc: 12456, is: 12456 }]"
+)
+
+
+def _real_onchain_already_used():
+    from o2_sdk.errors import InternalError
+
+    return InternalError(
+        message="transaction reverted: Revert(18446744073709486086)",
+        code=1000,
+        reason=ONCHAIN_ALREADY_USED_REASON,
+    )
+
+
+def test_onchain_already_used_is_recognised():
+    from o2_sdk.onchain_revert import is_onchain_already_used
+
+    assert is_onchain_already_used(_real_onchain_already_used())
+
+
+def test_parallel_nonce_already_used_covers_the_onchain_form():
+    """The whole point of the fix: one predicate, both forms."""
+    from o2_sdk.nonce import is_parallel_nonce_already_used
+
+    assert is_parallel_nonce_already_used(_real_onchain_already_used())
+    # and the API form still works
+    assert is_parallel_nonce_already_used("Parallel nonce is not usable: nonce already used")
+
+
+def test_onchain_already_used_does_not_match_other_logged_variants():
+    """Negative control. Matching a decoded variant rather than a substring is
+    what keeps an unrelated revert from being read as a nonce collision."""
+    from o2_sdk.nonce import is_parallel_nonce_already_used
+    from o2_sdk.onchain_revert import is_onchain_already_used
+
+    for variant in (
+        "OrderPartiallyFilled",
+        "TraderNotWhiteListed",
+        "TraderAlreadyWhitelisted",  # contains "Already", must not match
+        "OwnerAlreadyHasTradeAccount",
+        "NotEnoughBalance",
+    ):
+        err = OnChainRevert(
+            message="Failed to process transaction",
+            reason=f'failed with logs: LogResult {{ results: [Ok("{variant}")] }}',
+        )
+        assert not is_onchain_already_used(err), variant
+        assert not is_parallel_nonce_already_used(err), variant
+
+
+def test_logged_variants_extracts_decoded_names():
+    from o2_sdk.onchain_revert import logged_variants
+
+    text = 'LogResult { results: [Ok("IncrementNonceEvent"), Ok("AlreadyUsed")] }'
+    assert logged_variants(text) == {"IncrementNonceEvent", "AlreadyUsed"}
+    # Escaped form, which is how it arrives when the backend JSON-encodes it.
+    assert "AlreadyUsed" in logged_variants('[Ok(\\"AlreadyUsed\\")]')
+
+
+def test_onchain_already_used_is_not_confused_with_out_of_window():
+    """The two must stay separable: one is safe to retry, one is not."""
+    from o2_sdk.nonce import is_parallel_nonce_already_used, is_parallel_nonce_out_of_window
+
+    err = _real_onchain_already_used()
+    assert is_parallel_nonce_already_used(err)
+    assert not is_parallel_nonce_out_of_window(err)

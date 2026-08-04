@@ -17,6 +17,7 @@ from o2_sdk import (
     Network,
     NonceUpdate,
     O2Client,
+    O2Error,
     OrderSide,
     OrderType,
     OrderUpdate,
@@ -1199,3 +1200,286 @@ class TestWebSocket:
                 if taker_session:
                     await ws_client.settle_balance(market.pair, session=taker_session)
             await ws_client.close()
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_read_path_devnet():
+    """Validate the parallel-nonce read path against a live devnet account.
+    No keys needed — account/window are public GETs. Exercises
+    get_account + get_account_window + WindowResponse +
+    ParallelNonceManager.init/next_nonce end-to-end."""
+    from o2_sdk.client import O2Client
+    from o2_sdk.config import Network
+    from o2_sdk.nonce import ParallelNonce, ParallelNonceManager, WindowResponse
+
+    owner = "0x000000000000000000000000dd89c413f054398c0f6903786477a2f26875ad80"
+    ta = "0x18f9d6f5e708d01ddf2249318b906dd2d7d954c3b8b2399c912565ea78f272b1"
+
+    client = O2Client(network=Network.DEVNET)
+    try:
+        try:
+            acct = await client.api.get_account(owner=owner)
+        except O2Error as exc:
+            # Devnet is a development environment and goes away sometimes
+            # ("no healthy upstream" from the gateway). That says nothing about
+            # the read path under test.
+            if "Non-JSON response" in str(exc):
+                pytest.skip(f"devnet unavailable: {exc}")
+            raise
+        assert acct.trade_account is not None
+
+        async def _fetch():
+            return WindowResponse.from_dict(
+                await client.api.get_account_window(ta, nonce_session_id=0)
+            )
+
+        window = await _fetch()
+        assert window.nonce_session_id == 0
+        mgr = ParallelNonceManager(window_fetcher=_fetch)
+        await mgr.init()
+        n = ParallelNonce.decode(mgr.next_nonce())
+        assert window.base <= n.word_position < window.base + 8
+        assert n.nonce_session_id == 0
+    finally:
+        await client.close()
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_concurrent_submission():
+    """Fire N concurrent batch_actions on the parallel track and assert there are
+    no nonce conflicts and the cursor advances by N (one distinct slot each).
+
+    This is the core guarantee: concurrent submissions never collide on a nonce
+    (sequential would fail N-1 of them with 'nonce too low').
+
+    Goes through ensure_parallel_session, which is also the assertion that the
+    probe-and-upgrade startup path works against a live API: it probes the
+    account and upgrades it only if the parallel entry points are missing."""
+    from o2_sdk.client import O2Client
+    from o2_sdk.config import Network
+
+    n = 6
+    client = O2Client(network=Network.TESTNET)
+    try:
+        wallet = _load_or_create_wallet(client, "parallel_test_tn")
+        acct = await client.api.get_account(owner=wallet.b256_address)
+        if acct.trade_account is None:
+            res = await client.api.create_account(wallet.b256_address)
+            acct = await client.api.get_account(trade_account_id=res.trade_account_id)
+        ta = acct.trade_account_id
+        with contextlib.suppress(Exception):
+            await client.api.mint_to_contract(ta)
+
+        market = (await client.get_markets())[0]
+        session = await client.ensure_parallel_session(
+            owner=wallet,
+            markets=[market.pair],
+            expiry_days=1,
+            nonce_session_id=0,
+        )
+        assert session.nonce_manager is not None
+        before = session.nonce_manager.cursor
+        price = 10 ** (-market.quote.max_precision)
+        qty = _min_quantity_for_min_order(market, price)
+
+        async def place():
+            try:
+                r = await client.create_order(
+                    market=market.pair,
+                    side=OrderSide.BUY,
+                    price=price,
+                    quantity=qty,
+                    order_type=OrderType.POST_ONLY,
+                    settle_first=True,
+                    collect_orders=True,
+                    session=session,
+                )
+                return ("ok", str(r.tx_id))
+            except Exception as e:
+                reason = (str(e) + " " + (getattr(e, "reason", "") or "")).lower()
+                is_nonce = "nonce" in reason and any(
+                    k in reason for k in ("low", "usable", "window")
+                )
+                return ("nonce_conflict" if is_nonce else "other", reason[:120])
+
+        results = await asyncio.gather(*[place() for _ in range(n)])
+        nonce_conflicts = [r for r in results if r[0] == "nonce_conflict"]
+        after = session.nonce_manager.cursor
+
+        # The guarantee: concurrent submissions never collide on a nonce, and the
+        # cursor advances by exactly n (one slot per call). Carry across the
+        # 128-bit word boundary, or this fails whenever the run starts near the
+        # end of a word.
+        from o2_sdk.nonce import NONCE_BITMAP_SIZE
+
+        assert not nonce_conflicts, f"nonce conflicts under concurrency: {nonce_conflicts}"
+        word, bit = before
+        expected = divmod(word * NONCE_BITMAP_SIZE + bit + n, NONCE_BITMAP_SIZE)
+        assert after == expected, f"cursor {before} -> {after}, expected {expected}"
+    finally:
+        await client.close()
+
+
+async def _parallel_recovery_setup(client):
+    """Shared setup for the two nonce-recovery tests: a funded testnet account
+    on the parallel track with an empty book, so open-order counts are small
+    and unambiguous.
+
+    Returns (wallet, market, session). Reuses the wallet the concurrent-
+    submission test uses, which is known-good in CI; the tests run
+    sequentially, so each creating its own session is fine (the contract holds
+    one session per account, and the previous test is finished by then).
+    """
+    wallet = _load_or_create_wallet(client, "parallel_test_tn")
+    acct = await client.api.get_account(owner=wallet.b256_address)
+    if acct.trade_account is None:
+        res = await client.api.create_account(wallet.b256_address)
+        acct = await client.api.get_account(trade_account_id=res.trade_account_id)
+    with contextlib.suppress(Exception):
+        await client.api.mint_to_contract(acct.trade_account_id)
+
+    market = (await client.get_markets())[0]
+    session = await client.ensure_parallel_session(
+        owner=wallet, markets=[market.pair], expiry_days=1, nonce_session_id=0
+    )
+    # Start from an empty book so "did a second order appear" is answerable
+    # without paginating a large order list.
+    with contextlib.suppress(Exception):
+        await client.cancel_all_orders(market.pair, session=session)
+    return wallet, market, session
+
+
+async def _open_order_count(client, market, session):
+    orders = await client.get_orders(market.pair, session.trade_account_id, is_open=True, count=100)
+    return len(orders)
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_out_of_window_recovers_without_duplicating():
+    """Force the cursor past the chain's sliding window, then submit.
+
+    The server must reject the nonce as out-of-window, the SDK must resync the
+    cursor once and retry on a fresh slot, and the result must be exactly ONE
+    order. This is the retry path that IS safe (the rejection proves the
+    actions never executed) and it has no live coverage otherwise.
+    """
+    from o2_sdk.client import O2Client
+    from o2_sdk.config import Network
+    from o2_sdk.nonce import NONCE_BITMAP_SIZE, NONCE_SESSION_SLIDING_WINDOW_SIZE
+
+    client = O2Client(network=Network.TESTNET)
+    try:
+        _wallet, market, session = await _parallel_recovery_setup(client)
+        manager = session.nonce_manager
+        assert manager is not None
+
+        before_count = await _open_order_count(client, market, session)
+        generation_before = manager.resync_generation
+
+        # Burn the cursor past the whole window (1024 slots) plus a margin, so
+        # the next nonce is unambiguously outside [base, base + 8 words).
+        burn = NONCE_BITMAP_SIZE * NONCE_SESSION_SLIDING_WINDOW_SIZE + NONCE_BITMAP_SIZE
+        for _ in range(burn):
+            manager.next_nonce()
+        assert manager.cursor[0] > NONCE_SESSION_SLIDING_WINDOW_SIZE
+
+        price = 10 ** (-market.quote.max_precision)
+        qty = _min_quantity_for_min_order(market, price)
+        result = await client.create_order(
+            market=market.pair,
+            side=OrderSide.BUY,
+            price=price,
+            quantity=qty,
+            order_type=OrderType.POST_ONLY,
+            settle_first=True,
+            collect_orders=True,
+            session=session,
+        )
+
+        assert result.tx_id, "submission should have recovered and landed"
+        assert manager.resync_generation > generation_before, (
+            "the out-of-window rejection should have driven exactly one resync"
+        )
+        after_count = await _open_order_count(client, market, session)
+        assert after_count == before_count + 1, (
+            f"expected exactly one new order after recovery, went {before_count} -> {after_count}"
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await client.cancel_all_orders(market.pair, session=session)
+        await client.close()
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_already_used_is_surfaced_not_retried():
+    """The duplicate-order guard, end to end against a live chain.
+
+    Consume a slot with a real order, rewind the cursor onto that exact slot
+    (which is the state the un-coalesced resync used to produce), and submit
+    again. The server answers "nonce already used", which is ambiguous: it is
+    also what a submission that LANDED but lost its response looks like. The
+    SDK must surface it rather than retry on a fresh slot, because retrying
+    would place a second order.
+
+    Before the fix this test would fail by placing two orders.
+    """
+    from o2_sdk.client import O2Client
+    from o2_sdk.config import Network
+    from o2_sdk.nonce import is_parallel_nonce_already_used
+
+    client = O2Client(network=Network.TESTNET)
+    try:
+        _wallet, market, session = await _parallel_recovery_setup(client)
+        manager = session.nonce_manager
+        assert manager is not None
+
+        price = 10 ** (-market.quote.max_precision)
+        qty = _min_quantity_for_min_order(market, price)
+
+        # The slot the next submission will consume.
+        consumed_cursor = manager.cursor
+        first = await client.create_order(
+            market=market.pair,
+            side=OrderSide.BUY,
+            price=price,
+            quantity=qty,
+            order_type=OrderType.POST_ONLY,
+            settle_first=True,
+            collect_orders=True,
+            session=session,
+        )
+        assert first.tx_id
+        count_after_first = await _open_order_count(client, market, session)
+
+        # Rewind onto the slot that order just consumed. Reaching into the
+        # cursor is the only way to produce this deterministically from one
+        # client, and it reproduces exactly the state a backwards resync
+        # created in production.
+        with manager._lock:
+            manager._word, manager._bit = consumed_cursor
+
+        with pytest.raises(O2Error) as exc_info:
+            await client.create_order(
+                market=market.pair,
+                side=OrderSide.BUY,
+                price=price,
+                quantity=qty,
+                order_type=OrderType.POST_ONLY,
+                settle_first=True,
+                collect_orders=True,
+                session=session,
+            )
+
+        assert is_parallel_nonce_already_used(exc_info.value), (
+            f"expected an already-used rejection, got: {exc_info.value}"
+        )
+        count_after_second = await _open_order_count(client, market, session)
+        assert count_after_second == count_after_first, (
+            f"a second order was placed on an already-used nonce "
+            f"({count_after_first} -> {count_after_second}); the retry must not "
+            f"fire on an ambiguous rejection"
+        )
+    finally:
+        with contextlib.suppress(Exception):
+            await client.cancel_all_orders(market.pair, session=session)
+        await client.close()

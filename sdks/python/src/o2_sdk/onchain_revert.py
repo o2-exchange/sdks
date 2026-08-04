@@ -23,6 +23,12 @@ ordinal).  The signal constants are:
 * ``0xffffffffffff0004`` — ``FAILED_ASSERT``
 * ``0xffffffffffff0005`` — ``FAILED_ASSERT_NE``
 * ``0xffffffffffff0006`` — ``REVERT_WITH_LOG``
+
+One further code comes from the compiler rather than from ``std``: ``123``, which
+Sway's generated contract dispatcher emits when the called selector does not
+exist on the deployed contract.  It is the only reliable signal that a trade
+account's proxy still targets a pre-parallel-nonce implementation — see
+:func:`is_selector_mismatch_revert`.
 """
 
 from __future__ import annotations
@@ -204,6 +210,53 @@ _SIGNAL_NAMES: dict[int, str] = {
     0xFFFF_FFFF_FFFF_0006: "REVERT_WITH_LOG",
 }
 
+# Revert code emitted by Sway's compiler-generated contract dispatcher when the
+# called selector does not exist on the deployed contract (sway-core
+# compiler_constants.rs: MISMATCHED_SELECTOR_REVERT_CODE = 123).  Unlike the
+# signals above it is not a std error_signal, so it carries no LOG receipt and
+# nothing decodes it into a variant name.
+MISMATCHED_SELECTOR_REVERT_CODE = 123
+
+#: Stable reason text :func:`augment_revert_reason` emits for that revert, so
+#: callers can match on a string instead of re-parsing receipts.
+MISMATCHED_SELECTOR_REASON = (
+    "MismatchedSelector — the deployed contract has no such method "
+    "(the account's proxy targets an older implementation)"
+)
+
+# require() message from trade-account-proxy's set_proxy_target_with_signature
+# when the oracle's current implementation already equals the stored target.
+# It is a plain Sway require, not a typed error, so there is no variant to
+# decode and the literal string is the signal.
+NO_UPGRADE_AVAILABLE_MESSAGE = "No upgrade available"
+
+# The trade-account contract logs this variant when a parallel-nonce slot is
+# already consumed (ExtendedNonceError::AlreadyUsed, fuel-o2-exports
+# contracts/schema/src/trade_account_errors.sw). It is NOT in ABI_ERROR_ENUMS:
+# the bundled ABI predates the enum, carrying only NonceError::InvalidNonce, so
+# the decoder cannot name it and the logged variant is the signal.
+#
+# This is the on-chain twin of the API's "nonce already used". Which one you get
+# depends on whether the indexer has caught up: if the indexed window already
+# shows the slot gone the API rejects before submitting, and if it still shows
+# the slot free the transaction is submitted and the contract reverts. Callers
+# must handle both, so see nonce.is_parallel_nonce_already_used.
+ONCHAIN_ALREADY_USED_VARIANT = "AlreadyUsed"
+
+#: Every variant of that same contract enum, in declaration order. Mirrors
+#: ExtendedNonceError; kept whole because a caller deciding "is this a nonce
+#: problem at all" needs all six, not just the interesting one.
+ONCHAIN_NONCE_ERROR_VARIANTS = frozenset(
+    {
+        "ReservedBitsSet",
+        "BitmapPositionOutOfRange",
+        "NonceSessionIdOutOfRange",
+        "Expired",
+        "WordPosOutOfWindow",
+        "AlreadyUsed",
+    }
+)
+
 _REVERT_RE = re.compile(r"Revert\((\d+)\)")
 _OK_RE = re.compile(r'Ok\(\\"([^"\\]+)\\"\)|Ok\("([^"]+)"\)')
 
@@ -225,6 +278,43 @@ def _format_error(enum_name: str, variant: str, description: str) -> str:
 # ---------------------------------------------------------------------------
 # Extraction helpers
 # ---------------------------------------------------------------------------
+
+
+def logged_variants(text: str) -> set[str]:
+    """Error-variant names the backend decoded out of the LOG receipts.
+
+    The backend renders them as ``LogResult { results: [Ok("VariantName")] }``,
+    sometimes with the quotes escaped. Reading the decoded names is far tighter
+    than searching the blob for a substring, which would also hit a variant
+    mentioned in an unrelated position.
+    """
+    names = set()
+    for m in _OK_RE.finditer(text):
+        name = m.group(1) or m.group(2)
+        if name:
+            names.add(name)
+    return names
+
+
+def is_onchain_already_used(error: Any) -> bool:
+    """True iff the contract itself rejected the nonce as already consumed.
+
+    Distinct from the API-layer rejection of the same condition; see
+    :data:`ONCHAIN_ALREADY_USED_VARIANT`. Most callers want
+    :func:`o2_sdk.nonce.is_parallel_nonce_already_used`, which covers both.
+    """
+    context, _ = _error_context(error)
+    return ONCHAIN_ALREADY_USED_VARIANT in logged_variants(context)
+
+
+def is_onchain_nonce_error(error: Any) -> bool:
+    """True iff the CONTRACT rejected the nonce, for any of its six reasons.
+
+    The on-chain half of :func:`o2_sdk.nonce.is_nonce_rejection`; see that for
+    why both halves exist.
+    """
+    context, _ = _error_context(error)
+    return bool(logged_variants(context) & ONCHAIN_NONCE_ERROR_VARIANTS)
 
 
 def _extract_log_result_error(text: str) -> str | None:
@@ -358,6 +448,46 @@ def _extract_revert_codes(text: str) -> list[int]:
     return codes
 
 
+def _as_revert_code(value: Any) -> int | None:
+    """Coerce a receipt's ``ra`` field to an int (it arrives as either)."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _revert_codes_from_receipts(node: Any) -> list[int]:
+    """Collect revert codes from *structured* receipts.
+
+    ``_extract_revert_codes`` reads the fuels-rs debug text the backend embeds in
+    ``reason``; when receipts arrive as parsed JSON instead, that text does not
+    exist. Walk the structure for Revert receipts under either tagging style
+    (``{"Revert": {"ra": ...}}`` and ``{"type": "Revert", "ra": ...}``), and read
+    the code only out of a Revert receipt — an ``ra`` on any other receipt (a
+    LogData carries one too) means something else entirely.
+    """
+    codes: list[int] = []
+    if isinstance(node, dict):
+        if node.get("type") == "Revert":
+            code = _as_revert_code(node.get("ra"))
+            if code is not None:
+                codes.append(code)
+        for key, value in node.items():
+            if key == "Revert":
+                code = _as_revert_code(value.get("ra") if isinstance(value, dict) else value)
+                if code is not None:
+                    codes.append(code)
+                    continue
+            codes.extend(_revert_codes_from_receipts(value))
+    elif isinstance(node, list):
+        for item in node:
+            codes.extend(_revert_codes_from_receipts(item))
+    return codes
+
+
 def _recognize_signal(text: str) -> str | None:
     """Identify Fuel VM signal constants from revert codes in text."""
     for code in _extract_revert_codes(text):
@@ -409,15 +539,22 @@ def augment_revert_reason(
     if decoded is not None:
         return decoded
 
-    # 3. Recognize signal constant (tells what KIND of failure, not which variant)
+    # 3. Dispatcher selector mismatch — no LOG receipt exists to decode, and the
+    #    generic "and error:" summary below would bury it, so name it here.
+    if MISMATCHED_SELECTOR_REVERT_CODE in _extract_revert_codes(
+        context
+    ) or MISMATCHED_SELECTOR_REVERT_CODE in _revert_codes_from_receipts(receipts):
+        return MISMATCHED_SELECTOR_REASON
+
+    # 4. Recognize signal constant (tells what KIND of failure, not which variant)
     signal = _recognize_signal(context)
 
-    # 4. Check for PanicInstruction
+    # 5. Check for PanicInstruction
     panic = _extract_panic_reason(context)
     if panic:
         return panic
 
-    # 5. Extract "and error:" summary
+    # 6. Extract "and error:" summary
     err_idx = context.find("and error:")
     if err_idx != -1:
         after = context[err_idx + len("and error:") :].strip()
@@ -426,11 +563,72 @@ def augment_revert_reason(
         if summary:
             return summary
 
-    # 6. If we recognized a signal, return it as context
+    # 7. If we recognized a signal, return it as context
     if signal is not None:
         return f"{signal} (specific error unknown \u2014 check .receipts)"
 
-    # 7. Truncate raw reason
+    # 8. Truncate raw reason
     if len(reason_str) > 200:
         return f"{reason_str[:200]}... (truncated, full receipts on .receipts)"
     return reason_str
+
+
+def is_selector_mismatch_revert(error: Any) -> bool:
+    """True iff ``error`` is the FuelVM "no such method" revert (``Revert(123)``).
+
+    On a parallel-nonce submission this means one thing: the trade account's
+    proxy still targets an implementation built before parallel nonces existed,
+    so the dispatcher does not recognize the parallel entry selector.  It is the
+    ONLY reliable capability signal \u2014 the indexer's ``sync_state`` reports V3 for
+    every synced account, upgraded or not (see
+    :attr:`o2_sdk.models.TradeAccount.sync_generation`), so a version gate never
+    fires where it matters.
+
+    Accepts an exception (``O2Error`` or otherwise) or a raw string, and searches
+    the message, both the augmented and the raw reason, and the receipts, so it
+    works whether or not :func:`augment_revert_reason` has already run.
+    """
+    context, receipts = _error_context(error)
+    if MISMATCHED_SELECTOR_REASON in context:
+        return True
+    if MISMATCHED_SELECTOR_REVERT_CODE in _extract_revert_codes(context):
+        return True
+    return MISMATCHED_SELECTOR_REVERT_CODE in _revert_codes_from_receipts(receipts)
+
+
+def is_no_upgrade_available(error: Any) -> bool:
+    """True iff ``error`` is the proxy refusing an upgrade it has nothing to do.
+
+    ``set_proxy_target_with_signature`` ends in
+    ``require(new_impl != current_target, "No upgrade available")``, so calling
+    it on an account whose proxy already points at the oracle's current
+    implementation reverts rather than doing nothing. For a caller that just
+    wants the account to end up current, that revert is the desired state, not
+    a failure.
+    """
+    context, _ = _error_context(error)
+    return NO_UPGRADE_AVAILABLE_MESSAGE in context
+
+
+def _error_context(error: Any) -> tuple[str, Any]:
+    """All the text an error carries, plus its structured receipts.
+
+    Classification has to work on an error however it reached the caller, so
+    this searches the message, both the augmented and the raw reason, and the
+    receipts, whether or not :func:`augment_revert_reason` has already run.
+    """
+    if isinstance(error, str):
+        return error, None
+    parts = [
+        str(getattr(error, "message", "") or ""),
+        str(getattr(error, "reason", "") or ""),
+        str(getattr(error, "raw_reason", "") or ""),
+        str(error),
+    ]
+    receipts = getattr(error, "receipts", None)
+    if receipts is not None:
+        try:
+            parts.append(json.dumps(receipts))
+        except (TypeError, ValueError):
+            parts.append(str(receipts))
+    return "\n".join(parts), receipts

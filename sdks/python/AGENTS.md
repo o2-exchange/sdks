@@ -45,7 +45,10 @@ asyncio.run(main())
 | `load_wallet(pk_hex)` | `private_key_hex: str` | `Wallet` | Load Fuel wallet |
 | `load_evm_wallet(pk_hex)` | `private_key_hex: str` | `EvmWallet` | Load EVM wallet |
 | `setup_account(wallet)` | `wallet: Signer` | `AccountInfo` | Idempotent account setup (create+fund+whitelist) |
-| `create_session(owner, markets, expiry_days=30)` | `owner: Signer, markets: list[str \| Market], expiry_days: int` | `SessionInfo` | Create trading session |
+| `upgrade_account(owner, wait=True)` | `owner: Signer, wait: bool` | `str \| None` | Point the account proxy at the current implementation (unconditional; waits for the owner nonce to advance) |
+| `create_session(owner, markets, expiry_days=30, nonce_strategy="sequential", nonce_session_id=0)` | `owner: Signer, markets: list[str \| Market], expiry_days: int, nonce_strategy: "sequential" \| "parallel", nonce_session_id: int` | `SessionInfo` | Create trading session |
+| `ensure_parallel_session(owner, markets, ...)` | `owner: Signer, markets: list[str \| Market], expiry_days=30, nonce_session_id=0, auto_upgrade=True` | `SessionInfo` | Parallel session + capability probe + upgrade if needed (the startup path) |
+| `probe_parallel_support(session, market)` | `session: SessionInfo, market: str \| Market` | `bool` | Submit a benign `settle_balance` to find out whether parallel nonces work |
 | `set_session(session)` | `session: SessionInfo` | `None` | Restore a saved session onto the client |
 | `clear_session()` | - | `None` | Clear the active session |
 | `session` | - | `SessionInfo \| None` | Property: the currently active session |
@@ -323,6 +326,7 @@ On-chain reverts (no code field) raise `OnChainRevert` with `.reason` (e.g., `"N
 - Max 5 actions per batch, max 5 markets per request
 - `setup_account()` is idempotent -- safe on every bot startup
 - Prices/quantities accept dual-mode `NumericInput` (human values auto-scaled, `ChainInt` pass-through)
+- **Parallel nonces**: use `ensure_parallel_session()` for concurrent submission. Never gate parallel capability on a version field -- `sync_state` (`AccountInfo.sync_generation`) reports V3 for every synced account including legacy ones, so probe with `probe_parallel_support()` and classify with `is_selector_mismatch_revert()`. Sequential is still the only track that can upgrade an account. One lane (`nonce_session_id` 0..4) per client sharing a key.
 
 ## Integration Test Strategy
 

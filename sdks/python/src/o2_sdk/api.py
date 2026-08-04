@@ -87,7 +87,21 @@ class O2Api:
                 async with session.request(
                     method, url, json=json, params=params, headers=hdrs
                 ) as resp:
-                    data = await resp.json(content_type=None)
+                    try:
+                        data = await resp.json(content_type=None)
+                    except ValueError as err:
+                        # Not JSON at all. An infrastructure error in front of
+                        # the API (load balancer 502/503, a redirect to an error
+                        # page) answers with plain text, and letting the decoder
+                        # error escape gives the caller a JSONDecodeError with no
+                        # status and no body to act on.
+                        body = (await resp.text())[:200]
+                        raise O2Error(
+                            message=(
+                                f"Non-JSON response from {method} {path} "
+                                f"(HTTP {resp.status}): {body}"
+                            )
+                        ) from err
                     elapsed_ms = (time.monotonic() - t0) * 1000
 
                     # Rate limit: check both code 1003 and HTTP 429
@@ -141,7 +155,13 @@ class O2Api:
                                 from .onchain_revert import augment_revert_reason
 
                                 message = augment_revert_reason(message, reason, receipts)
-                            raise error_cls(message=message, code=code)
+                            # Carry reason and receipts through: a code-based
+                            # error can still be an on-chain revert, and callers
+                            # classify those from the untouched fields (see
+                            # onchain_revert.is_selector_mismatch_revert).
+                            raise error_cls(
+                                message=message, code=code, reason=reason, receipts=receipts
+                            )
                         if ("message" in data or "error" in data) and "tx_id" not in data:
                             raise_for_error(data)
                     else:
@@ -335,6 +355,36 @@ class O2Api:
             params["trade_account_id"] = trade_account_id
         data = await self._request("GET", "/v1/accounts", params=params)
         return AccountInfo.from_dict(data)
+
+    async def get_account_window(self, trade_account_id: str, nonce_session_id: int = 0) -> dict:
+        """Fetch the parallel-nonce sliding window for one (account, lane).
+
+        Returns the raw JSON (``nonce_session_id``, ``base``, ``slots`` of
+        ``{word_position, bitmap}`` as decimal strings) — parse with
+        ``o2_sdk.nonce.WindowResponse.from_dict``.
+        """
+        data: dict = await self._request(
+            "GET",
+            "/v1/accounts/window",
+            params={
+                "trade_account_id": trade_account_id,
+                "nonce_session_id": str(nonce_session_id),
+            },
+        )
+        return data
+
+    async def upgrade_account(self, owner_id: str, request: dict) -> dict:
+        """Upgrade a trade account to the latest implementation (owner-signed,
+        sequential nonce). ``request``: ``{trade_account_id, nonce, signature}``.
+        The handler extracts the owner from the ``O2-Owner-Id`` header. Returns
+        ``{tx_id}``."""
+        data: dict = await self._request(
+            "POST",
+            "/v1/accounts/upgrade",
+            json=request,
+            headers={"O2-Owner-Id": owner_id},
+        )
+        return data
 
     async def get_balance(
         self,
