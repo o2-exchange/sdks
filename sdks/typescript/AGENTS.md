@@ -110,7 +110,7 @@ import { ... } from "@o2exchange/sdk/internals";
 | `encodeOrderArgs(price, qty, type)` | bigints, variant | `Uint8Array` | OrderArgs struct |
 | `buildSessionSigningBytes(...)` | nonce, chainId, addr, cids, expiry | `Uint8Array` | Session signing payload |
 | `buildActionsSigningBytes(nonce, calls)` | nonce, calls | `Uint8Array` | Action signing payload |
-| `buildWithdrawSigningBytes(...)` | nonce, chainId, identity, assetId, amount | `Uint8Array` | Signing payload in `(Identity, amount, AssetId)` ABI order |
+| `buildWithdrawSigningBytes(...)` | nonce, chainId, toDiscriminant, toAddress, assetId, amount | `Uint8Array` | Signing payload; emitted in `(Identity, amount, AssetId)` ABI order |
 | `actionToCall(action, market, registryId?)` | JSON action, market info | `ContractCall` | High-to-low level conversion |
 | `scaleDecimalString(value, decimals)` | decimal string, int | `bigint` | Decimal string to chain integer |
 | `scalePriceString(value, decimals, maxPrecision)` | decimal string, ints | `bigint` | Decimal string price to chain integer |

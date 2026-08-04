@@ -89,9 +89,6 @@
 
 #### Fixes
 
-- **Withdrawal signing and destinations** — encode arguments in the contract ABI order
-  `(Identity, amount, AssetId)` and accept `ContractId` destinations.
-
 - **Python WebSocket shutdown: 10+ min → <0.2s** — async generators
   were blocked on `queue.get()` indefinitely. Fixed by racing queue
   reads against a close event, so `client.close()` returns immediately.

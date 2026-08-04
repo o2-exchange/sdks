@@ -108,7 +108,7 @@ Note: `unsubscribe_orders` is currently connection-global in the backend API (no
 | `encode_order_args(price, qty, ot)` | `u64, u64, &OrderTypeEncoding` | `Vec<u8>` | OrderArgs struct |
 | `build_session_signing_bytes(...)` | nonce, chain_id, addr, contracts, expiry | `Vec<u8>` | Session creation bytes |
 | `build_actions_signing_bytes(nonce, calls)` | `u64, &[CallArg]` | `Vec<u8>` | Action signing bytes |
-| `build_withdraw_signing_bytes(...)` | nonce, chain_id, identity, asset_id, amount | `Vec<u8>` | Signing bytes in `(Identity, amount, AssetId)` ABI order |
+| `build_withdraw_signing_bytes(...)` | nonce, chain_id, to_discriminant, to_address, asset_id, amount | `Vec<u8>` | Signing bytes; emitted in `(Identity, amount, AssetId)` ABI order |
 | `create_order_to_call(...)` | contract, side, price, qty, ot, decimals, assets | `CallArg` | Order call arg |
 | `cancel_order_to_call(contract, oid)` | `&[u8;32], &[u8;32]` | `CallArg` | Cancel call arg |
 | `settle_balance_to_call(contract, disc, addr)` | `&[u8;32], u64, &[u8;32]` | `CallArg` | Settle call arg |
