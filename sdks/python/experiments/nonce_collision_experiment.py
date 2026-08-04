@@ -59,8 +59,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from o2_sdk import O2Client, Network, O2Error  # noqa: E402
-from o2_sdk.nonce import (  # noqa: E402
+from o2_sdk import Network, O2Client, O2Error
+from o2_sdk.nonce import (
     ParallelNonceManager,
     WindowResponse,
     is_parallel_nonce_already_used,
@@ -93,9 +93,7 @@ class InstrumentedManager(ParallelNonceManager):
 
 def _load_wallet(client: O2Client):
     if not WALLET_CACHE.exists():
-        raise SystemExit(
-            f"no wallet cache at {WALLET_CACHE}; run the integration tests once first"
-        )
+        raise SystemExit(f"no wallet cache at {WALLET_CACHE}; run the integration tests once first")
     data = json.loads(WALLET_CACHE.read_text())
     pk = data.get(WALLET_ROLE)
     if not pk:
@@ -111,9 +109,7 @@ async def _build_managers(client, trade_account_id, lane, resync_enabled):
     """
 
     async def fetch() -> WindowResponse:
-        return WindowResponse.from_dict(
-            await client.api.get_account_window(trade_account_id, lane)
-        )
+        return WindowResponse.from_dict(await client.api.get_account_window(trade_account_id, lane))
 
     managers = []
     for _ in range(2):
@@ -146,9 +142,10 @@ def _classify(exc: BaseException) -> str:
     """
     if is_parallel_nonce_already_used(exc):
         return "already_used_api"
-    raw_all = " ".join(
-        str(getattr(exc, a, "") or "") for a in ("message", "reason", "raw_reason")
-    ) + f" {exc}"
+    raw_all = (
+        " ".join(str(getattr(exc, a, "") or "") for a in ("message", "reason", "raw_reason"))
+        + f" {exc}"
+    )
     if "AlreadyUsed" in raw_all:
         return "already_used_chain"
     if is_parallel_nonce_out_of_window(exc):
@@ -175,7 +172,7 @@ async def _run_arm(client, session, market, managers, ops: int) -> Counter:
             return "ok"
         except O2Error as exc:
             return _classify(exc)
-        except Exception as exc:  # noqa: BLE001 - a bucket, never a crash
+        except Exception as exc:
             return _classify(exc)
 
     tasks = [one(sessions[i % len(sessions)]) for i in range(ops)]
@@ -206,8 +203,9 @@ async def main() -> int:
         session = await client.ensure_parallel_session(
             owner=wallet, markets=[market.pair], expiry_days=1, nonce_session_id=args.lane
         )
-        print(f"market={market.pair} lane={args.lane} "
-              f"rounds={args.rounds} ops/arm/round={args.ops}\n")
+        print(
+            f"market={market.pair} lane={args.lane} rounds={args.rounds} ops/arm/round={args.ops}\n"
+        )
 
         for rnd in range(1, args.rounds + 1):
             # Interleaved, and the order flips each round so neither arm
@@ -215,7 +213,9 @@ async def main() -> int:
             arms = ["resync", "noresync"] if rnd % 2 else ["noresync", "resync"]
             for arm in arms:
                 managers = await _build_managers(
-                    client, session.trade_account_id, args.lane,
+                    client,
+                    session.trade_account_id,
+                    args.lane,
                     resync_enabled=(arm == "resync"),
                 )
                 counts = await _run_arm(client, session, market, managers, args.ops)
@@ -227,16 +227,21 @@ async def main() -> int:
         await client.close()
 
     print("=" * 68)
-    print(f"{'':12s}{'ok':>6s}{'used(api)':>11s}{'used(chain)':>13s}{'used(all)':>11s}"
-          f"{'out_of_win':>12s}{'rate_lim':>10s}{'other':>7s}{'resyncs':>9s}")
+    print(
+        f"{'':12s}{'ok':>6s}{'used(api)':>11s}{'used(chain)':>13s}{'used(all)':>11s}"
+        f"{'out_of_win':>12s}{'rate_lim':>10s}{'other':>7s}{'resyncs':>9s}"
+    )
     for arm in ("resync", "noresync"):
         c = totals[arm]
         used = c["already_used_api"] + c["already_used_chain"]
-        print(f"{arm:12s}{c['ok']:>6d}{c['already_used_api']:>11d}"
-              f"{c['already_used_chain']:>13d}{used:>11d}{c['out_of_window']:>12d}"
-              f"{c['rate_limited']:>10d}{c['other']:>7d}{resync_calls[arm]:>9d}")
+        print(
+            f"{arm:12s}{c['ok']:>6d}{c['already_used_api']:>11d}"
+            f"{c['already_used_chain']:>13d}{used:>11d}{c['out_of_window']:>12d}"
+            f"{c['rate_limited']:>10d}{c['other']:>7d}{resync_calls[arm]:>9d}"
+        )
 
     a, b = totals["resync"], totals["noresync"]
+
     # Compare against attempts that actually reached nonce validation, so
     # ambient rate limiting cannot move the result.
     def rate(c):
@@ -247,8 +252,10 @@ async def main() -> int:
     if SAMPLES.get("other"):
         print(f"\nsample 'other' error: {SAMPLES['other']}")
     print(f"\ncollision rate (api + chain)  resync={rate(a):.1f}%  noresync={rate(b):.1f}%")
-    print("(share of submissions that reached nonce validation; rate-limited and "
-          "unclassified errors excluded)")
+    print(
+        "(share of submissions that reached nonce validation; rate-limited and "
+        "unclassified errors excluded)"
+    )
     return 0
 
 
