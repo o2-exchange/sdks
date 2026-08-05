@@ -120,7 +120,7 @@ construct fresh actions in the caller's next cycle:
    try:
        result = await client.create_order(...)
    except RateLimitExceeded:
-       await asyncio.sleep(strategy_cycle_delay)
+       await asyncio.sleep(1)  # Replace with the strategy's cycle interval.
        # Re-read market/account state, then build a new order.
 
 Read and setup requests retain the SDK's exponential rate-limit backoff, up to
