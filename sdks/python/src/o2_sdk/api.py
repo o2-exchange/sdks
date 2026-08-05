@@ -42,10 +42,18 @@ logger = logging.getLogger("o2_sdk.api")
 class O2Api:
     """Low-level REST API client for the O2 Exchange."""
 
-    def __init__(self, config: NetworkConfig, session: aiohttp.ClientSession | None = None):
+    def __init__(
+        self,
+        config: NetworkConfig,
+        session: aiohttp.ClientSession | None = None,
+        action_timeout_seconds: float = 30.0,
+    ):
+        if action_timeout_seconds <= 0:
+            raise ValueError("action_timeout_seconds must be greater than zero")
         self._config = config
         self._session = session
         self._owns_session = session is None
+        self._action_timeout_seconds = action_timeout_seconds
 
     async def _ensure_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -66,6 +74,7 @@ class O2Api:
         params: dict | None = None,
         headers: dict | None = None,
         base_url: str | None = None,
+        timeout_seconds: float | None = None,
         max_retries: int = 3,
     ) -> Any:
         session = await self._ensure_session()
@@ -83,10 +92,21 @@ class O2Api:
                 logger.debug("%s %s", method, path)
 
             t0 = time.monotonic()
+            request_timeout = (
+                aiohttp.ClientTimeout(total=timeout_seconds)
+                if timeout_seconds is not None
+                else session.timeout
+            )
             try:
-                async with session.request(
-                    method, url, json=json, params=params, headers=hdrs
-                ) as resp:
+                request = session.request(
+                    method,
+                    url,
+                    json=json,
+                    params=params,
+                    headers=hdrs,
+                    timeout=request_timeout,
+                )
+                async with request as resp:
                     try:
                         data = await resp.json(content_type=None)
                     except ValueError as err:
@@ -460,6 +480,11 @@ class O2Api:
             "/v1/session/actions",
             json=actions_request,
             headers={"O2-Owner-Id": owner_id},
+            # Action payloads carry prices, quantities, signatures, and nonces
+            # fixed before dispatch. Transport-owned retries can submit stale
+            # intent; the caller must reconcile state and build a fresh action.
+            max_retries=1,
+            timeout_seconds=self._action_timeout_seconds,
         )
         result = ActionsResponse.from_dict(data)
         if not result.success:

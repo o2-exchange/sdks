@@ -39,7 +39,7 @@ asyncio.run(main())
 
 | Method | Params | Returns | Description |
 |--------|--------|---------|-------------|
-| `__init__` | `network=Network.TESTNET, custom_config=None` | `O2Client` | Initialize client |
+| `__init__` | `network=Network.TESTNET, custom_config=None, action_timeout_seconds=30.0` | `O2Client` | Initialize client; action submissions are single-attempt and bounded by the action timeout |
 | `generate_wallet()` | - | `Wallet` | New Fuel wallet (static) |
 | `generate_evm_wallet()` | - | `EvmWallet` | New EVM wallet (static) |
 | `load_wallet(pk_hex)` | `private_key_hex: str` | `Wallet` | Load Fuel wallet |

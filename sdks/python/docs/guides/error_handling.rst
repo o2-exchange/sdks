@@ -107,9 +107,10 @@ Catching specific errors
 Rate limiting
 --------------
 
-The SDK automatically retries rate-limited requests (error code 1003)
-with exponential backoff, up to 3 attempts. If all retries are exhausted,
-:class:`~o2_sdk.errors.RateLimitExceeded` is raised:
+Action submissions surface error code 1003 immediately. The submitted payload
+contains prices, quantities, signatures, and nonces fixed before dispatch, so a
+transport-level backoff would replay stale intent. Reconcile current state and
+construct fresh actions in the caller's next cycle:
 
 .. code-block:: python
 
@@ -119,9 +120,11 @@ with exponential backoff, up to 3 attempts. If all retries are exhausted,
    try:
        result = await client.create_order(...)
    except RateLimitExceeded:
-       # SDK already retried 3 times with backoff
-       # Add additional delay if needed
-       await asyncio.sleep(10)
+       await asyncio.sleep(strategy_cycle_delay)
+       # Re-read market/account state, then build a new order.
+
+Read and setup requests retain the SDK's exponential rate-limit backoff, up to
+3 attempts.
 
 
 On-chain reverts

@@ -385,6 +385,8 @@ async def test_code_based_revert_still_classifiable(monkeypatch: pytest.MonkeyPa
             return False
 
     class FakeSession:
+        timeout = None
+
         def request(self, *_args, **_kwargs):
             return FakeResponse()
 
@@ -428,6 +430,8 @@ async def test_non_json_response_raises_o2_error(monkeypatch: pytest.MonkeyPatch
             return False
 
     class FakeSession:
+        timeout = None
+
         def request(self, *_args, **_kwargs):
             return FakeResponse()
 
