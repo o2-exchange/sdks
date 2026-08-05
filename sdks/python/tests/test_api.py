@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterable
 from typing import Any
 
@@ -93,7 +94,7 @@ async def test_submit_actions_does_not_retry_transport_failure():
 
 @pytest.mark.asyncio
 async def test_submit_actions_wraps_timeout_without_retry():
-    session = _Session([TimeoutError()])
+    session = _Session([asyncio.TimeoutError()])
     api = O2Api(_CONFIG, session=session, action_timeout_seconds=0.25)
 
     with pytest.raises(O2Error, match=r"timed out after 0\.25s"):

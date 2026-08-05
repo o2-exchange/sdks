@@ -188,7 +188,7 @@ class O2Api:
                         logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)
 
                     return data
-            except TimeoutError as e:
+            except asyncio.TimeoutError as e:
                 raise O2Error(
                     message=f"{method} {path} timed out after {request_timeout.total}s"
                 ) from e
