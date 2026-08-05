@@ -188,6 +188,10 @@ class O2Api:
                         logger.debug("%s %s -> %d %.0fms", method, path, resp.status, elapsed_ms)
 
                     return data
+            except TimeoutError as e:
+                raise O2Error(
+                    message=f"{method} {path} timed out after {request_timeout.total}s"
+                ) from e
             except aiohttp.ClientError as e:
                 elapsed_ms = (time.monotonic() - t0) * 1000
                 if attempt < max_retries - 1:

@@ -92,6 +92,17 @@ async def test_submit_actions_does_not_retry_transport_failure():
 
 
 @pytest.mark.asyncio
+async def test_submit_actions_wraps_timeout_without_retry():
+    session = _Session([TimeoutError()])
+    api = O2Api(_CONFIG, session=session, action_timeout_seconds=0.25)
+
+    with pytest.raises(O2Error, match=r"timed out after 0\.25s"):
+        await api.submit_actions("owner", {"actions": []})
+
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_non_action_request_keeps_rate_limit_backoff(monkeypatch):
     session = _Session(
         [
