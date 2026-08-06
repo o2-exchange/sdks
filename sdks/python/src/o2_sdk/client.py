@@ -156,10 +156,17 @@ class O2Client:
         self,
         network: Network = Network.TESTNET,
         custom_config: NetworkConfig | None = None,
+        action_timeout_seconds: float = 30.0,
     ):
+        if action_timeout_seconds <= 0:
+            raise ValueError("action_timeout_seconds must be greater than zero")
         self._config = custom_config or get_config(network)
         self._network = network
-        self.api = O2Api(self._config)
+        self._action_timeout_seconds = action_timeout_seconds
+        self.api = O2Api(
+            self._config,
+            action_timeout_seconds=action_timeout_seconds,
+        )
         self._ws: O2WebSocket | None = None
         self._markets_cache: MarketsResponse | None = None
         self._nonce_cache: dict[str, int] = {}

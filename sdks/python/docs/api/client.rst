@@ -17,7 +17,7 @@ session management, trading, market data retrieval, and WebSocket streaming.
 Construction and lifecycle
 --------------------------
 
-.. class:: O2Client(network=Network.TESTNET, custom_config=None)
+.. class:: O2Client(network=Network.TESTNET, custom_config=None, action_timeout_seconds=30.0)
 
    High-level client for the O2 Exchange.
 
@@ -26,6 +26,11 @@ Construction and lifecycle
    :param custom_config: Optional custom network configuration, overriding
        the built-in config for the selected network.
    :type custom_config: :class:`~o2_sdk.config.NetworkConfig` | None
+   :param action_timeout_seconds: Total HTTP deadline for one action
+       submission. Action submissions are never retried automatically; callers
+       should reconcile current state and construct fresh actions after a
+       failure.
+   :type action_timeout_seconds: float
 
    The client manages an HTTP session (via ``aiohttp``) and an optional
    WebSocket connection for streaming. Always call :meth:`close` when done,

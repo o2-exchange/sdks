@@ -65,8 +65,9 @@ Error code reference
    * - 1003
      - :class:`RateLimitExceeded`
      - General
-     - Wait 3–5 seconds, then retry. The SDK handles this automatically
-       with up to 3 retries.
+     - Action submissions surface the refusal immediately; reconcile current
+       state before constructing a fresh action. Other requests retry up to 3
+       times with exponential backoff.
    * - 1004
      - :class:`GeoRestricted`
      - General
@@ -222,7 +223,7 @@ Error handling patterns
        # Check signing logic
        print("Signature verification failed")
    except RateLimitExceeded:
-       # SDK retries automatically, but you can add extra backoff
+       # Reconcile current state before constructing a fresh action.
        await asyncio.sleep(5)
    except OnChainRevert as e:
        print(f"On-chain revert: {e.reason}")

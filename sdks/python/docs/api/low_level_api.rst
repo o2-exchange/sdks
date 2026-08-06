@@ -23,18 +23,22 @@ advanced use cases.
 O2Api
 -----
 
-.. class:: O2Api(config, session=None)
+.. class:: O2Api(config, session=None, action_timeout_seconds=30.0)
 
    Low-level REST API client for the O2 Exchange.
 
-   Includes automatic rate-limit handling with exponential backoff retries
-   and network error retries (up to 3 attempts).
+   Read and setup requests include automatic rate-limit and network-error
+   retries (up to 3 attempts). Action submissions are single-attempt because
+   their signed prices, quantities, and nonces can become stale while a
+   transport retry waits.
 
    :param config: Network configuration.
    :type config: :class:`~o2_sdk.config.NetworkConfig`
    :param session: Optional ``aiohttp.ClientSession`` to reuse. If
        ``None``, a new session is created automatically.
    :type session: aiohttp.ClientSession | None
+   :param action_timeout_seconds: Total HTTP deadline for one action request.
+   :type action_timeout_seconds: float
 
    .. method:: close()
       :async:
