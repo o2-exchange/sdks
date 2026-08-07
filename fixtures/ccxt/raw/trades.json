@@ -1,0 +1,37 @@
+[
+  {
+    "trade_id": "trade-public",
+    "side": "buy",
+    "total": "3000000",
+    "quantity": "2000000000",
+    "price": "1500000",
+    "timestamp": 1700000000000
+  },
+  {
+    "trade_id": "trade-maker",
+    "side": "buy",
+    "trader_side": "maker",
+    "total": "3000000",
+    "quantity": "2000000000",
+    "price": "1500000",
+    "timestamp": 1700000001000
+  },
+  {
+    "trade_id": "trade-taker",
+    "side": "buy",
+    "trader_side": "taker",
+    "total": "3000000",
+    "quantity": "2000000000",
+    "price": "1500000",
+    "timestamp": 1700000002000
+  },
+  {
+    "trade_id": "trade-self",
+    "side": "buy",
+    "trader_side": "both",
+    "total": "3000000",
+    "quantity": "2000000000",
+    "price": "1500000",
+    "timestamp": 1700000003000
+  }
+]

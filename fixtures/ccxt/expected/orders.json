@@ -1,0 +1,18 @@
+[
+  {
+    "id": "0x6666666666666666666666666666666666666666666666666666666666666666",
+    "symbol": "FUEL/USDC",
+    "type": "limit",
+    "timeInForce": "PO",
+    "postOnly": true,
+    "side": "buy",
+    "price": 1.5,
+    "amount": 2,
+    "filled": 0.5,
+    "remaining": 1.5,
+    "average": 1.4,
+    "cost": 0.7,
+    "status": "open",
+    "timestamp": 1700000000000
+  }
+]

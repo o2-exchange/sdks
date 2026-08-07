@@ -1,0 +1,16 @@
+[
+  {
+    "order_id": "0x6666666666666666666666666666666666666666666666666666666666666666",
+    "side": "buy",
+    "order_type": "PostOnly",
+    "quantity": "2000000000",
+    "quantity_fill": "500000000",
+    "price": "1500000",
+    "price_fill": "1400000",
+    "timestamp": 1700000000,
+    "close": false,
+    "partially_filled": true,
+    "cancel": false,
+    "market_id": "0x3333333333333333333333333333333333333333333333333333333333333333"
+  }
+]
