@@ -177,6 +177,33 @@ jobs:
       - run: bun run test
         if: matrix.runtime == 'bun'
 
+  typescript-ccxt:
+    name: Test TypeScript CCXT (${{ matrix.label }})
+    needs: lint-typescript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - label: minimum
+            ccxt: "4.5.0"
+          - label: latest-v4
+            ccxt: "^4.5.0"
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false "ccxt@${{ matrix.ccxt }}"
+      - run: npm run typecheck
+      - run: npx vitest run tests/ccxt.test.ts tests/ccxt-parsers.test.ts tests/ccxt-errors.test.ts
+
   typescript-browser:
     name: Test TypeScript (playwright)
     needs: lint-typescript
