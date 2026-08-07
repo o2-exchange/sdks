@@ -228,3 +228,4 @@ Each SDK also includes an `AGENTS.md` with a complete LLM-optimized API referenc
 ## 📄 License
 
 [Apache License 2.0](LICENSE) — Copyright 2026 Breathe Speed Inc.
+
