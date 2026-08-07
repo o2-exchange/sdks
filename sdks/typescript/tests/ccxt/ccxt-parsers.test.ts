@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   parseBalance,
@@ -21,10 +20,10 @@ import type {
 } from "../../src/models.js";
 import { assetId, contractId, marketId, orderId } from "../../src/models.js";
 
-const FIXTURES = fileURLToPath(new URL("../../../fixtures/ccxt/", import.meta.url));
+const FIXTURES = new URL("../../../../fixtures/ccxt/", import.meta.url);
 
 function fixture<T>(path: string): T {
-  return JSON.parse(readFileSync(`${FIXTURES}${path}`, "utf8")) as T;
+  return JSON.parse(readFileSync(new URL(path, FIXTURES), "utf8")) as T;
 }
 
 function rawMarket(): Market {

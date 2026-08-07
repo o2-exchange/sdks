@@ -202,7 +202,7 @@ jobs:
       - run: npm ci
       - run: npm install --no-save --package-lock=false "ccxt@${{ matrix.ccxt }}"
       - run: npm run typecheck
-      - run: npx vitest run tests/ccxt.test.ts tests/ccxt-parsers.test.ts tests/ccxt-errors.test.ts
+      - run: npx vitest run tests/ccxt/ccxt.test.ts tests/ccxt/ccxt-parsers.test.ts tests/ccxt/ccxt-errors.test.ts
 
   typescript-browser:
     name: Test TypeScript (playwright)
