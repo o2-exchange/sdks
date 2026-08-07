@@ -67,6 +67,7 @@ describe("O2CCXT public alpha", () => {
     expect(exchange.id).toBe("o2");
     expect(exchange.has.fetchTicker).toBe(true);
     expect(exchange.has.createMarketOrder).toBe(true);
+    expect(exchange.has.withdraw).toBe(true);
     expect(exchange.o2Client).toBe(client);
   });
 

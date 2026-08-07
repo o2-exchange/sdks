@@ -130,6 +130,7 @@ export class O2CCXT extends Exchange {
         fetchOpenOrders: true,
         fetchClosedOrders: true,
         fetchMyTrades: true,
+        withdraw: true,
         watchOrderBook: false,
         watchTrades: false,
         watchOrders: false,
@@ -458,9 +459,9 @@ export class O2CCXT extends Exchange {
     );
   }
 
-  override async close(): Promise<void> {
+  override async close() {
     this.o2Client.close();
-    await super.close();
+    return super.close();
   }
 
   private async fetchOrdersByStatus(
