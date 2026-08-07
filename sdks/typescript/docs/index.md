@@ -19,6 +19,7 @@ data retrieval, and real-time WebSocket streaming.
 - **Market data** — Depth, trades, candles, and ticker data
 - **Real-time streaming** — WebSocket streams via `AsyncGenerator` / `for await`
 - **Full type safety** — Branded hex types, `bigint` chain integers, discriminated action union
+- **CCXT compatibility (alpha)** — Unified async methods and response shapes for trading bots
 - **Dual-mode numerics** — Pass human-readable strings (`"0.02"`) or raw `bigint` chain values
 - **Automatic encoding** — Prices and quantities auto-scaled, FractionalPrice adjusted, min_order validated
 - **Error handling** — Typed error classes for every API error code, `SessionActionsResponse.success` getter
@@ -52,6 +53,7 @@ Also works in **Bun** and modern browsers.
 
 - **Quick Start** — Step-by-step guide to your first trade
 - **Trading Guide** — Order types, batch actions, and advanced patterns
+- **CCXT Compatibility (Public Alpha)** — Unified adapter, supported methods, and limitations
 - **Market Data** — Fetching depth, trades, candles, and tickers
 - **WebSocket Streams** — Real-time data with `for await`
 - **Error Handling** — Error types and recovery patterns

@@ -173,6 +173,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 
 - [Identifiers and Wallet Types](docs/guides/identifiers.md)
 - [Trading](docs/guides/trading.md)
+- [CCXT Compatibility (Alpha)](docs/guides/ccxt-compatibility.md)
 - [Market Data](docs/guides/market-data.md)
 - [WebSocket Streams](docs/guides/websocket-streams.md)
 - [Error Handling](docs/guides/error-handling.md)

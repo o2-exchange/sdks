@@ -1,12 +1,13 @@
 {
   "$schema": "https://typedoc.org/schema.json",
-  "entryPoints": ["src/index.ts"],
+  "entryPoints": ["src/index.ts", "src/ccxt/index.ts"],
   "out": "docs/_build",
   "name": "O2 SDK for TypeScript",
   "readme": "docs/index.md",
   "projectDocuments": [
     "docs/quickstart.md",
     "docs/guides/trading.md",
+    "docs/guides/ccxt-compatibility.md",
     "docs/guides/market-data.md",
     "docs/guides/websocket-streams.md",
     "docs/guides/external-signers.md",
