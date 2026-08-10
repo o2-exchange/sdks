@@ -1,4 +1,4 @@
-import { Exchange } from "ccxt";
+import { Exchange, functions } from "ccxt";
 import { describe, expect, it, vi } from "vitest";
 import { ArgumentsRequired, BadRequest, NotSupported, O2CCXT } from "../../src/ccxt/index.js";
 import type { Signer } from "../../src/crypto.js";
@@ -68,6 +68,7 @@ describe("O2CCXT public alpha", () => {
     expect(exchange.has.fetchTicker).toBe(true);
     expect(exchange.has.createMarketOrder).toBe(true);
     expect(exchange.has.withdraw).toBe(true);
+    expect(exchange.precisionMode).toBe(functions.DECIMAL_PLACES);
     expect(exchange.o2Client).toBe(client);
   });
 
@@ -86,6 +87,8 @@ describe("O2CCXT public alpha", () => {
       limits: { cost: { min: 1, max: null } },
     });
     expect(exchange.symbols).toEqual(["FUEL/USDC"]);
+    expect(exchange.amountToPrecision("FUEL/USDC", 1.23456)).toBe("1.2345");
+    expect(exchange.priceToPrecision("FUEL/USDC", 1.23456)).toBe("1.235");
     await exchange.loadMarkets();
     expect(client.getMarkets).toHaveBeenCalledTimes(1);
   });

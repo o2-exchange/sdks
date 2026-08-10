@@ -9,7 +9,7 @@ import type {
   Ticker,
   Transaction,
 } from "ccxt";
-import { Exchange } from "ccxt";
+import { Exchange, functions } from "ccxt";
 import type { MarketActionGroup, Numeric } from "../actions.js";
 import { O2Client } from "../client.js";
 import type { Network } from "../config.js";
@@ -112,6 +112,7 @@ export class O2CCXT extends Exchange {
       countries: [],
       rateLimit: 0,
       enableRateLimit: false,
+      precisionMode: functions.DECIMAL_PLACES,
       dex: true,
       has: {
         fetchMarkets: true,
