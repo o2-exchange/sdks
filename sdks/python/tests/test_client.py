@@ -112,6 +112,23 @@ async def test_get_nonce_refreshes_cached_value(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_get_nonce_does_not_regress_optimistic_cache(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    trade_account_id = "0x" + "45" * 32
+    client._nonce_cache[trade_account_id] = 2
+
+    stale_account = type("Account", (), {"nonce": 1})()
+
+    async def fake_get_account(**_kwargs):
+        return stale_account
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+
+    assert await client.get_nonce(trade_account_id) == 1
+    assert client._nonce_cache[trade_account_id] == 2
+
+
+@pytest.mark.asyncio
 async def test_batch_actions_normalizes_builder_group(monkeypatch: pytest.MonkeyPatch):
     client = O2Client()
     market = _test_market()

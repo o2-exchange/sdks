@@ -1457,10 +1457,12 @@ class O2Client:
     # -----------------------------------------------------------------------
 
     async def get_nonce(self, trade_account_id: str) -> int:
-        """Fetch the current nonce for a trading account and refresh the local cache."""
+        """Fetch the currently indexed nonce without regressing optimistic state."""
         account = await self.api.get_account(trade_account_id=trade_account_id)
         nonce = account.nonce
-        self._nonce_cache[trade_account_id] = nonce
+        cached_nonce = self._nonce_cache.get(trade_account_id)
+        if cached_nonce is None or nonce > cached_nonce:
+            self._nonce_cache[trade_account_id] = nonce
         return nonce
 
     async def refresh_nonce(self, session: SessionInfo) -> int:
