@@ -1203,30 +1203,24 @@ class TestWebSocket:
 
 
 @pytest.mark.integration
-async def test_parallel_nonce_read_path_devnet():
-    """Validate the parallel-nonce read path against a live devnet account.
-    No keys needed — account/window are public GETs. Exercises
+async def test_parallel_nonce_read_path_testnet():
+    """Validate the parallel-nonce read path against a live testnet account.
+    Exercises
     get_account + get_account_window + WindowResponse +
     ParallelNonceManager.init/next_nonce end-to-end."""
     from o2_sdk.client import O2Client
     from o2_sdk.config import Network
     from o2_sdk.nonce import ParallelNonce, ParallelNonceManager, WindowResponse
 
-    owner = "0x000000000000000000000000dd89c413f054398c0f6903786477a2f26875ad80"
-    ta = "0x18f9d6f5e708d01ddf2249318b906dd2d7d954c3b8b2399c912565ea78f272b1"
-
-    client = O2Client(network=Network.DEVNET)
+    client = O2Client(network=Network.TESTNET)
     try:
-        try:
-            acct = await client.api.get_account(owner=owner)
-        except O2Error as exc:
-            # Devnet is a development environment and goes away sometimes
-            # ("no healthy upstream" from the gateway). That says nothing about
-            # the read path under test.
-            if "Non-JSON response" in str(exc):
-                pytest.skip(f"devnet unavailable: {exc}")
-            raise
+        wallet = _load_or_create_wallet(client, "parallel_test_tn")
+        acct = await client.api.get_account(owner=wallet.b256_address)
+        if acct.trade_account is None:
+            created = await client.api.create_account(wallet.b256_address)
+            acct = await client.api.get_account(trade_account_id=created.trade_account_id)
         assert acct.trade_account is not None
+        ta = acct.trade_account_id
 
         async def _fetch():
             return WindowResponse.from_dict(
