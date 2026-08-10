@@ -1619,12 +1619,12 @@ mod tests {
     }
 
     #[test]
-    fn whitelist_is_enabled_only_for_testnet() {
+    fn whitelist_is_disabled_on_every_network() {
         let testnet = O2Client::new(Network::Testnet);
         let devnet = O2Client::new(Network::Devnet);
         let mainnet = O2Client::new(Network::Mainnet);
 
-        assert!(testnet.should_whitelist_account());
+        assert!(!testnet.should_whitelist_account());
         assert!(!devnet.should_whitelist_account());
         assert!(!mainnet.should_whitelist_account());
     }

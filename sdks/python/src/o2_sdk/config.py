@@ -27,7 +27,7 @@ NETWORK_CONFIGS: dict[Network, NetworkConfig] = {
         ws_url="wss://api.testnet.o2.app/v1/ws",
         fuel_rpc="https://testnet.fuel.network/v1/graphql",
         faucet_url="https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2",
-        whitelist_required=True,
+        whitelist_required=False,
     ),
     Network.DEVNET: NetworkConfig(
         api_base="https://api.devnet.o2.app",
