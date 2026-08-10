@@ -475,6 +475,9 @@ class O2Api:
             "/v1/session",
             json=session_request,
             headers={"O2-Owner-Id": owner_id},
+            # The signed owner nonce makes an accepted-but-lost response
+            # ambiguous. Never replay the same session registration.
+            max_retries=1,
         )
         return SessionResponse.from_dict(data)
 
@@ -505,6 +508,9 @@ class O2Api:
             "/v1/accounts/withdraw",
             json=withdraw_request,
             headers={"O2-Owner-Id": owner_id},
+            # A withdrawal can be accepted before its response is lost.
+            # Callers must reconcile the owner nonce instead of replaying it.
+            max_retries=1,
         )
         return WithdrawResponse.from_dict(data)
 

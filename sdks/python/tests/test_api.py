@@ -104,6 +104,21 @@ async def test_submit_actions_wraps_timeout_without_retry():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create_session", "withdraw"])
+async def test_signed_owner_actions_do_not_retry_transport_failure(operation: str):
+    session = _Session([aiohttp.ClientConnectionError("response lost")])
+    api = O2Api(_CONFIG, session=session)
+
+    with pytest.raises(O2Error, match="response lost"):
+        if operation == "create_session":
+            await api.create_session("owner", {"signature": {}})
+        else:
+            await api.withdraw("owner", {"signature": {}})
+
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_non_action_request_keeps_rate_limit_backoff(monkeypatch):
     session = _Session(
         [

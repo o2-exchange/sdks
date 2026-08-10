@@ -1,8 +1,9 @@
 # O2 CCXT Compatibility Specification (Alpha)
 
 This specification is shared by the TypeScript and async Python adapters. The
-adapters are O2-maintained, dependency-free, and are not official CCXT exchange
-implementations.
+adapters are O2-maintained and are not distributed as official CCXT exchanges.
+They extend the official CCXT Exchange classes through optional dependencies,
+so importing the core O2 SDK does not require CCXT.
 
 ## General rules
 
@@ -13,7 +14,7 @@ implementations.
 - The parsed native O2 value is retained in `info`.
 - Chain integers in shared fixtures are decimal strings.
 - Unsupported values are `null`; fields are not silently invented.
-- Only limit order creation is supported during alpha.
+- Limit and price-bounded market order creation are supported during alpha.
 - Neither adapter retries ambiguous private submissions.
 
 ## Trade side
@@ -36,9 +37,9 @@ implementations.
 
 ## Errors
 
-Adapters use O2-owned CCXT-style error classes and do not depend on official
-CCXT packages. They are not compatible with `instanceof ccxt.ExchangeError` or
-Python `isinstance(error, ccxt.ExchangeError)`.
+Adapters use official CCXT error classes. Errors are compatible with
+`instanceof ccxt.ExchangeError` and Python
+`isinstance(error, ccxt.ExchangeError)` when the CCXT dependency is installed.
 
 An accepted private request whose response is missing or lost raises
 `O2AmbiguousSubmission`. The adapter must not retry it. Callers must reconcile

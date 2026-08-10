@@ -30,6 +30,25 @@ pip install -e sdks/python
 
 Requires **Python 3.10+**.
 
+For the asynchronous CCXT-compatible public alpha, install the optional extra:
+
+```bash
+pip install "o2-sdk[ccxt]"
+```
+
+```python
+from o2_sdk.ccxt import O2CCXT
+
+exchange = O2CCXT({"network": "testnet", "privateKey": private_key})
+await exchange.setup_account()
+await exchange.create_session(["fFUEL/fUSDC"])
+markets = await exchange.load_markets()
+```
+
+The adapter extends the official asynchronous CCXT `Exchange` class but is
+maintained by O2 and is not registered as `ccxt.o2`. See the
+[CCXT-compatible API guide](docs/guides/ccxt_compatibility.rst).
+
 ## Quick Start
 
 Recommended first integration path on testnet:
@@ -179,6 +198,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 
 ## Guides
 
+- [`docs/guides/ccxt_compatibility.rst`](docs/guides/ccxt_compatibility.rst)
 - [`docs/guides/identifiers.rst`](docs/guides/identifiers.rst)
 - [`docs/guides/trading.rst`](docs/guides/trading.rst)
 - [`docs/guides/market_data.rst`](docs/guides/market_data.rst)
@@ -217,6 +237,13 @@ O2_PRIVATE_KEY=0x... pytest tests/test_integration.py -m integration -v --timeou
 
 Integration tests reuse cached wallets in `sdks/python/.integration-wallets.json` (gitignored)
 and only faucet when balances are below a conservative threshold, which improves repeat-run speed.
+
+The CCXT adapter lifecycle tests also reuse the TypeScript integration wallets
+when a Python-local wallet file is not present:
+
+```bash
+O2_INTEGRATION=1 pytest tests/ccxt/test_integration.py -m integration -v --timeout=600
+```
 
 ## AI Agent Integration
 

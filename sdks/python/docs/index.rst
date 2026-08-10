@@ -75,6 +75,7 @@ Quick example
    guides/external_signers
    guides/parallel_nonces
    guides/error_handling
+   guides/ccxt_compatibility
 
 .. toctree::
    :maxdepth: 1
