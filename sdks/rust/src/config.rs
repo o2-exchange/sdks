@@ -25,7 +25,7 @@ impl NetworkConfig {
                 ws_url: "wss://api.testnet.o2.app/v1/ws".into(),
                 fuel_rpc: "https://testnet.fuel.network/v1/graphql".into(),
                 faucet_url: Some("https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2".into()),
-                whitelist_required: true,
+                whitelist_required: false,
             },
             Network::Devnet => Self {
                 api_base: "https://api.devnet.o2.app".into(),
