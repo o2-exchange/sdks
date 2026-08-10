@@ -14,13 +14,25 @@ async function waitForBalance(
     if (balance.trading_account_balance >= 2n) return balance.trading_account_balance;
     await new Promise((resolve) => setTimeout(resolve, 5_000));
   }
-  throw new Error("Devnet faucet balance did not arrive within 120 seconds");
+  throw new Error("Testnet faucet balance did not arrive within 120 seconds");
 }
 
-describe.skipIf(!INTEGRATION)("live devnet withdrawals", () => {
+async function waitForNonce(
+  client: O2Client,
+  tradeAccountId: TradeAccountId,
+  previous: bigint,
+): Promise<void> {
+  for (let attempt = 0; attempt < 24; attempt++) {
+    if ((await client.getNonce(tradeAccountId)) > previous) return;
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+  throw new Error("Testnet account nonce did not advance within 120 seconds");
+}
+
+describe.skipIf(!INTEGRATION)("live testnet withdrawals", () => {
   it("withdraws to an address and ContractId", async () => {
-    const sourceClient = new O2Client({ network: Network.DEVNET });
-    const recipientClient = new O2Client({ network: Network.DEVNET });
+    const sourceClient = new O2Client({ network: Network.TESTNET });
+    const recipientClient = new O2Client({ network: Network.TESTNET });
     try {
       const sourceWallet = O2Client.generateWallet();
       const source = await sourceClient.setupAccount(sourceWallet);
@@ -33,10 +45,11 @@ describe.skipIf(!INTEGRATION)("live devnet withdrawals", () => {
       const markets = await sourceClient.getMarkets();
       const asset = markets
         .flatMap((market) => [market.base, market.quote])
-        .find((candidate) => candidate.symbol === "USDC");
-      if (!asset) throw new Error("USDC is not configured on devnet");
+        .find((candidate) => candidate.symbol === "fUSDC");
+      if (!asset) throw new Error("fUSDC is not configured on testnet");
 
       const before = await waitForBalance(sourceClient, source.tradeAccountId, asset.asset);
+      const nonceBefore = await sourceClient.getNonce(source.tradeAccountId);
 
       const addressResult = await sourceClient.withdraw(
         sourceWallet,
@@ -45,6 +58,7 @@ describe.skipIf(!INTEGRATION)("live devnet withdrawals", () => {
         sourceWallet.b256Address,
       );
       expect(addressResult.tx_id).toBeTruthy();
+      await waitForNonce(sourceClient, source.tradeAccountId, nonceBefore);
 
       const contractResult = await sourceClient.withdraw(sourceWallet, asset.asset, 1n, {
         ContractId: recipient.trade_account_id,

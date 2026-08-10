@@ -231,7 +231,7 @@ class O2Client:
         1. Check if account exists (GET /v1/accounts)
         2. Create if needed (POST /v1/accounts)
         3. Mint via faucet if testnet/devnet (handle cooldown gracefully)
-        4. Whitelist account
+        4. Attempt to whitelist account (non-fatal after bounded retries)
         5. Return AccountInfo
 
         Safe to call on every bot startup.
@@ -260,15 +260,15 @@ class O2Client:
                 if not minted:
                     logger.warning("Faucet mint failed after retries (non-fatal)")
 
-        # Step 4: Whitelist (required on configured networks)
+        # Step 4: Whitelist when configured. Account creation, funding, and
+        # withdrawals remain usable when the testnet whitelist service is down.
         if self._config.whitelist_required:
             whitelisted = await self._retry_whitelist_account(trade_account_id)
             if not whitelisted:
-                raise O2Error(
-                    message=(
-                        "Failed to whitelist account after retries. "
-                        "Account setup cannot continue on this network."
-                    )
+                logger.warning(
+                    "Account setup continuing after whitelist retries failed for %s; "
+                    "trading may remain unavailable until whitelisting succeeds",
+                    trade_account_id,
                 )
 
         return account
@@ -1457,8 +1457,13 @@ class O2Client:
     # -----------------------------------------------------------------------
 
     async def get_nonce(self, trade_account_id: str) -> int:
-        """Get the current nonce for a trading account."""
-        return await self._get_nonce(trade_account_id)
+        """Fetch the currently indexed nonce without regressing optimistic state."""
+        account = await self.api.get_account(trade_account_id=trade_account_id)
+        nonce = account.nonce
+        cached_nonce = self._nonce_cache.get(trade_account_id)
+        if cached_nonce is None or nonce > cached_nonce:
+            self._nonce_cache[trade_account_id] = nonce
+        return nonce
 
     async def refresh_nonce(self, session: SessionInfo) -> int:
         """Re-fetch nonce from the API (manual resync)."""

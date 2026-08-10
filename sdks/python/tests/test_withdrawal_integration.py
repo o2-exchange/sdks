@@ -1,4 +1,4 @@
-"""Live withdrawal regression tests against the configured O2 devnet."""
+"""Live withdrawal regression tests against the configured O2 testnet."""
 
 import asyncio
 
@@ -16,12 +16,20 @@ async def _wait_for_balance(client: O2Client, trade_account_id: str, asset_id: s
         if raw >= 2:
             return raw
         await asyncio.sleep(5)
-    raise AssertionError("Devnet faucet balance did not arrive within 120 seconds")
+    raise AssertionError("Testnet faucet balance did not arrive within 120 seconds")
+
+
+async def _wait_for_nonce(client: O2Client, trade_account_id: str, previous: int) -> None:
+    for _ in range(24):
+        if await client.get_nonce(trade_account_id) > previous:
+            return
+        await asyncio.sleep(5)
+    raise AssertionError("Testnet account nonce did not advance within 120 seconds")
 
 
 async def test_withdraw_to_address_and_contract_id():
-    source_client = O2Client(network=Network.DEVNET)
-    recipient_client = O2Client(network=Network.DEVNET)
+    source_client = O2Client(network=Network.TESTNET)
+    recipient_client = O2Client(network=Network.TESTNET)
     try:
         source_wallet = source_client.generate_wallet()
         source_account = await source_client.setup_account(source_wallet)
@@ -35,13 +43,14 @@ async def test_withdraw_to_address_and_contract_id():
             asset
             for market in markets.markets
             for asset in (market.base, market.quote)
-            if asset.symbol == "USDC"
+            if asset.symbol == "fUSDC"
         )
         before = await _wait_for_balance(
             source_client,
             str(source_account.trade_account_id),
             str(asset.asset),
         )
+        nonce_before = await source_client.get_nonce(str(source_account.trade_account_id))
 
         atomic_amount = 10.0 ** (-asset.decimals)
         assert int(atomic_amount * (10**asset.decimals)) == 1
@@ -53,6 +62,11 @@ async def test_withdraw_to_address_and_contract_id():
             source_wallet.b256_address,
         )
         assert address_result.success, address_result.message
+        await _wait_for_nonce(
+            source_client,
+            str(source_account.trade_account_id),
+            nonce_before,
+        )
 
         contract_result = await source_client.withdraw(
             source_wallet,

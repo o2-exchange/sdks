@@ -95,6 +95,40 @@ def _test_session() -> SessionInfo:
 
 
 @pytest.mark.asyncio
+async def test_get_nonce_refreshes_cached_value(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    trade_account_id = "0x" + "44" * 32
+    client._nonce_cache[trade_account_id] = 0
+
+    account = type("Account", (), {"nonce": 1})()
+
+    async def fake_get_account(**_kwargs):
+        return account
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+
+    assert await client.get_nonce(trade_account_id) == 1
+    assert client._nonce_cache[trade_account_id] == 1
+
+
+@pytest.mark.asyncio
+async def test_get_nonce_does_not_regress_optimistic_cache(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    trade_account_id = "0x" + "45" * 32
+    client._nonce_cache[trade_account_id] = 2
+
+    stale_account = type("Account", (), {"nonce": 1})()
+
+    async def fake_get_account(**_kwargs):
+        return stale_account
+
+    monkeypatch.setattr(client.api, "get_account", fake_get_account)
+
+    assert await client.get_nonce(trade_account_id) == 1
+    assert client._nonce_cache[trade_account_id] == 2
+
+
+@pytest.mark.asyncio
 async def test_batch_actions_normalizes_builder_group(monkeypatch: pytest.MonkeyPatch):
     client = O2Client()
     market = _test_market()
@@ -490,7 +524,9 @@ async def test_cancel_order_accepts_id(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_setup_account_fail_fast_when_whitelist_required(monkeypatch: pytest.MonkeyPatch):
+async def test_setup_account_continues_when_whitelist_retries_fail(
+    monkeypatch: pytest.MonkeyPatch,
+):
     cfg = NetworkConfig(
         api_base="https://x",
         ws_url="wss://x",
@@ -516,8 +552,8 @@ async def test_setup_account_fail_fast_when_whitelist_required(monkeypatch: pyte
         return False
 
     monkeypatch.setattr(client, "_retry_whitelist_account", fake_retry_whitelist)
-    with pytest.raises(O2Error, match="Failed to whitelist account"):
-        await client.setup_account(wallet)
+    out = await client.setup_account(wallet)
+    assert out.trade_account_id == account.trade_account_id
 
 
 @pytest.mark.asyncio
