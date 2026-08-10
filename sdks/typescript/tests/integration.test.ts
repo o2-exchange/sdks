@@ -18,8 +18,8 @@
  *
  * ## Fill tests: Maker PostOnly Buy + Taker FillOrKill Sell
  *
- * Maker PostOnly price is selected conservatively from live depth (best_ask -
- * one tick) to avoid accidental taker matches in a shared live order book. The
+ * Maker PostOnly price is selected with a safety margin below live depth to
+ * avoid accidental taker matches in a shared live order book. The
  * taker uses FillOrKill sell, which avoids leaving a resting order.
  *
  * FillOrKill for the taker prevents leaving a resting order on the book, which
@@ -143,16 +143,13 @@ async function conservativePostOnlyBuyPriceStr(client: O2Client, market: Market)
     // Use precision=1 (finest) to get accurate best ask/bid prices.
     // Coarser levels aggregate prices into wide buckets, which can cause
     // the chosen price to accidentally cross the actual best ask.
-    // Use precision=1 (finest) to get accurate best ask/bid prices.
-    // Coarser levels aggregate prices into wide buckets, which can cause
-    // the chosen price to accidentally cross the actual best ask.
     const depth = await client.getDepth(market, 1);
-    if (depth.asks.length > 0) {
-      const bestAsk = Number(depth.asks[0].price) / 10 ** market.quote.decimals;
-      chosen = Math.max(step, floorToStep(bestAsk - step, step));
-    } else if (depth.bids.length > 0) {
+    if (depth.bids.length > 0) {
       const bestBid = Number(depth.bids[0].price) / 10 ** market.quote.decimals;
-      chosen = Math.max(step, floorToStep(bestBid, step));
+      chosen = Math.max(step, floorToStep(bestBid * 0.8, step));
+    } else if (depth.asks.length > 0) {
+      const bestAsk = Number(depth.asks[0].price) / 10 ** market.quote.decimals;
+      chosen = Math.max(step, floorToStep(bestAsk * 0.8, step));
     }
   } catch (error) {
     console.error(

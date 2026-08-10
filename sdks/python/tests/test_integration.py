@@ -75,6 +75,21 @@ def _load_or_create_wallet(client: O2Client, role: str):
     return wallet
 
 
+async def _wait_for_indexed_account(
+    api,
+    *,
+    owner=None,
+    trade_account_id=None,
+    require_trade_account=False,
+):
+    for _ in range(30):
+        account = await api.get_account(owner=owner, trade_account_id=trade_account_id)
+        if account.exists and (not require_trade_account or account.trade_account is not None):
+            return account
+        await asyncio.sleep(2)
+    raise AssertionError("Testnet account did not reach the indexer within 60 seconds")
+
+
 async def _whitelist_with_retry(api, trade_account_id, max_retries=4):
     """Ensure account is whitelisted with retry on rate limit."""
     for attempt in range(max_retries):
@@ -247,7 +262,7 @@ class TestAccountFlow:
         assert result.trade_account_id.startswith("0x")
 
         # Verify it exists now
-        account = await client.api.get_account(owner=wallet.b256_address)
+        account = await _wait_for_indexed_account(client.api, owner=wallet.b256_address)
         assert account.exists
         assert account.trade_account_id == result.trade_account_id
         assert account.nonce == 0
@@ -365,9 +380,12 @@ async def _conservative_post_only_buy_price(client, market):
         # Coarser levels aggregate prices into wide buckets, which can cause
         # the chosen price to accidentally cross the actual best ask.
         depth = await client.get_depth(market.pair, precision=1)
+        if depth.best_bid:
+            best_bid = market.format_price(int(depth.best_bid.price))
+            return max(price_step, _floor_to_step(best_bid * 0.8, price_step))
         if depth.best_ask:
             best_ask = market.format_price(int(depth.best_ask.price))
-            return max(price_step, best_ask - price_step)
+            return max(price_step, _floor_to_step(best_ask * 0.8, price_step))
     except Exception as ex:
         # Depth fetch failures are non-fatal; fall back to a conservative price.
         print(f"Warning: failed to fetch depth for {market.pair}: {ex}")
@@ -1217,8 +1235,16 @@ async def test_parallel_nonce_read_path_testnet():
         wallet = _load_or_create_wallet(client, "parallel_test_tn")
         acct = await client.api.get_account(owner=wallet.b256_address)
         if acct.trade_account is None:
-            created = await client.api.create_account(wallet.b256_address)
-            acct = await client.api.get_account(trade_account_id=created.trade_account_id)
+            trade_account_id = acct.trade_account_id
+            if trade_account_id is None:
+                trade_account_id = (
+                    await client.api.create_account(wallet.b256_address)
+                ).trade_account_id
+            acct = await _wait_for_indexed_account(
+                client.api,
+                trade_account_id=trade_account_id,
+                require_trade_account=True,
+            )
         assert acct.trade_account is not None
         ta = acct.trade_account_id
 

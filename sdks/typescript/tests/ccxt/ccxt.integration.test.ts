@@ -6,7 +6,7 @@ import { Network, O2Client } from "../../src/index.js";
 import type { Market, Order, TradeAccountId } from "../../src/models.js";
 
 const INTEGRATION = process.env.O2_INTEGRATION === "1";
-const WALLETS_FILE = fileURLToPath(new URL("../.integration-wallets.json", import.meta.url));
+const WALLETS_FILE = fileURLToPath(new URL("../../.integration-wallets.json", import.meta.url));
 
 interface IntegrationWallets {
   makerPrivateKey: string;
@@ -82,6 +82,20 @@ async function ensureTestnetBalance(
   }
 }
 
+async function attemptTestnetWhitelist(client: O2Client, accountId: TradeAccountId): Promise<void> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await client.api.whitelistAccount(accountId);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+  }
+  console.error(`Testnet whitelist unavailable for ${accountId}: ${String(lastError)}`);
+}
+
 describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
   it("loads, creates, fetches, cancels, and observes a closed order", async () => {
     const persisted = JSON.parse(readFileSync(WALLETS_FILE, "utf8")) as IntegrationWallets;
@@ -103,7 +117,7 @@ describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
       rawMarket = markets[0];
       if (!rawMarket) throw new Error("O2 testnet returned no markets");
 
-      await client.api.whitelistAccount(accountId);
+      await attemptTestnetWhitelist(client, accountId);
       await client.createSession(signer, [rawMarket], 1);
       exchange = new O2CCXT({ client, signer, tradeAccountId: accountId });
 
@@ -189,8 +203,8 @@ describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
       if (!market) throw new Error("O2 testnet returned no markets");
 
       await Promise.all([
-        makerClient.api.whitelistAccount(makerAccountId),
-        takerClient.api.whitelistAccount(takerAccountId),
+        attemptTestnetWhitelist(makerClient, makerAccountId),
+        attemptTestnetWhitelist(takerClient, takerAccountId),
       ]);
       await makerClient.createSession(makerSigner, [market], 1);
       await takerClient.createSession(takerSigner, [market], 1);
