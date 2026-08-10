@@ -18,6 +18,7 @@ from o2_sdk import (
     Market,
     MarketAsset,
     O2Client,
+    O2Error,
     Order,
     OrderSide,
     OrderType,
@@ -152,6 +153,19 @@ async def test_limit_and_bounded_market_orders() -> None:
 async def test_submission_fault_is_not_retried() -> None:
     client, exchange = setup_exchange()
     client.create_order = AsyncMock(side_effect=ConnectionError("socket closed"))  # type: ignore[method-assign]
+    try:
+        with pytest.raises(O2AmbiguousSubmission):
+            await exchange.create_order("FUEL/USDC", "limit", "buy", 2, 1.5)
+        client.create_order.assert_awaited_once()  # type: ignore[attr-defined]
+    finally:
+        await exchange.close()
+
+
+async def test_wrapped_submission_fault_is_ambiguous_and_not_retried() -> None:
+    client, exchange = setup_exchange()
+    wrapped = O2Error("request failed")
+    wrapped.__cause__ = ConnectionError("response lost")
+    client.create_order = AsyncMock(side_effect=wrapped)  # type: ignore[method-assign]
     try:
         with pytest.raises(O2AmbiguousSubmission):
             await exchange.create_order("FUEL/USDC", "limit", "buy", 2, 1.5)

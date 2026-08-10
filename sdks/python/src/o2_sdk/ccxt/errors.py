@@ -69,17 +69,34 @@ def _with_original(error: BaseError, original: object) -> BaseError:
     return error
 
 
+def _exception_chain(error: object) -> list[BaseException]:
+    if not isinstance(error, BaseException):
+        return []
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    return chain
+
+
 def _is_network_failure(error: object) -> bool:
-    if isinstance(error, (asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, OSError)):
-        return True
-    if isinstance(error, BaseException):
-        return bool(
-            re.search(
-                r"network|fetch failed|socket|connection|timed? ?out|timeout",
-                str(error),
-                re.IGNORECASE,
-            )
-        )
+    for candidate in _exception_chain(error):
+        if isinstance(
+            candidate,
+            (asyncio.TimeoutError, aiohttp.ClientError, ConnectionError, OSError),
+        ):
+            return True
+        if re.search(
+            r"network|fetch failed|socket|connect(?:ion|ed|ing)?|disconnect(?:ed|ion)?|"
+            r"response (?:was )?lost|broken pipe|connection reset|dns|name resolution|"
+            r"temporary failure|timed? ?out|timeout|remote host",
+            str(candidate),
+            re.IGNORECASE,
+        ):
+            return True
     return False
 
 
