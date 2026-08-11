@@ -262,8 +262,13 @@ class TestAccountFlow:
         assert result.trade_account_id.startswith("0x")
 
         # Verify it exists now
-        account = await _wait_for_indexed_account(client.api, owner=wallet.b256_address)
+        account = await _wait_for_indexed_account(
+            client.api,
+            owner=wallet.b256_address,
+            require_trade_account=True,
+        )
         assert account.exists
+        assert account.trade_account is not None
         assert account.trade_account_id == result.trade_account_id
         assert account.nonce == 0
         await client.close()
