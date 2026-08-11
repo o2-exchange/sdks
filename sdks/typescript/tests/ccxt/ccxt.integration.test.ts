@@ -224,17 +224,25 @@ describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
 
       const priceStep = 10 ** -market.quote.max_precision;
       const amountStep = 10 ** -market.base.max_precision;
-      const depth = await makerClient.getDepth(market, 1);
-      const bestAsk = depth.asks[0]
-        ? Number(depth.asks[0].price) / 10 ** market.quote.decimals
-        : undefined;
-      const bestBid = depth.bids[0]
-        ? Number(depth.bids[0].price) / 10 ** market.quote.decimals
-        : undefined;
-      const candidatePrice = bestAsk
-        ? Math.max(priceStep, bestAsk - priceStep)
-        : Math.max(priceStep, bestBid ?? 1);
-      const price = Math.floor(candidatePrice / priceStep) * priceStep;
+      const price = await waitFor(async () => {
+        const depth = await makerClient.getDepth(market!, 1);
+        const bestAsk = depth.asks[0]
+          ? Number(depth.asks[0].price) / 10 ** market!.quote.decimals
+          : undefined;
+        const bestBid = depth.bids[0]
+          ? Number(depth.bids[0].price) / 10 ** market!.quote.decimals
+          : undefined;
+
+        if (bestBid !== undefined) {
+          const nextBid = Number((bestBid + priceStep).toFixed(market!.quote.max_precision));
+          return bestAsk === undefined || nextBid < bestAsk ? nextBid : undefined;
+        }
+        if (bestAsk !== undefined) {
+          const belowAsk = Math.floor((bestAsk * 0.8) / priceStep) * priceStep;
+          return Math.max(priceStep, belowAsk);
+        }
+        return priceStep;
+      }, "a testnet spread wide enough for controlled post-only liquidity");
       const minimumCost = Number(market.min_order) / 10 ** market.quote.decimals;
       const amount = Math.ceil(((minimumCost / price) * 1.1) / amountStep) * amountStep;
       const priceString = price.toFixed(market.quote.max_precision);
