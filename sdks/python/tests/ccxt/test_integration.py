@@ -105,7 +105,13 @@ async def _account(client: O2Client, role: str) -> tuple[object, Id]:
     account = await client.api.get_account(owner=signer.b256_address)
     if account.trade_account_id is None:
         raise ValueError(f"The {role} integration wallet has no O2 testnet account")
-    await client.api.whitelist_account(account.trade_account_id)
+    for attempt in range(2):
+        try:
+            await client.api.whitelist_account(account.trade_account_id)
+            break
+        except Exception:
+            if attempt == 0:
+                await asyncio.sleep(2)
     return signer, account.trade_account_id
 
 
@@ -174,7 +180,7 @@ async def test_limit_create_fetch_cancel_lifecycle() -> None:
             await client.close()
 
 
-async def test_bounded_market_order_against_controlled_liquidity() -> None:
+async def test_bounded_fok_market_order_against_controlled_liquidity() -> None:
     maker_client = O2Client(network=Network.TESTNET)
     taker_client = O2Client(network=Network.TESTNET)
     taker_exchange: O2CCXT | None = None
@@ -199,12 +205,27 @@ async def test_bounded_market_order_against_controlled_liquidity() -> None:
         with contextlib.suppress(Exception):
             await taker_client.cancel_all_orders(market)
 
-        depth = await maker_client.get_depth(market)
         step = 10**-market.quote.max_precision
-        best_ask = market.format_price(int(depth.asks[0].price)) if depth.asks else None
-        best_bid = market.format_price(int(depth.bids[0].price)) if depth.bids else None
-        candidate = max(step, best_ask - step) if best_ask else max(step, best_bid or 1)
-        price, amount = _valid_order(market, candidate)
+        amount_step = 10**-market.base.max_precision
+
+        async def controlled_price() -> float | None:
+            depth = await maker_client.get_depth(market, precision=1)
+            best_ask = market.format_price(int(depth.asks[0].price)) if depth.asks else None
+            best_bid = market.format_price(int(depth.bids[0].price)) if depth.bids else None
+            if best_bid is not None:
+                next_bid = round(best_bid + step, market.quote.max_precision)
+                return next_bid if best_ask is None or next_bid < best_ask else None
+            if best_ask is not None:
+                return max(step, math.floor((best_ask * 0.8) / step) * step)
+            return step
+
+        price, amount = _valid_order(
+            market,
+            await _wait_for(
+                controlled_price,
+                "a testnet spread wide enough for controlled post-only liquidity",
+            ),
+        )
         quote_raw = (
             market.scale_price(price) * market.scale_quantity(amount) // (10**market.base.decimals)
         )
@@ -218,7 +239,19 @@ async def test_bounded_market_order_against_controlled_liquidity() -> None:
         maker = await maker_client.create_order(
             market, OrderSide.BUY, price, amount, OrderType.POST_ONLY
         )
-        assert maker.orders and maker.orders[0].order_id
+        assert maker.orders and maker.orders[-1].order_id
+
+        async def maker_is_active() -> bool | None:
+            depth = await maker_client.get_depth(market, precision=1)
+            for level in depth.bids:
+                level_price = market.format_price(int(level.price))
+                level_amount = market.format_quantity(int(level.quantity))
+                if abs(level_price - price) < step / 2 and level_amount >= amount:
+                    return True
+            return None
+
+        await _wait_for(maker_is_active, "the controlled maker order to become active in depth")
+
         result = await taker_exchange.create_order(
             market.pair,
             "market",
@@ -229,14 +262,19 @@ async def test_bounded_market_order_against_controlled_liquidity() -> None:
         )
         assert result["type"] == "market"
         assert result["side"] == "sell"
+        assert result["amount"] == amount
 
-        maker_order_id = maker.orders[0].order_id
+        async def taker_closed() -> dict | None:
+            order = await taker_exchange.fetch_order(result["id"], market.pair)
+            return (
+                order
+                if order["status"] == "closed"
+                and order["filled"] >= amount - amount_step / 2
+                else None
+            )
 
-        async def maker_closed() -> object | None:
-            order = await maker_client.get_order(market, maker_order_id)
-            return order if order.close else None
-
-        await _wait_for(maker_closed, "the maker order to close")
+        indexed = await _wait_for(taker_closed, "the bounded FOK order to close")
+        assert indexed["filled"] >= amount - amount_step / 2
     finally:
         if market:
             with contextlib.suppress(Exception):

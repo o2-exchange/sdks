@@ -11,7 +11,6 @@ import pytest
 from o2_sdk import (
     ActionsResponse,
     Balance,
-    BoundedMarketOrder,
     DepthLevel,
     DepthSnapshot,
     Id,
@@ -24,7 +23,13 @@ from o2_sdk import (
     OrderType,
     WithdrawResponse,
 )
-from o2_sdk.ccxt import O2CCXT, ArgumentsRequired, BadRequest, O2AmbiguousSubmission
+from o2_sdk.ccxt import (
+    O2CCXT,
+    ArgumentsRequired,
+    BadRequest,
+    InvalidOrder,
+    O2AmbiguousSubmission,
+)
 
 ACCOUNT_ID = Id("0x" + "11" * 32)
 MARKET = Market(
@@ -129,10 +134,28 @@ async def test_limit_and_bounded_market_orders() -> None:
             collect_orders=True,
         )
 
-        market_order = Order(**{**RAW_ORDER.__dict__, "order_type": {"BoundedMarket": {}}})
+        market_order = Order(
+            **{
+                **RAW_ORDER.__dict__,
+                "order_type": "FillOrKill",
+                "quantity": "0",
+                "quantity_fill": "0",
+                "close": False,
+            }
+        )
+        settlement_placeholder = Order(
+            **{
+                **market_order.__dict__,
+                "order_id": Id("0x" + "00" * 32),
+                "quantity": "0",
+                "quantity_fill": "0",
+                "price": "0",
+                "close": False,
+            }
+        )
         client.create_order.reset_mock()  # type: ignore[attr-defined]
         client.create_order.return_value = ActionsResponse(  # type: ignore[attr-defined]
-            Id("0x" + "77" * 32), [market_order]
+            Id("0x" + "77" * 32), [settlement_placeholder, market_order]
         )
         result = await exchange.create_market_order(
             "FUEL/USDC",
@@ -141,11 +164,23 @@ async def test_limit_and_bounded_market_orders() -> None:
             None,
             {"maxPrice": 1.6, "minPrice": 1.4},
         )
+        assert result["id"] == str(market_order.order_id)
         assert result["type"] == "market"
+        assert result["amount"] == 2
+        assert result["filled"] == 0
+        assert result["remaining"] == 2
         native_type = client.create_order.await_args.kwargs["order_type"]  # type: ignore[attr-defined]
-        assert native_type == BoundedMarketOrder(max_price="1.6", min_price="1.4")
+        assert native_type == OrderType.FILL_OR_KILL
         with pytest.raises(ArgumentsRequired):
             await exchange.create_order("FUEL/USDC", "market", "buy", 2, params={"maxPrice": 1.6})
+        with pytest.raises(InvalidOrder):
+            await exchange.create_order(
+                "FUEL/USDC",
+                "market",
+                "buy",
+                2,
+                params={"maxPrice": 1.4, "minPrice": 1.6},
+            )
     finally:
         await exchange.close()
 

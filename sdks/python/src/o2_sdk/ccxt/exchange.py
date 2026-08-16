@@ -14,7 +14,6 @@ from o2_sdk.crypto import Signer
 from o2_sdk.errors import ERROR_CODE_MAP, O2Error, OnChainRevert
 from o2_sdk.models import (
     ActionsResponse,
-    BoundedMarketOrder,
     Id,
     Market,
     MarketActionGroup,
@@ -349,7 +348,7 @@ class O2CCXT(ccxt.Exchange):
             requested_type = options.get("orderType", OrderType.SPOT)
             if isinstance(requested_type, str):
                 try:
-                    order_type: OrderType | BoundedMarketOrder = OrderType(requested_type)
+                    order_type: OrderType = OrderType(requested_type)
                 except ValueError as error:
                     raise InvalidOrder(f"Invalid O2 orderType: {requested_type}") from error
             elif isinstance(requested_type, OrderType):
@@ -359,6 +358,8 @@ class O2CCXT(ccxt.Exchange):
         else:
             max_price = _positive_numeric(options, "maxPrice")
             min_price = _positive_numeric(options, "minPrice")
+            if float(min_price) > float(max_price):
+                raise InvalidOrder("create_order market orders require minPrice <= maxPrice")
             native_price = (
                 str(price)
                 if price is not None
@@ -366,7 +367,9 @@ class O2CCXT(ccxt.Exchange):
                 if normalized_side == "buy"
                 else min_price
             )
-            order_type = BoundedMarketOrder(max_price=max_price, min_price=min_price)
+            # O2 BoundedMarket is a resting trigger-style order, not an immediate
+            # CCXT market order. Emulate bounded execution with a protected FOK.
+            order_type = OrderType.FILL_OR_KILL
         response = self._ensure_action_response(
             await self._submit(
                 lambda: self.o2_client.create_order(
@@ -386,7 +389,17 @@ class O2CCXT(ccxt.Exchange):
                 "nonce before retrying.",
                 transaction_id=str(response.tx_id) if response.tx_id else None,
             )
-        return parse_order(response.orders[0], market)
+        # Native create_order appends CreateOrder after its optional SettleBalance
+        # action, so the collected create-order result is the final entry.
+        parsed = parse_order(response.orders[-1], market)
+        if normalized_type == "market":
+            parsed["type"] = "market"
+        if parsed["amount"] == 0 and amount > 0:
+            parsed["amount"] = amount
+            parsed["filled"] = 0.0
+            parsed["remaining"] = amount
+            parsed["cost"] = 0.0
+        return parsed
 
     async def cancel_order(
         self, id: str, symbol: str | None = None, params: Params | None = None
