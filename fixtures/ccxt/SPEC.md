@@ -14,7 +14,9 @@ so importing the core O2 SDK does not require CCXT.
 - The parsed native O2 value is retained in `info`.
 - Chain integers in shared fixtures are decimal strings.
 - Unsupported values are `null`; fields are not silently invented.
-- Limit and price-bounded market order creation are supported during alpha.
+- Limit and price-bounded FOK market order creation are supported during alpha.
+- CCXT market orders map to O2 `FillOrKill` at `maxPrice` for buys or
+  `minPrice` for sells, so the complete amount fills within the bound or fails.
 - Neither adapter retries ambiguous private submissions.
 
 ## Trade side

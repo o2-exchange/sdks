@@ -80,7 +80,7 @@ submission is never blindly repeated.
 | `fetchTicker` | Supported | Unsupported ticker fields are `null` |
 | `fetchOHLCV` | Supported | `1m`, `5m`, `15m`, `30m`, `1h`, `4h`, and `1d` |
 | `fetchBalance` | Supported | Requires a trade account or active session |
-| `createOrder` | Limit and bounded market | Market orders require `params.maxPrice` and `params.minPrice` |
+| `createOrder` | Limit and bounded FOK market | Market orders require `params.maxPrice` and `params.minPrice` |
 | `cancelOrder`, `cancelAllOrders` | Supported | `cancelOrder` requires `symbol`; cancel-all can span markets |
 | `fetchOrder`, `fetchOrders` | Supported | `fetchOrder` requires `symbol`; `fetchOrders` can span markets |
 | `fetchOpenOrders`, `fetchClosedOrders` | Supported | Omitted `symbol` queries all loaded markets |
@@ -121,6 +121,15 @@ await exchange.createOrder("fFUEL/fUSDC", "market", "sell", 25, undefined, {
 `fetchOHLCV` also accepts `params.until` as a Unix timestamp in milliseconds.
 For market orders, `amount` is always the base-asset quantity. Both bounds are
 required: O2 will not submit an unbounded market order through this adapter.
+The adapter executes the order as an O2 `FillOrKill` at `maxPrice` for buys or
+`minPrice` for sells. It either fills the complete amount within the bound or
+fails definitively; it never leaves a residual market order resting.
+
+O2 matching is asynchronous. The create response may initially have
+`status: "open"`; poll `fetchOrder(order.id, symbol)` until it becomes closed or
+canceled before treating the execution as final. Because the indexed native
+order is an O2 FOK, a later fetch currently reports `type: "limit"` and
+`timeInForce: "FOK"`. This create/fetch type difference is an alpha limitation.
 
 ## Compatibility details
 
@@ -133,6 +142,9 @@ required: O2 will not submit an unbounded market order through this adapter.
   reverses it to expose the taker's trade direction.
 - Account trades use the account-relative maker/taker direction. Self-trades
   return one trade with `side: null` and retain `trader_side: "both"` in `info`.
+- Price-protected market orders are native FOK orders. Their create response is
+  normalized as `type: "market"`, while subsequent indexed fetches expose the
+  native `type: "limit"` and `timeInForce: "FOK"`.
 - Missing upstream data is represented by `null`; the original parsed O2 model
   remains available in each result's `info` field.
 - `fetchBalance` uses `total_unlocked` as `free` and `total_locked` as `used`.
@@ -140,6 +152,47 @@ required: O2 will not submit an unbounded market order through this adapter.
   double-count funds.
 - `O2CCXT` is an `instanceof ccxt.Exchange` and can use inherited CCXT helpers.
   CCXT remains external to the SDK bundle and optional for users of the core SDK.
+
+## Gotchas and known gaps
+
+- This is an O2-maintained public alpha, not an upstream `ccxt.o2` exchange.
+  The adapter has passed limit and bounded-market lifecycle and soak testing on
+  O2 testnet, but it has not been certified by CCXT or production-canary tested
+  on mainnet. Start with capped balances and independent risk limits.
+- A CCXT `market` order is a price-protected native O2 FOK order, not an
+  unbounded market order. Both `maxPrice` and `minPrice` are required;
+  `maxPrice` protects a buy and `minPrice` protects a sell. The whole amount
+  fills inside the bound or the order fails.
+- Matching and API indexing are asynchronous. A successful create can initially
+  appear open, and a created, filled, or canceled order may not be visible to a
+  read immediately. Poll `fetchOrder(id, symbol)` with bounded backoff before
+  deciding the final state. A temporary missing/stale read is not proof that a
+  private submission failed.
+- The immediate response for a bounded market order reports `type: "market"`;
+  a later indexed fetch reports its native representation as `type: "limit"`
+  with `timeInForce: "FOK"`.
+- The adapter never retries a private submission. A timeout or lost response can
+  leave the outcome unknown even if O2 accepted it. On
+  `O2AmbiguousSubmission`, reconcile orders and the account nonce before taking
+  another action; never blindly submit the same order again.
+- Account setup and session creation are explicit. Restore a saved session when
+  possible, and keep its expiry and permitted markets in mind. `createOrder`
+  defaults `settleFirst` to `true`, which may add a settlement action and
+  latency before order placement.
+- CCXT results use JavaScript `number`; native chain accounting uses scaled
+  integers. Use CCXT precision helpers before submission, and use `info` or the
+  native SDK when exact integer amounts are required for accounting.
+- `since` and `limit` are accepted where CCXT expects them, but the adapter does
+  not automatically paginate unlimited history. Trade requests are capped at
+  50 results per market, and multi-market results are bounded snapshots.
+- Complete ticker statistics, market fee schedules, and per-result fee data are
+  not currently available. Unsupported normalized fields are `null`; do not use
+  them as the sole source for fee or P&L accounting.
+- `fetchOrder` and `cancelOrder` require `symbol`. Self-trades are returned once
+  with `side: null`, with both-side information retained in `info`.
+- CCXT Pro `watch*`, unified deposit, and unified transfer methods are not
+  implemented. Use native O2 streams and account methods, and call `close()`
+  when finished to release client resources.
 
 ## O2 extension methods
 
@@ -153,7 +206,7 @@ required: O2 will not submit an unbounded market order through this adapter.
 These delegate to the native SDK and preserve O2 signing, session, encoding,
 and nonce behavior.
 
-The limit-order lifecycle and a bounded-market fill against controlled
+The limit-order lifecycle and a bounded FOK market fill against controlled
 liquidity have been verified through the adapter on O2 testnet.
 
 ## Error and retry guidance
