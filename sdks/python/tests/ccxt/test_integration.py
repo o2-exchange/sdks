@@ -268,8 +268,7 @@ async def test_bounded_fok_market_order_against_controlled_liquidity() -> None:
             order = await taker_exchange.fetch_order(result["id"], market.pair)
             return (
                 order
-                if order["status"] == "closed"
-                and order["filled"] >= amount - amount_step / 2
+                if order["status"] == "closed" and order["filled"] >= amount - amount_step / 2
                 else None
             )
 

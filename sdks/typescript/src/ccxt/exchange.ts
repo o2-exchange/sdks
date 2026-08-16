@@ -336,6 +336,9 @@ export class O2CCXT extends Exchange {
       if (Number(minPrice) > Number(maxPrice)) {
         throw new InvalidOrder("createOrder market orders require minPrice <= maxPrice");
       }
+      if (price !== undefined && !(price >= Number(minPrice) && price <= Number(maxPrice))) {
+        throw new InvalidOrder("createOrder market price must be between minPrice and maxPrice");
+      }
       nativePrice = price === undefined ? (side === "buy" ? maxPrice : minPrice) : String(price);
       // O2 BoundedMarket is a resting trigger-style order, not an immediate
       // CCXT market order. Emulate bounded execution with a protected FOK.

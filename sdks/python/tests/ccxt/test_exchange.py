@@ -181,6 +181,24 @@ async def test_limit_and_bounded_market_orders() -> None:
                 2,
                 params={"maxPrice": 1.4, "minPrice": 1.6},
             )
+        with pytest.raises(InvalidOrder):
+            await exchange.create_order(
+                "FUEL/USDC",
+                "market",
+                "buy",
+                2,
+                1.7,
+                {"maxPrice": 1.6, "minPrice": 1.4},
+            )
+        with pytest.raises(InvalidOrder):
+            await exchange.create_order(
+                "FUEL/USDC",
+                "market",
+                "sell",
+                2,
+                1.3,
+                {"maxPrice": 1.6, "minPrice": 1.4},
+            )
     finally:
         await exchange.close()
 

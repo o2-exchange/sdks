@@ -360,6 +360,10 @@ class O2CCXT(ccxt.Exchange):
             min_price = _positive_numeric(options, "minPrice")
             if float(min_price) > float(max_price):
                 raise InvalidOrder("create_order market orders require minPrice <= maxPrice")
+            if price is not None and not float(min_price) <= price <= float(max_price):
+                raise InvalidOrder(
+                    "create_order market price must be between minPrice and maxPrice"
+                )
             native_price = (
                 str(price)
                 if price is not None

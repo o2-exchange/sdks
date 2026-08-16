@@ -124,6 +124,8 @@ required: O2 will not submit an unbounded market order through this adapter.
 The adapter executes the order as an O2 `FillOrKill` at `maxPrice` for buys or
 `minPrice` for sells. It either fills the complete amount within the bound or
 fails definitively; it never leaves a residual market order resting.
+If the optional CCXT `price` argument is supplied, it must fall between
+`minPrice` and `maxPrice` and cannot bypass the configured protection.
 
 O2 matching is asynchronous. The create response may initially have
 `status: "open"`; poll `fetchOrder(order.id, symbol)` until it becomes closed or

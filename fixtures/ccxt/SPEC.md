@@ -17,6 +17,8 @@ so importing the core O2 SDK does not require CCXT.
 - Limit and price-bounded FOK market order creation are supported during alpha.
 - CCXT market orders map to O2 `FillOrKill` at `maxPrice` for buys or
   `minPrice` for sells, so the complete amount fills within the bound or fails.
+- If callers supply CCXT's optional positional `price` for a market order, it
+  must be between `minPrice` and `maxPrice`; it cannot override those bounds.
 - Neither adapter retries ambiguous private submissions.
 
 ## Trade side

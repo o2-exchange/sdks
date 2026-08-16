@@ -219,7 +219,7 @@ describe("O2CCXT public alpha", () => {
     );
   });
 
-  it("maps bounded CCXT market orders to O2 BoundedMarket orders", async () => {
+  it("maps bounded CCXT market orders to protected O2 FOK orders", async () => {
     const { client, exchange } = setup();
     const marketOrder: Order = {
       ...RAW_ORDER,
@@ -277,6 +277,18 @@ describe("O2CCXT public alpha", () => {
       exchange.createOrder("FUEL/USDC", "market", "buy", 2, undefined, {
         maxPrice: 1.4,
         minPrice: 1.6,
+      }),
+    ).rejects.toBeInstanceOf(InvalidOrder);
+    await expect(
+      exchange.createOrder("FUEL/USDC", "market", "buy", 2, 1.7, {
+        maxPrice: 1.6,
+        minPrice: 1.4,
+      }),
+    ).rejects.toBeInstanceOf(InvalidOrder);
+    await expect(
+      exchange.createOrder("FUEL/USDC", "market", "sell", 2, 1.3, {
+        maxPrice: 1.6,
+        minPrice: 1.4,
       }),
     ).rejects.toBeInstanceOf(InvalidOrder);
   });

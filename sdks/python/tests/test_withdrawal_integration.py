@@ -27,6 +27,17 @@ async def _wait_for_nonce(client: O2Client, trade_account_id: str, previous: int
     raise AssertionError("Testnet account nonce did not advance within 120 seconds")
 
 
+async def _wait_for_exact_balance(
+    client: O2Client, trade_account_id: str, asset_id: str, expected: int
+) -> None:
+    for _ in range(24):
+        balance = await client.api.get_balance(asset_id=asset_id, contract=trade_account_id)
+        if int(balance.trading_account_balance) == expected:
+            return
+        await asyncio.sleep(5)
+    raise AssertionError(f"Testnet balance did not reach {expected} within 120 seconds")
+
+
 async def test_withdraw_to_address_and_contract_id():
     source_client = O2Client(network=Network.TESTNET)
     recipient_client = O2Client(network=Network.TESTNET)
@@ -75,12 +86,12 @@ async def test_withdraw_to_address_and_contract_id():
             ContractIdentity(str(recipient.trade_account_id)),
         )
         assert contract_result.success, contract_result.message
-
-        after = await source_client.api.get_balance(
-            asset_id=str(asset.asset),
-            contract=str(source_account.trade_account_id),
+        await _wait_for_exact_balance(
+            source_client,
+            str(source_account.trade_account_id),
+            str(asset.asset),
+            before - 2,
         )
-        assert int(after.trading_account_balance) == before - 2
     finally:
         await source_client.close()
         await recipient_client.close()

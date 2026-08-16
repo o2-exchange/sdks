@@ -123,6 +123,8 @@ O2 does not submit unbounded market orders. Both price bounds are required:
 The adapter executes this as an O2 ``FillOrKill`` at ``maxPrice`` for buys or
 ``minPrice`` for sells. The complete amount must fill within the bound; no
 residual market order is left resting.
+If the optional CCXT ``price`` argument is supplied, it must fall between
+``minPrice`` and ``maxPrice`` and cannot bypass the configured protection.
 
 O2 matching is asynchronous. The create response may initially have
 ``status="open"``; poll ``fetch_order(order["id"], symbol)`` until it becomes
