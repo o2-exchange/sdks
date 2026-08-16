@@ -179,7 +179,7 @@ describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
     }
   }, 180_000);
 
-  it("executes a CCXT bounded-market order against controlled liquidity", async () => {
+  it("executes a CCXT bounded FOK market order against controlled liquidity", async () => {
     const persisted = JSON.parse(readFileSync(WALLETS_FILE, "utf8")) as IntegrationWallets;
     const makerSigner = O2Client.loadWallet(persisted.makerPrivateKey);
     const takerSigner = O2Client.loadWallet(persisted.takerPrivateKey);
@@ -283,8 +283,17 @@ describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
       const maker = await makerClient.createOrder(market, "buy", priceString, amountString, {
         orderType: "PostOnly",
       });
-      const makerOrder = maker.orders?.[0];
+      const makerOrder = maker.orders?.[maker.orders.length - 1];
       expect(makerOrder?.order_id).toBeTruthy();
+      await waitFor(async () => {
+        const liveDepth = await makerClient.getDepth(market!, 1);
+        const resting = liveDepth.bids.find((level) => {
+          const levelPrice = Number(level.price) / 10 ** market!.quote.decimals;
+          const levelAmount = Number(level.quantity) / 10 ** market!.base.decimals;
+          return Math.abs(levelPrice - price) < priceStep / 2 && levelAmount >= amount;
+        });
+        return resting ? true : undefined;
+      }, "the controlled maker order to become active in testnet depth");
 
       const maxPrice = (price + priceStep).toFixed(market.quote.max_precision);
       const symbol = market.pair || `${market.base.symbol}/${market.quote.symbol}`;
@@ -296,14 +305,16 @@ describe.skipIf(!INTEGRATION)("O2CCXT testnet lifecycle", () => {
         symbol,
         type: "market",
         side: "sell",
+        amount,
       });
 
-      if (makerOrder) {
-        await waitFor(async () => {
-          const indexed = await makerClient.getOrder(market!, makerOrder.order_id);
-          return indexed.close ? indexed : undefined;
-        }, "the maker order to close after the bounded-market fill");
-      }
+      const indexedTaker = await waitFor(async () => {
+        const indexed = await takerExchange?.fetchOrder(taker.id, symbol);
+        return indexed?.status === "closed" && indexed.filled >= amount - amountStep / 2
+          ? indexed
+          : undefined;
+      }, "the bounded-market order to close in the testnet indexer");
+      expect(indexedTaker.filled).toBeGreaterThanOrEqual(amount - amountStep / 2);
     } finally {
       if (market) {
         await Promise.allSettled([

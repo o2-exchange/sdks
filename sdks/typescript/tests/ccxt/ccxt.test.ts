@@ -1,6 +1,12 @@
 import { Exchange, functions } from "ccxt";
 import { describe, expect, it, vi } from "vitest";
-import { ArgumentsRequired, BadRequest, NotSupported, O2CCXT } from "../../src/ccxt/index.js";
+import {
+  ArgumentsRequired,
+  BadRequest,
+  InvalidOrder,
+  NotSupported,
+  O2CCXT,
+} from "../../src/ccxt/index.js";
 import type { Signer } from "../../src/crypto.js";
 import { Network, O2Client, SessionActionsResponse } from "../../src/index.js";
 import {
@@ -218,15 +224,25 @@ describe("O2CCXT public alpha", () => {
     const marketOrder: Order = {
       ...RAW_ORDER,
       side: "sell",
-      close: true,
-      order_type: { BoundedMarket: { max_price: "1.6", min_price: "1.4" } },
+      quantity: 0n,
+      quantity_fill: undefined,
+      close: false,
+      order_type: "FillOrKill",
+    };
+    const settlementPlaceholder: Order = {
+      ...marketOrder,
+      order_id: orderId(`0x${"00".repeat(32)}`),
+      quantity: 0n,
+      quantity_fill: undefined,
+      price: 0n,
+      close: false,
     };
     const create = vi
       .spyOn(client, "createOrder")
       .mockResolvedValue(
         new SessionActionsResponse(
           txId(`0x${"77".repeat(32)}`),
-          [marketOrder],
+          [settlementPlaceholder, marketOrder],
           null,
           null,
           null,
@@ -240,15 +256,29 @@ describe("O2CCXT public alpha", () => {
     });
 
     expect(create).toHaveBeenCalledWith(MARKET, "sell", "1.4", "2", {
-      orderType: { BoundedMarket: { max_price: "1.6", min_price: "1.4" } },
+      orderType: "FillOrKill",
       settleFirst: true,
       collectOrders: true,
     });
-    expect(order).toMatchObject({ type: "market", side: "sell", status: "closed" });
+    expect(order).toMatchObject({
+      id: marketOrder.order_id,
+      type: "market",
+      side: "sell",
+      amount: 2,
+      filled: 0,
+      remaining: 2,
+      status: "open",
+    });
 
     await expect(
       exchange.createOrder("FUEL/USDC", "market", "buy", 2, undefined, { maxPrice: 1.6 }),
     ).rejects.toBeInstanceOf(ArgumentsRequired);
+    await expect(
+      exchange.createOrder("FUEL/USDC", "market", "buy", 2, undefined, {
+        maxPrice: 1.4,
+        minPrice: 1.6,
+      }),
+    ).rejects.toBeInstanceOf(InvalidOrder);
   });
 
   it("requires a symbol for O2 order lookups and maps open orders", async () => {

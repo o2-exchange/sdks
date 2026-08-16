@@ -333,8 +333,13 @@ export class O2CCXT extends Exchange {
     } else {
       const maxPrice = requiredPositiveNumeric(params, "maxPrice");
       const minPrice = requiredPositiveNumeric(params, "minPrice");
+      if (Number(minPrice) > Number(maxPrice)) {
+        throw new InvalidOrder("createOrder market orders require minPrice <= maxPrice");
+      }
       nativePrice = price === undefined ? (side === "buy" ? maxPrice : minPrice) : String(price);
-      orderType = { BoundedMarket: { max_price: maxPrice, min_price: minPrice } };
+      // O2 BoundedMarket is a resting trigger-style order, not an immediate
+      // CCXT market order. Emulate bounded execution with a protected FOK.
+      orderType = "FillOrKill";
     }
     const response = this.ensureActionResponse(
       await this.submit(() =>
@@ -345,14 +350,25 @@ export class O2CCXT extends Exchange {
         }),
       ),
     );
-    const rawOrder = response.orders?.[0];
+    // Native createOrder appends CreateOrder after its optional SettleBalance
+    // action, so the collected create-order result is the final entry.
+    const rawOrder = response.orders?.[response.orders.length - 1];
     if (!rawOrder) {
       throw new O2AmbiguousSubmission(
         "O2 accepted createOrder but returned no order. Reconcile orders and account nonce before retrying.",
         { transactionId: response.txId },
       );
     }
-    return parseOrder(rawOrder, market) as unknown as CCXTOfficialOrder;
+    const parsed = parseOrder(rawOrder, market);
+    const responseOmitsAmount = parsed.amount === 0 && amount > 0;
+    return {
+      ...parsed,
+      type: normalizedType === "market" ? "market" : parsed.type,
+      amount: responseOmitsAmount ? amount : parsed.amount,
+      filled: responseOmitsAmount ? 0 : parsed.filled,
+      remaining: responseOmitsAmount ? amount : parsed.remaining,
+      cost: responseOmitsAmount ? 0 : parsed.cost,
+    } as unknown as CCXTOfficialOrder;
   }
 
   override async cancelOrder(
