@@ -222,7 +222,15 @@ class O2Api:
 
     async def get_market_ticker(self, market_id: str) -> MarketTicker:
         data = await self._request("GET", "/v1/markets/ticker", params={"market_id": market_id})
-        return MarketTicker.from_dict(data)
+        # The live endpoint returns a one-item list even when market_id is
+        # supplied. Accept the historical object shape as well.
+        if isinstance(data, list):
+            if not data:
+                raise O2Error(message=f"No ticker returned for market {market_id}")
+            data = data[0]
+        if not isinstance(data, dict):
+            raise O2Error(message=f"Invalid ticker response for market {market_id}")
+        return MarketTicker.from_dict({"market_id": market_id, **data})
 
     async def get_depth(
         self,

@@ -156,7 +156,13 @@ class O2CCXT(ccxt.Exchange):
         return await self._read(self._fetch_markets)
 
     async def _fetch_markets(self) -> list[CCXTObject]:
-        return [parse_market(market) for market in await self.o2_client.get_markets()]
+        # CCXT keys markets by symbol. Test/private O2 books without public
+        # asset symbols would otherwise collapse into the same "/" market.
+        return [
+            parse_market(market)
+            for market in await self.o2_client.get_markets()
+            if market.base.symbol.strip() and market.quote.symbol.strip()
+        ]
 
     async def fetch_ticker(self, symbol: str, params: Params | None = None) -> CCXTObject:
         del params

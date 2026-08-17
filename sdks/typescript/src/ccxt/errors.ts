@@ -78,16 +78,18 @@ function isNetworkFailure(error: unknown): boolean {
   return (
     error.name === "AbortError" ||
     error.name === "TimeoutError" ||
-    /network|fetch failed|socket|connection|timeout/i.test(error.message)
+    /network|fetch failed|socket|connection|response (?:was )?lost|timeout/i.test(error.message)
   );
 }
 
-function hasInsufficientFundsReason(error: OnChainRevertError): boolean {
+function hasInsufficientFundsReason(error: O2Error): boolean {
   return /not.?enough.?balance|insufficient.?funds/i.test(`${error.reason ?? ""} ${error.message}`);
 }
 
 function hasInvalidOrderReason(error: O2Error): boolean {
-  return /min_order|order value below|invalid (?:order|price|quantity)/i.test(error.message);
+  return /min_order|order value below|invalid (?:order|price|quantity)|order(?:not|partially)filled|post.?only order|fill.?or.?kill order/i.test(
+    error.message,
+  );
 }
 
 export function mapO2Error(
@@ -124,7 +126,7 @@ export function mapO2Error(
   if (error instanceof InvalidOrderParams || error instanceof O2InvalidAmount) {
     return withOriginalError(new InvalidOrder(error.message), error);
   }
-  if (error instanceof OnChainRevertError && hasInsufficientFundsReason(error)) {
+  if (error instanceof O2Error && hasInsufficientFundsReason(error)) {
     return withOriginalError(new InsufficientFunds(error.message), error);
   }
   if (error instanceof OnChainRevertError) {

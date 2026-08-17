@@ -143,7 +143,11 @@ export class O2CCXT extends Exchange {
   override async fetchMarkets(_params: CCXTParams = {}): Promise<CCXTOfficialMarket[]> {
     return this.read(
       async () =>
-        (await this.o2Client.getMarkets()).map(parseMarket) as unknown as CCXTOfficialMarket[],
+        (await this.o2Client.getMarkets())
+          // CCXT keys markets by symbol. Test/private O2 books without public
+          // asset symbols would otherwise collapse into the same "/" market.
+          .filter((market) => market.base.symbol.trim() !== "" && market.quote.symbol.trim() !== "")
+          .map(parseMarket) as unknown as CCXTOfficialMarket[],
     );
   }
 

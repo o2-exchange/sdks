@@ -30,6 +30,7 @@ from o2_sdk.errors import (
     InvalidSession,
     InvalidSignature,
     MarketNotFound,
+    O2Error,
     OnChainRevert,
     SessionExpired,
 )
@@ -100,8 +101,11 @@ def _is_network_failure(error: object) -> bool:
     return False
 
 
-def _has_insufficient_funds(error: OnChainRevert) -> bool:
-    text = f"{error.reason or ''} {error.raw_reason or ''} {error.message}"
+def _has_insufficient_funds(error: O2Error) -> bool:
+    text = (
+        f"{getattr(error, 'reason', '') or ''} "
+        f"{getattr(error, 'raw_reason', '') or ''} {error.message}"
+    )
     return bool(re.search(r"not.?enough.?balance|insufficient.?funds", text, re.IGNORECASE))
 
 
@@ -109,7 +113,8 @@ def _has_invalid_order(error: BaseException) -> bool:
     return bool(
         re.search(
             r"min_order|order value below|invalid (?:order|price|quantity)|"
-            r"PricePrecision|FractionalPrice",
+            r"PricePrecision|FractionalPrice|Order(?:Not|Partially)Filled|"
+            r"Post.?Only order|Fill.?Or.?Kill order",
             str(error),
             re.IGNORECASE,
         )
@@ -137,7 +142,7 @@ def map_o2_error(error: object, context: ErrorContext = "read") -> BaseError:
         return _with_original(OrderNotFound(str(error)), error)
     if isinstance(error, (InvalidOrderParams, InvalidAmount)):
         return _with_original(InvalidOrder(str(error)), error)
-    if isinstance(error, OnChainRevert) and _has_insufficient_funds(error):
+    if isinstance(error, O2Error) and _has_insufficient_funds(error):
         return _with_original(InsufficientFunds(str(error)), error)
     if isinstance(error, OnChainRevert):
         return _with_original(InvalidOrder(str(error)), error)

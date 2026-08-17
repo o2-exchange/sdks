@@ -167,6 +167,10 @@ Gotchas and known gaps
   possible, and keep its expiry and permitted markets in mind. ``create_order``
   defaults ``settleFirst`` to ``True``, which may add a settlement action and
   latency before order placement.
+* Check a restored session's permitted contract IDs before submitting. Testnet
+  currently reports some unauthorized-market actions only as a generic
+  ``FAILED_REQUIRE`` revert, so the adapter must surface ``ExchangeError`` when
+  O2 provides no semantic session error to map more precisely.
 * CCXT results use Python ``float`` values; native chain accounting uses scaled
   integers and ``Decimal`` values. Use CCXT precision helpers before submission,
   and use ``info`` or the native SDK when exact amounts are required for

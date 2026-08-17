@@ -181,6 +181,10 @@ order is an O2 FOK, a later fetch currently reports `type: "limit"` and
   possible, and keep its expiry and permitted markets in mind. `createOrder`
   defaults `settleFirst` to `true`, which may add a settlement action and
   latency before order placement.
+- Check a restored session's permitted contract IDs before submitting. Testnet
+  currently reports some unauthorized-market actions only as a generic
+  `FAILED_REQUIRE` revert, so the adapter must surface `ExchangeError` when O2
+  provides no semantic session error to map more precisely.
 - CCXT results use JavaScript `number`; native chain accounting uses scaled
   integers. Use CCXT precision helpers before submission, and use `info` or the
   native SDK when exact integer amounts are required for accounting.
