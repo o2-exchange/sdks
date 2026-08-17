@@ -48,3 +48,8 @@ Adapters use official CCXT error classes. Errors are compatible with
 An accepted private request whose response is missing or lost raises
 `O2AmbiguousSubmission`. The adapter must not retry it. Callers must reconcile
 orders and account nonce before resubmitting.
+
+The cases in `raw/errors.json` and class names in `expected/errors.json` are a
+cross-language contract. TypeScript and Python must map every case to the same
+official CCXT category (or the O2 ambiguity subclass) before either adapter is
+released.

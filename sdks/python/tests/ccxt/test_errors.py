@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from pathlib import Path
 
 import aiohttp
 import ccxt
@@ -8,6 +10,8 @@ import pytest
 
 from o2_sdk.ccxt import O2AmbiguousSubmission, map_o2_error
 from o2_sdk.errors import InvalidSession, O2Error, OnChainRevert, RateLimitExceeded
+
+FIXTURES = Path(__file__).resolve().parents[4] / "fixtures" / "ccxt"
 
 
 def test_maps_official_ccxt_error_categories() -> None:
@@ -22,6 +26,41 @@ def test_maps_official_ccxt_error_categories() -> None:
     assert isinstance(funds, ccxt.InsufficientFunds)
     assert isinstance(rate, ccxt.RateLimitExceeded)
     assert isinstance(invalid, ccxt.InvalidOrder)
+
+
+def test_matches_shared_cross_language_error_contract() -> None:
+    cases = json.loads((FIXTURES / "raw/errors.json").read_text())
+    expected = json.loads((FIXTURES / "expected/errors.json").read_text())
+
+    actual = {}
+    for entry in cases:
+        native = (
+            O2Error(entry["message"])
+            if entry["kind"] == "o2"
+            else ConnectionError(entry["message"])
+        )
+        context = "private_submission" if entry["context"] == "private" else "read"
+        actual[entry["id"]] = type(map_o2_error(native, context)).__name__
+
+    assert actual == expected
+
+
+def test_maps_direct_order_and_balance_rejections() -> None:
+    no_fill = map_o2_error(
+        O2Error("OrderCreationError::OrderNotFilled — FillOrKill order could not be fully filled."),
+        "private_submission",
+    )
+    crossing = map_o2_error(
+        O2Error(
+            "OrderCreationError::OrderPartiallyFilled — PostOnly order would cross the spread."
+        ),
+        "private_submission",
+    )
+    funds = map_o2_error(O2Error("NotEnoughBalance"), "private_submission")
+
+    assert isinstance(no_fill, ccxt.InvalidOrder)
+    assert isinstance(crossing, ccxt.InvalidOrder)
+    assert isinstance(funds, ccxt.InsufficientFunds)
 
 
 def test_private_network_failure_is_ambiguous() -> None:

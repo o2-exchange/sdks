@@ -1,0 +1,38 @@
+[
+  {
+    "id": "insufficient-funds",
+    "kind": "o2",
+    "message": "NotEnoughBalance",
+    "context": "private"
+  },
+  {
+    "id": "fok-not-filled",
+    "kind": "o2",
+    "message": "OrderCreationError::OrderNotFilled — FillOrKill order could not be fully filled.",
+    "context": "private"
+  },
+  {
+    "id": "post-only-cross",
+    "kind": "o2",
+    "message": "OrderCreationError::OrderPartiallyFilled — PostOnly order would cross the spread.",
+    "context": "private"
+  },
+  {
+    "id": "minimum-order",
+    "kind": "o2",
+    "message": "Order value below min_order",
+    "context": "private"
+  },
+  {
+    "id": "read-transport",
+    "kind": "transport",
+    "message": "socket closed",
+    "context": "read"
+  },
+  {
+    "id": "private-transport",
+    "kind": "transport",
+    "message": "response lost",
+    "context": "private"
+  }
+]

@@ -83,6 +83,27 @@ async def test_is_official_async_exchange_and_loads_markets() -> None:
         await exchange.close()
 
 
+async def test_excludes_private_books_without_public_asset_symbols() -> None:
+    client, exchange = setup_exchange()
+    private_book = Market(
+        contract_id=Id("0x" + "77" * 32),
+        market_id=Id("0x" + "88" * 32),
+        maker_fee="0",
+        taker_fee="10",
+        min_order="1000000",
+        dust="0",
+        price_window=0,
+        base=MarketAsset("", "0x" + "99" * 32, 9, 4),
+        quote=MarketAsset("", "0x" + "aa" * 32, 6, 3),
+    )
+    client.get_markets = AsyncMock(return_value=[MARKET, private_book])  # type: ignore[method-assign]
+    try:
+        markets = await exchange.fetch_markets()
+        assert [market["symbol"] for market in markets] == ["FUEL/USDC"]
+    finally:
+        await exchange.close()
+
+
 async def test_market_data_and_balance_mapping() -> None:
     client, exchange = setup_exchange()
     client.get_depth = AsyncMock(  # type: ignore[method-assign]

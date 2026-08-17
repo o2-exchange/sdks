@@ -99,6 +99,21 @@ describe("O2CCXT public alpha", () => {
     expect(client.getMarkets).toHaveBeenCalledTimes(1);
   });
 
+  it("excludes private books without public asset symbols", async () => {
+    const { client, exchange } = setup();
+    const privateBook: Market = {
+      ...MARKET,
+      market_id: marketId(`0x${"55".repeat(32)}`),
+      base: { ...MARKET.base, symbol: "" },
+      quote: { ...MARKET.quote, symbol: "" },
+    };
+    vi.mocked(client.getMarkets).mockResolvedValue([MARKET, privateBook]);
+
+    const markets = await exchange.fetchMarkets();
+
+    expect(markets.map((market) => market.symbol)).toEqual(["FUEL/USDC"]);
+  });
+
   it("converts depth and public trades from chain units", async () => {
     const { client, exchange } = setup();
     const getDepth = vi.spyOn(client, "getDepth").mockResolvedValue({
