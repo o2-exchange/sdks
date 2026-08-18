@@ -1424,7 +1424,7 @@ class O2Client:
         logger.info("Withdrawing %s %s", amount, asset)
 
         ################################################
-        # For specified nonces, 
+        # For specified nonces,
         # pick their corresponding withdraw method
         ################################################
         if isinstance(nonce, int):
@@ -1443,10 +1443,10 @@ class O2Client:
                 to,
                 nonce=nonce,
             )
-        
+
         ################################################
-        # If no nonce was specified, 
-        # automatically pick a withdraw strategy 
+        # If no nonce was specified,
+        # automatically pick a withdraw strategy
         # depending on configuration
         ################################################
 
