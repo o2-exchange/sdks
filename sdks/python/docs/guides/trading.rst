@@ -244,5 +244,9 @@ Withdraw funds from the trading account:
 
 .. note::
 
-   Withdrawals require the **owner** key (not the session key) and use
-   ``personalSign``.
+   Withdrawals require the **owner** key, not the session key. With a matching
+   active parallel session they automatically draw from its parallel nonce
+   manager and use typed-data signing; otherwise they use the cached
+   sequential nonce and ``personalSign``. Pass an ``int`` as ``nonce`` for an
+   exact sequential override, or a ``ParallelNonce`` object for an exact
+   parallel override.

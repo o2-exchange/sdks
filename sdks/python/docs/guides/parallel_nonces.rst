@@ -42,7 +42,36 @@ Quick start
 
 Once the session exists, parallel nonces are an invariant rather than a mode:
 :meth:`~o2_sdk.client.O2Client.batch_actions` draws a fresh slot per submission
-internally. The only knobs are set at session creation.
+internally. Owner-signed withdrawals for that same trade account draw from the
+same manager, so concurrent actions and withdrawals do not reuse a slot.
+
+
+Parallel withdrawals
+--------------------
+
+With a matching active parallel session, a withdrawal uses ``par_withdraw``
+automatically:
+
+.. code-block:: python
+
+   session = await client.ensure_parallel_session(owner, ["FUEL/USDC"])
+   await client.withdraw(owner, "USDC", 10.0)
+
+The owner signs an SRC-16 digest for Fuel-native owners or an EIP-712 digest
+for zero-padded EVM owners. This calls
+:meth:`~o2_sdk.crypto.Signer.sign_digest`, not ``personal_sign``. A custom
+signer that never uses parallel withdrawals may implement ``sign_digest`` by
+raising :class:`NotImplementedError`; that path is only called for typed
+operations.
+
+Pass ``nonce=...`` to override selection. An ``int`` is an exact sequential
+nonce; a :class:`~o2_sdk.nonce.ParallelNonce` object is an exact parallel
+nonce. The SDK never substitutes or retries an explicit override with a
+different nonce. An explicit parallel override also bypasses the manager, so
+its caller is responsible for coordinating that slot with every other
+submitter. If there is no override and no matching parallel manager,
+withdrawal falls back to the account's cached sequential nonce, just like the
+other owner actions.
 
 
 Capability cannot be read, only probed
