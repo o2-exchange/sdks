@@ -315,6 +315,28 @@ describe("O2CCXT public alpha", () => {
       status: "open",
     });
 
+    create.mockClear();
+    await exchange.createMarketOrder("FUEL/USDC", "buy", 2, undefined, {
+      maxPrice: 1.6009,
+      minPrice: 1.4,
+    });
+    expect(create).toHaveBeenLastCalledWith(MARKET, "buy", "1.6", "2", {
+      orderType: "FillOrKill",
+      settleFirst: true,
+      collectOrders: true,
+    });
+
+    create.mockClear();
+    await exchange.createMarketOrder("FUEL/USDC", "sell", 2, undefined, {
+      maxPrice: 1.6,
+      minPrice: 1.4001,
+    });
+    expect(create).toHaveBeenLastCalledWith(MARKET, "sell", "1.401", "2", {
+      orderType: "FillOrKill",
+      settleFirst: true,
+      collectOrders: true,
+    });
+
     await expect(
       exchange.createOrder("FUEL/USDC", "market", "buy", 2, undefined, { maxPrice: 1.6 }),
     ).rejects.toBeInstanceOf(ArgumentsRequired);

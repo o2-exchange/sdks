@@ -9,7 +9,7 @@ import type {
   Ticker,
   Transaction,
 } from "ccxt";
-import { Exchange, functions } from "ccxt";
+import { Exchange, functions, Precise } from "ccxt";
 import type { MarketActionGroup, Numeric } from "../actions.js";
 import { O2Client } from "../client.js";
 import type { Network } from "../config.js";
@@ -60,6 +60,27 @@ function requiredPositiveNumeric(params: CCXTParams, key: string): Numeric {
   throw new ArgumentsRequired(
     `createOrder market orders require a positive params.${key} O2 price bound`,
   );
+}
+
+function protectedPriceToPrecision(value: Numeric, side: OrderSide, precision: number): string {
+  const input = String(value);
+  const truncated = functions.decimalToPrecision(
+    input,
+    functions.TRUNCATE,
+    precision,
+    functions.DECIMAL_PLACES,
+  );
+  if (side === "buy") {
+    if (Precise.stringLe(truncated, "0")) {
+      throw new InvalidOrder("createOrder market maxPrice is below the minimum price precision");
+    }
+    return truncated;
+  }
+  if (Precise.stringGe(truncated, input)) return truncated;
+  const step = precision === 0 ? "1" : `0.${"0".repeat(precision - 1)}1`;
+  const incremented = Precise.stringAdd(truncated, step);
+  if (incremented === undefined) throw new InvalidOrder("createOrder requires a valid price");
+  return incremented;
 }
 
 /**
@@ -348,12 +369,11 @@ export class O2CCXT extends Exchange {
       if (price !== undefined && !(price >= Number(minPrice) && price <= Number(maxPrice))) {
         throw new InvalidOrder("createOrder market price must be between minPrice and maxPrice");
       }
-      const formattedPrice = this.priceToPrecision(
-        symbol,
-        Number(price === undefined ? (side === "buy" ? maxPrice : minPrice) : price),
+      const formattedPrice = protectedPriceToPrecision(
+        price === undefined ? (side === "buy" ? maxPrice : minPrice) : String(price),
+        side,
+        market.precision.price,
       );
-      if (formattedPrice === undefined)
-        throw new InvalidOrder("createOrder requires a valid price");
       nativePrice = formattedPrice;
       // O2 BoundedMarket is a resting trigger-style order, not an immediate
       // CCXT market order. Emulate bounded execution with a protected FOK.
