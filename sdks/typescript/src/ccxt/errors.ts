@@ -86,6 +86,21 @@ function hasInsufficientFundsReason(error: O2Error): boolean {
   return /not.?enough.?balance|insufficient.?funds/i.test(`${error.reason ?? ""} ${error.message}`);
 }
 
+function isNamedNativeError<T extends Error>(
+  error: unknown,
+  ErrorClass: abstract new (...args: never[]) => T,
+  name: string,
+): error is T {
+  return error instanceof ErrorClass || (error instanceof Error && error.name === name);
+}
+
+function isO2ErrorLike(error: unknown): error is O2Error {
+  return (
+    error instanceof O2Error ||
+    (error instanceof Error && "code" in error && "reason" in error && "receipts" in error)
+  );
+}
+
 function hasInvalidOrderReason(error: O2Error): boolean {
   return /min_order|order value below|invalid (?:order|price|quantity)|order(?:not|partially)filled|post.?only order|fill.?or.?kill order/i.test(
     error.message,
@@ -107,32 +122,35 @@ export function mapO2Error(
     return withOriginalError(new NetworkError("O2 network request failed"), error);
   }
   if (
-    error instanceof InvalidSession ||
-    error instanceof InvalidSignature ||
-    error instanceof SessionExpired ||
-    error instanceof O2AccountNotFound
+    isNamedNativeError(error, InvalidSession, "InvalidSession") ||
+    isNamedNativeError(error, InvalidSignature, "InvalidSignature") ||
+    isNamedNativeError(error, SessionExpired, "SessionExpired") ||
+    isNamedNativeError(error, O2AccountNotFound, "AccountNotFound")
   ) {
     return withOriginalError(new AuthenticationError(error.message), error);
   }
-  if (error instanceof O2RateLimitExceeded) {
+  if (isNamedNativeError(error, O2RateLimitExceeded, "RateLimitExceeded")) {
     return withOriginalError(new RateLimitExceeded(error.message), error);
   }
-  if (error instanceof MarketNotFound) {
+  if (isNamedNativeError(error, MarketNotFound, "MarketNotFound")) {
     return withOriginalError(new BadSymbol(error.message), error);
   }
-  if (error instanceof O2OrderNotFound) {
+  if (isNamedNativeError(error, O2OrderNotFound, "OrderNotFound")) {
     return withOriginalError(new OrderNotFound(error.message), error);
   }
-  if (error instanceof InvalidOrderParams || error instanceof O2InvalidAmount) {
+  if (
+    isNamedNativeError(error, InvalidOrderParams, "InvalidOrderParams") ||
+    isNamedNativeError(error, O2InvalidAmount, "InvalidAmount")
+  ) {
     return withOriginalError(new InvalidOrder(error.message), error);
   }
-  if (error instanceof O2Error && hasInsufficientFundsReason(error)) {
+  if (isO2ErrorLike(error) && hasInsufficientFundsReason(error)) {
     return withOriginalError(new InsufficientFunds(error.message), error);
   }
-  if (error instanceof OnChainRevertError) {
+  if (isNamedNativeError(error, OnChainRevertError, "OnChainRevertError")) {
     return withOriginalError(new InvalidOrder(error.message), error);
   }
-  if (error instanceof O2Error && hasInvalidOrderReason(error)) {
+  if (isO2ErrorLike(error) && hasInvalidOrderReason(error)) {
     return withOriginalError(new InvalidOrder(error.message), error);
   }
   if (error instanceof O2Error || error instanceof Error) {

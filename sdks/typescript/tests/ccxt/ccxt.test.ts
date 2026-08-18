@@ -234,6 +234,36 @@ describe("O2CCXT public alpha", () => {
     );
   });
 
+  it("passes tiny numeric prices and amounts to the native client as decimal strings", async () => {
+    const { client, exchange } = setup();
+    const tinyMarket: Market = {
+      ...MARKET,
+      base: { ...MARKET.base, max_precision: 9 },
+      quote: { ...MARKET.quote, max_precision: 7 },
+    };
+    vi.mocked(client.getMarkets).mockResolvedValue([tinyMarket]);
+    const create = vi
+      .spyOn(client, "createOrder")
+      .mockResolvedValue(
+        new SessionActionsResponse(
+          txId(`0x${"77".repeat(32)}`),
+          [RAW_ORDER],
+          null,
+          null,
+          null,
+          null,
+        ),
+      );
+
+    await exchange.createOrder("FUEL/USDC", "limit", "buy", 0.00000002, 0.0000001);
+
+    expect(create).toHaveBeenCalledWith(tinyMarket, "buy", "0.0000001", "0.00000002", {
+      orderType: "Spot",
+      settleFirst: true,
+      collectOrders: true,
+    });
+  });
+
   it("maps bounded CCXT market orders to protected O2 FOK orders", async () => {
     const { client, exchange } = setup();
     const marketOrder: Order = {

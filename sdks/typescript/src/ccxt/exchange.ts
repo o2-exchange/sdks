@@ -328,11 +328,16 @@ export class O2CCXT extends Exchange {
     }
     if (side !== "buy" && side !== "sell") throw new InvalidOrder(`Invalid order side: ${side}`);
     const market = await this.resolveMarket(symbol);
+    const nativeAmount = this.amountToPrecision(symbol, amount);
+    if (nativeAmount === undefined) throw new InvalidOrder("createOrder requires a valid amount");
     let nativePrice: Numeric;
     let orderType: OrderType;
     if (normalizedType === "limit") {
       if (price === undefined) throw new ArgumentsRequired("createOrder requires a limit price");
-      nativePrice = String(price);
+      const formattedPrice = this.priceToPrecision(symbol, price);
+      if (formattedPrice === undefined)
+        throw new InvalidOrder("createOrder requires a valid price");
+      nativePrice = formattedPrice;
       orderType = (params.orderType as OrderType | undefined) ?? "Spot";
     } else {
       const maxPrice = requiredPositiveNumeric(params, "maxPrice");
@@ -343,14 +348,20 @@ export class O2CCXT extends Exchange {
       if (price !== undefined && !(price >= Number(minPrice) && price <= Number(maxPrice))) {
         throw new InvalidOrder("createOrder market price must be between minPrice and maxPrice");
       }
-      nativePrice = price === undefined ? (side === "buy" ? maxPrice : minPrice) : String(price);
+      const formattedPrice = this.priceToPrecision(
+        symbol,
+        Number(price === undefined ? (side === "buy" ? maxPrice : minPrice) : price),
+      );
+      if (formattedPrice === undefined)
+        throw new InvalidOrder("createOrder requires a valid price");
+      nativePrice = formattedPrice;
       // O2 BoundedMarket is a resting trigger-style order, not an immediate
       // CCXT market order. Emulate bounded execution with a protected FOK.
       orderType = "FillOrKill";
     }
     const response = this.ensureActionResponse(
       await this.submit(() =>
-        this.o2Client.createOrder(market.info, side, nativePrice, String(amount), {
+        this.o2Client.createOrder(market.info, side, nativePrice, nativeAmount, {
           orderType,
           settleFirst: optionalBoolean(params, "settleFirst", true),
           collectOrders: true,

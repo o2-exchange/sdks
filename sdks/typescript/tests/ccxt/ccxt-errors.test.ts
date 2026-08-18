@@ -9,6 +9,7 @@ import {
   NetworkError,
   O2AmbiguousSubmission,
   O2CCXT,
+  OrderNotFound,
   RateLimitExceeded,
 } from "../../src/ccxt/index.js";
 import {
@@ -67,6 +68,18 @@ function setup() {
 }
 
 describe("official CCXT error mapping", () => {
+  it("maps native errors created by a separately bundled core entry point", () => {
+    const foreignOrderNotFound = new Error("missing");
+    foreignOrderNotFound.name = "OrderNotFound";
+    Object.assign(foreignOrderNotFound, {
+      code: 3000,
+      reason: undefined,
+      receipts: undefined,
+    });
+
+    expect(mapO2Error(foreignOrderNotFound)).toBeInstanceOf(OrderNotFound);
+  });
+
   it("matches the shared cross-language error contract", () => {
     const cases = JSON.parse(
       readFileSync(new URL("raw/errors.json", FIXTURES), "utf8"),
