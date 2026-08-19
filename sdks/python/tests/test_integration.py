@@ -9,10 +9,7 @@ import contextlib
 import json
 import math
 from pathlib import Path
-from typing import Any
 
-from o2_sdk.crypto import Wallet
-from o2_sdk.models import Market, SessionInfo
 import pytest
 
 from o2_sdk import (
@@ -29,6 +26,8 @@ from o2_sdk import (
 )
 from o2_sdk.api import O2Api
 from o2_sdk.config import get_config
+from o2_sdk.crypto import Wallet
+from o2_sdk.models import Market, SessionInfo
 
 pytestmark = pytest.mark.integration
 
