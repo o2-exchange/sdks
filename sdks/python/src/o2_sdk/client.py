@@ -1552,35 +1552,55 @@ class O2Client:
         scaled_amount = int(amount * (10**decimals))
         asset_id_bytes = bytes.fromhex(asset_id[2:])
 
-        if nonce is None:
-            session = self._session
-            manager = session.nonce_manager if session is not None else None
-            if session is None or session.owner_address != owner.b256_address or manager is None:
-                raise O2Error(message="No active parallel nonce manager for owner")
+        async def submit(selected_nonce: int) -> WithdrawResponse:
+            digest = parallel_withdraw_digest(
+                owner_b256=owner.address_bytes,
+                chain_id=markets_resp.chain_id_int,
+                verifying_contract=bytes.fromhex(str(trade_account_id)[2:]),
+                nonce=selected_nonce,
+                to=destination.address_bytes,
+                amount=scaled_amount,
+                asset_id=asset_id_bytes,
+            )
+            signature = owner.sign_digest(digest)
+            withdraw_request = {
+                "trade_account_id": trade_account_id,
+                "signature": {"TypedSecp256k1": "0x" + signature.hex()},
+                "parallel_nonce": str(selected_nonce),
+                "to": destination.to_dict(),
+                "asset_id": asset_id,
+                "amount": str(scaled_amount),
+            }
+            return await self.api.withdraw(owner.b256_address, withdraw_request)
+
+        # Explicit overrides are exact pass-throughs. In particular, do not
+        # replace or retry one just because a manager happens to be active.
+        if nonce is not None:
+            return await submit(nonce.encode())
+
+        session = self._session
+        manager = session.nonce_manager if session is not None else None
+        if session is None or session.owner_address != owner.b256_address or manager is None:
+            raise O2Error(message="No active parallel nonce manager for owner")
+
+        resynced = False
+        while True:
+            generation = manager.resync_generation
             selected_nonce = manager.next_nonce()
-        else:
-            selected_nonce = nonce.encode()
-
-        digest = parallel_withdraw_digest(
-            owner_b256=owner.address_bytes,
-            chain_id=markets_resp.chain_id_int,
-            verifying_contract=bytes.fromhex(str(trade_account_id)[2:]),
-            nonce=selected_nonce,
-            to=destination.address_bytes,
-            amount=scaled_amount,
-            asset_id=asset_id_bytes,
-        )
-        signature = owner.sign_digest(digest)
-        withdraw_request = {
-            "trade_account_id": trade_account_id,
-            "signature": {"TypedSecp256k1": "0x" + signature.hex()},
-            "parallel_nonce": str(selected_nonce),
-            "to": destination.to_dict(),
-            "asset_id": asset_id,
-            "amount": str(scaled_amount),
-        }
-
-        return await self.api.withdraw(owner.b256_address, withdraw_request)
+            try:
+                return await submit(selected_nonce)
+            except O2Error as exc:
+                if is_parallel_nonce_already_used(exc):
+                    try:
+                        await manager.resync_from_chain(generation)
+                    except Exception:
+                        logger.warning("cursor resync after an already-used nonce failed")
+                    raise
+                if resynced or not is_parallel_nonce_out_of_window(exc):
+                    raise
+                logger.warning("parallel withdrawal nonce out of window; resyncing cursor")
+                resynced = True
+                await manager.resync_from_chain(generation)
 
     # -----------------------------------------------------------------------
     # Nonce management

@@ -617,7 +617,9 @@ Withdrawals
    This method signs with the **owner** key, not the session key. Without a
    nonce override, it uses the active matching parallel session's nonce
    manager when available; otherwise it uses the same cached sequential nonce
-   strategy as other owner actions.
+   strategy as other owner actions. For a manager-owned nonce, an out-of-window
+   rejection triggers one resync and retry. An already-used rejection resyncs
+   manager state but is raised without retrying.
 
    :param owner: The owner wallet or external signer.
    :type owner: :class:`~o2_sdk.crypto.Signer`

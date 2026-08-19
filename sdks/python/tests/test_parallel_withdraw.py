@@ -229,6 +229,11 @@ async def test_explicit_parallel_nonce_is_exact_and_not_retried(
     client = O2Client()
     client._markets_cache = _markets()
     owner = _Owner()
+    session = await _parallel_session(client)
+    manager = session.nonce_manager
+    assert manager is not None
+    cursor_before = manager.cursor
+    generation_before = manager.resync_generation
     override = ParallelNonce(1, 1_900_000_120, 3, 4)
     submissions: list[dict] = []
 
@@ -244,10 +249,12 @@ async def test_explicit_parallel_nonce_is_exact_and_not_retried(
 
     assert len(submissions) == 1
     assert submissions[0]["parallel_nonce"] == str(override.encode())
+    assert manager.cursor == cursor_before
+    assert manager.resync_generation == generation_before
 
 
 @pytest.mark.asyncio
-async def test_managed_parallel_withdraw_surfaces_out_of_window_without_retry(
+async def test_managed_parallel_withdraw_resyncs_out_of_window_and_retries_once(
     monkeypatch: pytest.MonkeyPatch,
 ):
     client = O2Client()
@@ -258,7 +265,11 @@ async def test_managed_parallel_withdraw_surfaces_out_of_window_without_retry(
     async def fetch_window() -> WindowResponse:
         nonlocal window_fetches
         window_fetches += 1
-        return WindowResponse(nonce_session_id=0, base=0, slots=[])
+        return WindowResponse(
+            nonce_session_id=0,
+            base=0 if window_fetches == 1 else 2,
+            slots=[],
+        )
 
     manager = ParallelNonceManager(window_fetcher=fetch_window, clock=lambda: 1_900_000_000)
     await manager.init()
@@ -277,20 +288,72 @@ async def test_managed_parallel_withdraw_surfaces_out_of_window_without_retry(
 
     async def withdraw(_owner_id: str, request: dict) -> WithdrawResponse:
         submissions.append(int(request["parallel_nonce"]))
-        raise O2Error(message="Parallel nonce is not usable: word position out of sliding window")
+        if len(submissions) == 1:
+            raise O2Error(
+                message="Parallel nonce is not usable: word position out of sliding window"
+            )
+        return WithdrawResponse(tx_id="0x" + "ab" * 32)
 
     monkeypatch.setattr(client.api, "withdraw", withdraw)
-    with pytest.raises(O2Error, match="out of sliding window"):
-        await client.withdraw(owner, "USDC", 1.0)
+    result = await client.withdraw(owner, "USDC", 1.0)
 
-    assert len(submissions) == 1
+    assert result.success
+    assert len(submissions) == 2
     assert ParallelNonce.decode(submissions[0]).word_position == 0
-    assert manager.cursor == (0, 1)
-    assert window_fetches == 1
+    assert ParallelNonce.decode(submissions[1]).word_position == 2
+    assert manager.cursor == (2, 1)
+    assert window_fetches == 2
 
 
 @pytest.mark.asyncio
-async def test_managed_already_used_nonce_is_not_retried_or_resynced(
+async def test_managed_already_used_nonce_resyncs_without_retry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = O2Client()
+    client._markets_cache = _markets()
+    owner = _Owner()
+    window_fetches = 0
+
+    async def fetch_window() -> WindowResponse:
+        nonlocal window_fetches
+        window_fetches += 1
+        return WindowResponse(
+            nonce_session_id=0,
+            base=0 if window_fetches == 1 else 3,
+            slots=[],
+        )
+
+    manager = ParallelNonceManager(window_fetcher=fetch_window, clock=lambda: 1_900_000_000)
+    await manager.init()
+    client.set_session(
+        SessionInfo(
+            session_id=AddressIdentity("0x" + "77" * 32),
+            trade_account_id=TRADE_ACCOUNT_ID,
+            contract_ids=[],
+            session_expiry="9999999999",
+            owner_address=OWNER_ID,
+            nonce_manager=manager,
+        )
+    )
+    monkeypatch.setattr(client.api, "get_account", lambda **_: _resolved(_account()))
+    submissions = 0
+
+    async def withdraw(_owner_id: str, request: dict) -> WithdrawResponse:
+        nonlocal submissions
+        submissions += 1
+        raise O2Error(message="Parallel nonce is not usable: nonce already used")
+
+    monkeypatch.setattr(client.api, "withdraw", withdraw)
+    with pytest.raises(O2Error, match="nonce already used"):
+        await client.withdraw(owner, "USDC", 1.0)
+
+    assert submissions == 1
+    assert manager.cursor == (3, 0)
+    assert window_fetches == 2
+
+
+@pytest.mark.asyncio
+async def test_managed_parallel_withdraw_does_not_resync_other_errors(
     monkeypatch: pytest.MonkeyPatch,
 ):
     client = O2Client()
@@ -321,10 +384,10 @@ async def test_managed_already_used_nonce_is_not_retried_or_resynced(
     async def withdraw(_owner_id: str, request: dict) -> WithdrawResponse:
         nonlocal submissions
         submissions += 1
-        raise O2Error(message="Parallel nonce is not usable: nonce already used")
+        raise O2Error(message="withdrawal rejected")
 
     monkeypatch.setattr(client.api, "withdraw", withdraw)
-    with pytest.raises(O2Error, match="nonce already used"):
+    with pytest.raises(O2Error, match="withdrawal rejected"):
         await client.withdraw(owner, "USDC", 1.0)
 
     assert submissions == 1

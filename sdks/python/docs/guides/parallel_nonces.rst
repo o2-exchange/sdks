@@ -195,9 +195,11 @@ already-used nonces. Wasting holes is cheap; colliding is not.
 
 Burnt slots (issued but never submitted) are fine. If submissions outrun the
 chain window, the API rejects the nonce as out of window and
-:meth:`~o2_sdk.client.O2Client.batch_actions` resyncs the cursor from chain once
-and retries. :func:`~o2_sdk.nonce.is_parallel_nonce_out_of_window` recognizes
-that class of error if you need to handle it yourself.
+:meth:`~o2_sdk.client.O2Client.batch_actions` and automatically managed
+:meth:`~o2_sdk.client.O2Client.withdraw` calls resync the cursor from chain once
+and retry. Explicit withdrawal nonce overrides do not use this recovery path.
+:func:`~o2_sdk.nonce.is_parallel_nonce_out_of_window` recognizes that class of
+error if you need to handle it yourself.
 
 .. warning::
 
