@@ -230,6 +230,20 @@ jobs:
       - run: npm install --no-save --package-lock=false "ccxt@${{ matrix.ccxt }}"
       - run: npm run typecheck
       - run: npx vitest run tests/ccxt/ccxt.test.ts tests/ccxt/ccxt-parsers.test.ts tests/ccxt/ccxt-errors.test.ts
+      - name: Smoke test packed CCXT consumer
+        env:
+          CCXT_VERSION: ${{ matrix.ccxt }}
+        run: |
+          npm run build
+          package_name="$(npm pack --pack-destination "$RUNNER_TEMP" --silent)"
+          package_path="$RUNNER_TEMP/$package_name"
+          consumer_dir="$(mktemp -d "$RUNNER_TEMP/o2-ccxt-consumer.XXXXXX")"
+          cp -R tests/package/ccxt-consumer/. "$consumer_dir/"
+          cd "$consumer_dir"
+          npm install --no-package-lock "$package_path" "ccxt@$CCXT_VERSION" "typescript@^5.7.0" "@types/node@^22"
+          node esm.mjs
+          node cjs.cjs
+          npx tsc --noEmit
 
   typescript-browser:
     name: Test TypeScript (playwright)

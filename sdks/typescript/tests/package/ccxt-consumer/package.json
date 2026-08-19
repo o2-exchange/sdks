@@ -1,0 +1,5 @@
+{
+  "name": "o2-ccxt-packed-consumer-smoke",
+  "private": true,
+  "type": "module"
+}

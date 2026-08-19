@@ -9,7 +9,7 @@ import type {
   Ticker,
   Transaction,
 } from "ccxt";
-import { Exchange, functions, Precise } from "ccxt";
+import { Exchange, Precise } from "ccxt";
 import type { MarketActionGroup, Numeric } from "../actions.js";
 import { O2Client } from "../client.js";
 import type { Network } from "../config.js";
@@ -62,13 +62,21 @@ function requiredPositiveNumeric(params: CCXTParams, key: string): Numeric {
   );
 }
 
-function protectedPriceToPrecision(value: Numeric, side: OrderSide, precision: number): string {
+const CCXT_TRUNCATE = 0;
+const CCXT_DECIMAL_PLACES = 2;
+
+function protectedPriceToPrecision(
+  exchange: Exchange,
+  value: Numeric,
+  side: OrderSide,
+  precision: number,
+): string {
   const input = String(value);
-  const truncated = functions.decimalToPrecision(
+  const truncated = exchange.decimalToPrecision(
     input,
-    functions.TRUNCATE,
+    CCXT_TRUNCATE,
     precision,
-    functions.DECIMAL_PLACES,
+    CCXT_DECIMAL_PLACES,
   );
   if (side === "buy") {
     if (Precise.stringLe(truncated, "0")) {
@@ -133,7 +141,7 @@ export class O2CCXT extends Exchange {
       countries: [],
       rateLimit: 0,
       enableRateLimit: false,
-      precisionMode: functions.DECIMAL_PLACES,
+      precisionMode: CCXT_DECIMAL_PLACES,
       dex: true,
       has: {
         fetchMarkets: true,
@@ -370,6 +378,7 @@ export class O2CCXT extends Exchange {
         throw new InvalidOrder("createOrder market price must be between minPrice and maxPrice");
       }
       const formattedPrice = protectedPriceToPrecision(
+        this,
         price === undefined ? (side === "buy" ? maxPrice : minPrice) : String(price),
         side,
         market.precision.price,
@@ -514,9 +523,9 @@ export class O2CCXT extends Exchange {
     );
   }
 
-  override async close() {
+  override close(): ReturnType<Exchange["close"]> {
     this.o2Client.close();
-    return super.close();
+    return super.close() as ReturnType<Exchange["close"]>;
   }
 
   private async fetchOrdersByStatus(
