@@ -1562,6 +1562,13 @@ async def test_parallel_nonce_withdrawal_recovery():
         )
         if int(balance.trading_account_balance) < 2:
             await _mint_with_retry(client.api, account.trade_account_id)
+            await _wait_for_trading_account_balance(
+                client,
+                account.trade_account_id,
+                asset.asset,
+                2,
+                at_least=True,
+            )
         atomic_amount = 10.0 ** (-asset.decimals)
         assert int(atomic_amount * (10**asset.decimals)) == 1
 
