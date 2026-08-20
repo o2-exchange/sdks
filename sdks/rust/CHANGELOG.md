@@ -1,4 +1,69 @@
 # Changelog
+## 0.3.0 (2026-08-20)
+
+### Breaking Changes
+
+- DepthUpdate.changes is DepthSnapshot for snapshots
+and DepthChanges for incremental updates (both expose bids/asks).
+
+* fix(rust)!: depth stream changes are signed deltas; add DepthBook
+
+The incremental depth stream sends signed relative quantity changes,
+not absolute level sizes; the previous u64 change type could not even
+deserialize a negative decrement. DepthUpdate.changes now uses the new
+DepthChange/DepthChanges types with i128 quantities, the view field
+also accepts the subscribe_depth ack's orders key, and the new
+DepthBook maintains a local book with the correct accumulate
+semantics. The taker_bot example uses it.
+- DepthUpdate.changes is Option<DepthChanges> (signed
+i128 quantities) instead of Option<DepthSnapshot>.
+
+* fix(typescript): depth stream changes are signed deltas; add DepthBook
+
+The incremental depth stream sends signed relative quantity changes,
+not absolute level sizes. DepthUpdate.changes now uses the new
+DepthChange type and documents the contract, parseDepthUpdate reads
+the subscribe_depth ack's orders key into view, and the new DepthBook
+class maintains a local book with the correct accumulate semantics.
+The taker-bot example uses it instead of misreading delta entries as
+levels.
+
+* chore: add changeset for the depth delta types
+
+* test: pin the DepthBook removal boundary in all three SDKs
+
+A mutation-testing pass on a downstream consumer of the same accumulate
+logic showed the exact-boundary gap: no test held a level whose sum
+lands on exactly one. Adds that case to the Python, Rust, and
+TypeScript DepthBook tests.
+
+* fix(python): make DepthBook.apply atomic per update
+
+A malformed entry now raises before any mutation. Under relative delta
+semantics a partially applied update silently corrupts the book, so the
+whole update parses first and applies only if every entry is valid.
+
+#### Type depth stream `changes` entries as signed relative deltas with the new
+
+`DepthChange` type; snapshots keep absolute `DepthLevel` quantities. Add a
+`DepthBook` helper to every SDK that applies both correctly (accumulate each
+delta onto the resting quantity, remove the level when the sum reaches zero)
+and update the taker-bot examples to use it. The Rust and TypeScript SDKs now
+read the `subscribe_depth` ack's snapshot from its `orders` key, and the Rust
+change type can deserialize the negative quantities the stream sends (the
+previous `u64` could not represent them).
+
+`DepthBook.apply` is atomic per update in Python: a malformed entry raises
+before any mutation, so a book can never be half-applied.
+
+Breaking for Python and Rust: `DepthUpdate.changes` is now
+`DepthSnapshot | DepthChanges` in Python and `Option<DepthChanges>` (signed
+`i128` quantities) in Rust.
+
+### Fixes
+
+- depth stream changes are signed deltas across all three SDKs (#73)
+
 ## 0.2.2 (2026-08-10)
 
 ### Fixes
