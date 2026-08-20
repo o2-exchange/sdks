@@ -70,12 +70,14 @@ from .models import (
 )
 from .nonce import (
     MAX_NONCE_SESSION_ID,
+    ParallelNonce,
     ParallelNonceManager,
     WindowResponse,
     is_parallel_nonce_already_used,
     is_parallel_nonce_out_of_window,
 )
 from .onchain_revert import is_no_upgrade_available, is_selector_mismatch_revert
+from .typed_data import parallel_withdraw_digest
 from .websocket import ConnectionEvent, O2WebSocket
 
 logger = logging.getLogger("o2_sdk.client")
@@ -1403,6 +1405,69 @@ class O2Client:
         asset: str,
         amount: float,
         to: Identity | str | None = None,
+        *,
+        nonce: int | ParallelNonce | None = None,
+    ) -> WithdrawResponse:
+        """Withdraw funds from the trading account.
+
+        Without a nonce override, withdrawals follow the active account's
+        action strategy: a matching parallel session supplies a fresh window
+        nonce; otherwise the sequential nonce cache is used. A supplied
+        :class:`int` is an exact sequential nonce; a supplied
+        :class:`ParallelNonce` is an exact parallel nonce.
+
+        Args:
+            owner: A signer for the owner account (Wallet, EvmWallet,
+                ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
+            asset: Asset symbol (e.g., "USDC") or asset_id
+            amount: Human-readable amount to withdraw
+            to: Destination identity or address string (defaults to owner address)
+            nonce: Exact sequential integer or :class:`ParallelNonce` to use.
+                Explicit overrides are never replaced or retried under a
+                different nonce.
+        """
+
+        logger.info("Withdrawing %s %s", amount, asset)
+
+        ################################################
+        # For specified nonces,
+        # pick their corresponding withdraw method
+        ################################################
+        if isinstance(nonce, int):
+            return await self.withdraw_sequential(
+                owner,
+                asset,
+                amount,
+                to,
+                nonce=nonce,
+            )
+        if isinstance(nonce, ParallelNonce):
+            return await self.withdraw_parallel(
+                owner,
+                asset,
+                amount,
+                to,
+                nonce=nonce,
+            )
+
+        ################################################
+        # If no nonce was specified,
+        # automatically pick a withdraw strategy
+        # depending on configuration
+        ################################################
+
+        if self._has_parallel_nonce_manager(owner.b256_address):
+            return await self.withdraw_parallel(owner, asset, amount, to)
+        return await self.withdraw_sequential(owner, asset, amount, to)
+
+    async def withdraw_sequential(
+        self,
+        owner: Signer,
+        asset: str,
+        amount: float,
+        to: Identity | str | None = None,
+        *,
+        nonce: int | None = None,
     ) -> WithdrawResponse:
         """Withdraw funds from the trading account.
 
@@ -1419,8 +1484,13 @@ class O2Client:
         account = await self.api.get_account(owner=owner.b256_address)
         if not account.exists:
             raise O2Error(message="Account not found")
+        if account.trade_account_id is None:
+            raise O2Error(message="Account must have a trade_account_id")
+        trade_account_id = account.trade_account_id
 
-        nonce = account.nonce
+        if nonce is None:
+            nonce = await self._get_nonce(trade_account_id, account)
+
         destination = (
             AddressIdentity(to)
             if isinstance(to, str)
@@ -1448,7 +1518,7 @@ class O2Client:
         signature = owner.personal_sign(bytes(signing_bytes))
 
         withdraw_request = {
-            "trade_account_id": account.trade_account_id,
+            "trade_account_id": trade_account_id,
             "signature": {"Secp256k1": "0x" + signature.hex()},
             "nonce": str(nonce),
             "to": destination.to_dict(),
@@ -1456,7 +1526,95 @@ class O2Client:
             "amount": str(scaled_amount),
         }
 
-        return await self.api.withdraw(owner.b256_address, withdraw_request)
+        try:
+            result = await self.api.withdraw(owner.b256_address, withdraw_request)
+            if result.success:
+                self._nonce_cache[trade_account_id] = nonce + 1
+            else:
+                raise O2Error(message=result.message or "API response returned success=false")
+            return result
+        except O2Error as e:
+            logger.warning("Withdrawal failed (nonce=%d): %s", nonce, e)
+            self._nonce_cache.pop(trade_account_id, None)
+            await self._get_nonce(trade_account_id)  # performs a fresh API request
+            raise
+
+    async def withdraw_parallel(
+        self,
+        owner: Signer,
+        asset: str,
+        amount: float,
+        to: Identity | str | None = None,
+        *,
+        nonce: ParallelNonce | None = None,
+    ) -> WithdrawResponse:
+        markets_resp = await self._get_markets_cached()
+        account = await self.api.get_account(owner=owner.b256_address)
+        if not account.exists:
+            raise O2Error(message="Account not found")
+        if account.trade_account_id is None:
+            raise O2Error(message="Account must have a trade_account_id")
+        trade_account_id = account.trade_account_id
+        destination = (
+            AddressIdentity(to)
+            if isinstance(to, str)
+            else (to or AddressIdentity(owner.b256_address))
+        )
+
+        # Resolve asset
+        asset_id, decimals = self._resolve_asset(markets_resp, asset)
+        scaled_amount = int(amount * (10**decimals))
+        asset_id_bytes = bytes.fromhex(asset_id[2:])
+
+        async def submit(selected_nonce: int) -> WithdrawResponse:
+            digest = parallel_withdraw_digest(
+                owner_b256=owner.address_bytes,
+                chain_id=markets_resp.chain_id_int,
+                verifying_contract=bytes.fromhex(str(trade_account_id)[2:]),
+                nonce=selected_nonce,
+                to=destination.address_bytes,
+                amount=scaled_amount,
+                asset_id=asset_id_bytes,
+            )
+            signature = owner.sign_digest(digest)
+            withdraw_request = {
+                "trade_account_id": trade_account_id,
+                "signature": {"TypedSecp256k1": "0x" + signature.hex()},
+                "parallel_nonce": str(selected_nonce),
+                "to": destination.to_dict(),
+                "asset_id": asset_id,
+                "amount": str(scaled_amount),
+            }
+            return await self.api.withdraw(owner.b256_address, withdraw_request)
+
+        # Explicit overrides are exact pass-throughs. In particular, do not
+        # replace or retry one just because a manager happens to be active.
+        if nonce is not None:
+            return await submit(nonce.encode())
+
+        session = self._session
+        manager = session.nonce_manager if session is not None else None
+        if session is None or session.owner_address != owner.b256_address or manager is None:
+            raise O2Error(message="No active parallel nonce manager for owner")
+
+        resynced = False
+        while True:
+            generation = manager.resync_generation
+            selected_nonce = manager.next_nonce()
+            try:
+                return await submit(selected_nonce)
+            except O2Error as exc:
+                if is_parallel_nonce_already_used(exc):
+                    try:
+                        await manager.resync_from_chain(generation)
+                    except Exception:
+                        logger.warning("cursor resync after an already-used nonce failed")
+                    raise
+                if resynced or not is_parallel_nonce_out_of_window(exc):
+                    raise
+                logger.warning("parallel withdrawal nonce out of window; resyncing cursor")
+                resynced = True
+                await manager.resync_from_chain(generation)
 
     # -----------------------------------------------------------------------
     # Nonce management
@@ -1478,11 +1636,14 @@ class O2Client:
         )
         return nonce
 
-    async def _get_nonce(self, trade_account_id: str) -> int:
+    async def _get_nonce(self, trade_account_id: str, account: AccountInfo | None = None) -> int:
         if trade_account_id in self._nonce_cache:
             return self._nonce_cache[trade_account_id]
-        account = await self.api.get_account(trade_account_id=trade_account_id)
-        nonce = account.nonce
+        nonce = (
+            account.nonce
+            if account is not None
+            else (await self.api.get_account(trade_account_id=trade_account_id)).nonce
+        )
         self._nonce_cache[trade_account_id] = nonce
         return nonce
 
@@ -1534,3 +1695,11 @@ class O2Client:
             if m.quote.symbol == symbol_or_id or m.quote.asset == symbol_or_id:
                 return m.quote.asset, m.quote.decimals
         raise O2Error(message=f"Asset not found: {symbol_or_id}")
+
+    def _has_parallel_nonce_manager(self, owner_address: str) -> bool:
+        session = self.session
+        return (
+            session is not None
+            and session.owner_address == owner_address
+            and session.nonce_manager is not None
+        )

@@ -287,6 +287,12 @@ class TestWalletPersonalSign:
         sig2 = wallet.personal_sign(b"message2")
         assert sig1 != sig2
 
+    def test_sign_digest_signs_without_personal_framing(self):
+        wallet = load_wallet(TEST_PRIVATE_KEY_HEX)
+        digest = b"\x42" * 32
+        assert wallet.sign_digest(digest) == fuel_compact_sign(TEST_PRIVATE_KEY, digest)
+        assert wallet.sign_digest(digest) != wallet.personal_sign(digest)
+
 
 class TestEvmWalletPersonalSign:
     """Test EvmWallet.personal_sign method matches module-level evm_personal_sign."""
@@ -303,6 +309,11 @@ class TestEvmWalletPersonalSign:
         evm_wallet = load_evm_wallet(TEST_PRIVATE_KEY_HEX)
         msg = b"same message"
         assert fuel_wallet.personal_sign(msg) != evm_wallet.personal_sign(msg)
+
+    def test_sign_digest_is_the_raw_curve_operation(self):
+        wallet = load_evm_wallet(TEST_PRIVATE_KEY_HEX)
+        digest = b"\x24" * 32
+        assert wallet.sign_digest(digest) == fuel_compact_sign(TEST_PRIVATE_KEY, digest)
 
 
 class TestSignerProtocol:
@@ -380,6 +391,16 @@ class TestExternalSigner:
         assert len(received_digests) == 1
         assert received_digests[0] == expected_digest
 
+    def test_sign_digest_forwards_digest_unchanged(self):
+        received_digests: list[bytes] = []
+        signer = ExternalSigner(
+            b256_address="0x" + "11" * 32,
+            sign_digest=lambda digest: received_digests.append(digest) or b"\x00" * 64,
+        )
+        digest = b"\x77" * 32
+        signer.sign_digest(digest)
+        assert received_digests == [digest]
+
 
 class TestExternalEvmSigner:
     """Test ExternalEvmSigner with fuel_compact_sign as the backing function."""
@@ -429,3 +450,14 @@ class TestExternalEvmSigner:
         expected_digest = evm_personal_sign_digest(msg)
         assert len(received_digests) == 1
         assert received_digests[0] == expected_digest
+
+    def test_sign_digest_forwards_digest_unchanged(self):
+        received_digests: list[bytes] = []
+        signer = ExternalEvmSigner(
+            b256_address="0x" + "00" * 12 + "22" * 20,
+            evm_address="0x" + "22" * 20,
+            sign_digest=lambda digest: received_digests.append(digest) or b"\x00" * 64,
+        )
+        digest = b"\x88" * 32
+        signer.sign_digest(digest)
+        assert received_digests == [digest]

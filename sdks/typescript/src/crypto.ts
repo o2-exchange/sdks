@@ -404,4 +404,4 @@ export class ExternalEvmSigner implements Signer {
   }
 }
 
-export { hexToBytes, bytesToHex };
+export { bytesToHex, hexToBytes };

@@ -68,7 +68,7 @@ test-python:
     cd sdks/python && {{ pytest }} tests/ -m "not integration" -v
 
 integration-python:
-    cd sdks/python && {{ pytest }} tests/test_withdrawal_integration.py tests/test_integration.py -m integration -v --timeout=600
+    cd sdks/python && {{ pytest }} tests/test_integration.py -m integration -v --timeout=600
 
 # --- TypeScript ---
 lint-typescript:

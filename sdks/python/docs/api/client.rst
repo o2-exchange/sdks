@@ -609,13 +609,17 @@ supports automatic reconnection with exponential backoff.
 Withdrawals
 -----------
 
-.. method:: O2Client.withdraw(owner, asset, amount, to=None)
+.. method:: O2Client.withdraw(owner, asset, amount, to=None, *, nonce=None)
    :async:
 
    Withdraw funds from the trading account to an address or contract identity.
 
-   This method signs the withdrawal with the **owner** key (using
-   ``personalSign``), not the session key.
+   This method signs with the **owner** key, not the session key. Without a
+   nonce override, it uses the active matching parallel session's nonce
+   manager when available; otherwise it uses the same cached sequential nonce
+   strategy as other owner actions. For a manager-owned nonce, an out-of-window
+   rejection triggers one resync and retry. An already-used rejection resyncs
+   manager state but is raised without retrying.
 
    :param owner: The owner wallet or external signer.
    :type owner: :class:`~o2_sdk.crypto.Signer`
@@ -625,6 +629,12 @@ Withdrawals
    :type amount: float
    :param to: Destination identity or address string. Defaults to the owner's address.
    :type to: Identity | str | None
+   :param nonce: Exact nonce override. An ``int`` selects the sequential
+       withdrawal entrypoint; a :class:`~o2_sdk.nonce.ParallelNonce` selects
+       ``par_withdraw``. Explicit overrides are not replaced or retried with a
+       different nonce. A parallel override bypasses the active nonce manager,
+       so the caller must coordinate that slot with other submitters.
+   :type nonce: int | ParallelNonce | None
    :returns: The withdrawal result.
    :rtype: :class:`~o2_sdk.models.WithdrawResponse`
 
@@ -633,6 +643,30 @@ Withdrawals
       result = await client.withdraw(owner=owner, asset="fUSDC", amount=10.0)
       if result.success:
           print(f"Withdrawal tx: {result.tx_id}")
+
+   To force a particular nonce, pass it explicitly:
+
+   .. code-block:: python
+
+      import time
+      from o2_sdk import DEFAULT_NONCE_TTL_SECS, ParallelNonce
+
+      # Exact sequential nonce
+      await client.withdraw(owner, "fUSDC", 10.0, nonce=42)
+
+      # Exact parallel nonce structure
+      nonce = ParallelNonce(
+          nonce_session_id=0,
+          timestamp=int(time.time()) + DEFAULT_NONCE_TTL_SECS,
+          word_position=3,
+          bitmap_position=7,
+      )
+      await client.withdraw(owner, "fUSDC", 10.0, nonce=nonce)
+
+   Parallel withdrawals use typed-data signing and therefore call
+   :meth:`~o2_sdk.crypto.Signer.sign_digest`. Custom signers that do not use
+   parallel withdrawals may implement that method by raising
+   :class:`NotImplementedError`.
 
    To withdraw to a contract, pass a
    :class:`~o2_sdk.models.ContractIdentity` as ``to``.
