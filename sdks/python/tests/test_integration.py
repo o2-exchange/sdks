@@ -1249,7 +1249,6 @@ class TestWebSocket:
 
 
 @pytest.mark.integration
-
 async def test_parallel_nonce_concurrent_submission():
     """Fire N concurrent batch_actions on the parallel track and assert there are
     no nonce conflicts and the cursor advances by N (one distinct slot each).
