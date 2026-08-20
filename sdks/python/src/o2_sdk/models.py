@@ -732,12 +732,47 @@ class Balance:
 
 @dataclass
 class DepthLevel:
+    """One resting depth level.
+
+    ``quantity`` is the ABSOLUTE size at ``price`` (always positive).
+    Compare :class:`DepthChange`, whose quantity is a signed adjustment.
+    """
+
     price: str
     quantity: str
 
     @classmethod
     def from_dict(cls, d: dict) -> DepthLevel:
         return cls(price=d["price"], quantity=d["quantity"])
+
+
+@dataclass
+class DepthChange:
+    """One signed change to a depth level from the incremental stream.
+
+    ``quantity`` is a RELATIVE adjustment to the level's resting size,
+    not a new absolute size: positive when liquidity is added, negative
+    when a cancel or a fill removes some. Add it to the current
+    quantity; the level is empty when the running sum reaches zero. A
+    partial fill arrives as a negative change smaller than the level,
+    and the level survives it. :class:`DepthBook` applies these
+    semantics for you.
+    """
+
+    price: str
+    quantity: str
+
+    @classmethod
+    def from_dict(cls, d: dict) -> DepthChange:
+        return cls(price=d["price"], quantity=d["quantity"])
+
+
+@dataclass
+class DepthChanges:
+    """Both sides of one incremental depth update."""
+
+    bids: list[DepthChange]
+    asks: list[DepthChange]
 
 
 @dataclass
@@ -773,7 +808,18 @@ class DepthSnapshot:
 
 @dataclass
 class DepthUpdate:
-    changes: DepthSnapshot
+    """One message from the depth stream.
+
+    A snapshot (``is_snapshot=True``, the subscription ack and every
+    reconnect replay) carries a :class:`DepthSnapshot` with ABSOLUTE
+    level quantities and replaces the whole book. Every other message
+    carries :class:`DepthChanges` with SIGNED RELATIVE adjustments; add
+    each one to the level's current quantity and drop the level when the
+    sum reaches zero. :class:`DepthBook` maintains a book with these
+    semantics.
+    """
+
+    changes: DepthSnapshot | DepthChanges
     market_id: Id
     onchain_timestamp: str | None = None
     seen_timestamp: str | None = None
@@ -783,13 +829,14 @@ class DepthUpdate:
     def from_dict(cls, d: dict) -> DepthUpdate:
         action = d.get("action", "")
         is_snapshot = action == "subscribe_depth"
+        changes: DepthSnapshot | DepthChanges
         if is_snapshot:
             changes = DepthSnapshot.from_dict(d)
         else:
             changes_data = d.get("changes", {})
-            changes = DepthSnapshot(
-                bids=[DepthLevel.from_dict(x) for x in changes_data.get("buys", [])],
-                asks=[DepthLevel.from_dict(x) for x in changes_data.get("sells", [])],
+            changes = DepthChanges(
+                bids=[DepthChange.from_dict(x) for x in changes_data.get("buys", [])],
+                asks=[DepthChange.from_dict(x) for x in changes_data.get("sells", [])],
             )
         return cls(
             changes=changes,
@@ -798,6 +845,61 @@ class DepthUpdate:
             seen_timestamp=d.get("seen_timestamp"),
             is_snapshot=is_snapshot,
         )
+
+
+class DepthBook:
+    """A local order book maintained from a depth stream.
+
+    Feed every :class:`DepthUpdate` to :meth:`apply`. A snapshot
+    replaces the book with its absolute quantities; an incremental
+    update adds each signed change to the level it names and removes
+    the level when its quantity reaches zero.
+
+    ``bids`` and ``asks`` map the 1e9-scaled integer price of each
+    non-empty level to its integer quantity.
+    """
+
+    def __init__(self) -> None:
+        self.bids: dict[int, int] = {}
+        self.asks: dict[int, int] = {}
+
+    def apply(self, update: DepthUpdate) -> None:
+        # Parse every entry before mutating anything: a malformed entry
+        # raises with the book untouched. Under relative semantics a
+        # partially applied update would silently corrupt the book, so
+        # apply is atomic per update.
+        parsed = [
+            (int(level.price), int(level.quantity), book) for level, book in self._paired(update)
+        ]
+        if update.is_snapshot:
+            self.bids.clear()
+            self.asks.clear()
+            for price, quantity, book in parsed:
+                if quantity > 0:
+                    book[price] = quantity
+            return
+        for price, quantity, book in parsed:
+            new_quantity = book.get(price, 0) + quantity
+            if new_quantity > 0:
+                book[price] = new_quantity
+            else:
+                book.pop(price, None)
+
+    def _paired(self, update: DepthUpdate) -> list[tuple[DepthLevel | DepthChange, dict[int, int]]]:
+        return [
+            *((level, self.bids) for level in update.changes.bids),
+            *((level, self.asks) for level in update.changes.asks),
+        ]
+
+    @property
+    def best_bid(self) -> int | None:
+        """Highest non-empty bid price, or None on an empty side."""
+        return max(self.bids) if self.bids else None
+
+    @property
+    def best_ask(self) -> int | None:
+        """Lowest non-empty ask price, or None on an empty side."""
+        return min(self.asks) if self.asks else None
 
 
 # ---------------------------------------------------------------------------

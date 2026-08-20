@@ -11,6 +11,7 @@
 
 import {
   boundedMarketOrder,
+  DepthBook,
   formatPrice,
   formatQuantity,
   Network,
@@ -55,13 +56,16 @@ async function main() {
   console.log(`Watching for asks below ${CONFIG.buyBelowPrice} ${market.quote.symbol}...`);
   const depthStream = await client.streamDepth(pair, 1);
 
+  // Depth messages after the snapshot carry signed relative changes;
+  // DepthBook applies them and keeps a correct local book.
+  const book = new DepthBook();
   for await (const update of depthStream) {
-    const sells = update.view?.asks ?? update.changes?.asks;
-    if (!sells || sells.length === 0) continue;
+    book.apply(update);
+    const bestAskPrice = book.bestAsk;
+    if (bestAskPrice === undefined) continue;
 
-    // depth levels now have bigint price/quantity
-    const bestAsk = formatPrice(market, sells[0].price);
-    const bestAskQty = formatQuantity(market, sells[0].quantity);
+    const bestAsk = formatPrice(market, bestAskPrice);
+    const bestAskQty = formatQuantity(market, book.asks.get(bestAskPrice) ?? 0n);
 
     console.log(
       `Best ask: ${bestAsk.toFixed(6)} ${market.quote.symbol} (qty: ${bestAskQty.toFixed(3)})`,
@@ -71,9 +75,9 @@ async function main() {
     if (bestAsk <= CONFIG.buyBelowPrice && bestAsk > 0) {
       console.log(`Target price reached! Executing buy...`);
 
-      // Use bigint prices directly from depth (pass-through path)
-      const bestAskBigint = sells[0].price;
-      const bestAskQtyBigint = sells[0].quantity;
+      // Use bigint prices directly from the book (pass-through path)
+      const bestAskBigint = bestAskPrice;
+      const bestAskQtyBigint = book.asks.get(bestAskPrice) ?? 0n;
       const maxOrderQuantity = scaleQuantityForMarket(market, CONFIG.maxQuantity);
 
       // Calculate max price with slippage as a string for BoundedMarket

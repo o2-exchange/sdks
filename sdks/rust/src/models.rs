@@ -346,6 +346,33 @@ where
     deserializer.deserialize_any(StringOrU64)
 }
 
+/// Deserialize a value that may be a JSON number or a string containing a
+/// (possibly negative) number, storing as i128.
+fn deserialize_string_or_i128<'de, D>(deserializer: D) -> Result<i128, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    struct StringOrI128;
+    impl de::Visitor<'_> for StringOrI128 {
+        type Value = i128;
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("an integer or a string containing a decimal integer")
+        }
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<i128, E> {
+            Ok(i128::from(v))
+        }
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<i128, E> {
+            Ok(i128::from(v))
+        }
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<i128, E> {
+            v.parse().map_err(de::Error::custom)
+        }
+    }
+    deserializer.deserialize_any(StringOrI128)
+}
+
 /// Deserialize an optional value that may be a JSON number or a string, storing as u64.
 fn deserialize_optional_u64<'de, D>(deserializer: D) -> Result<Option<u64>, D::Error>
 where
@@ -1303,13 +1330,43 @@ impl BalanceResponse {
 // Depth
 // ---------------------------------------------------------------------------
 
-/// A single depth level (price + quantity).
+/// A single resting depth level (price + quantity).
+///
+/// `quantity` is the ABSOLUTE size resting at `price` (always positive).
+/// Compare [`DepthChange`], whose quantity is a signed adjustment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthLevel {
     #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub price: u64,
     #[serde(deserialize_with = "deserialize_string_or_u64")]
     pub quantity: u64,
+}
+
+/// One signed change to a depth level from the incremental stream.
+///
+/// `quantity` is a RELATIVE adjustment to the level's resting size, not a
+/// new absolute size: positive when liquidity is added, negative when a
+/// cancel or a fill removes some. Add it to the current quantity; the level
+/// is empty when the running sum reaches zero. A partial fill arrives as a
+/// negative change smaller than the level, and the level survives it.
+/// [`DepthBook`] applies these semantics for you.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepthChange {
+    #[serde(deserialize_with = "deserialize_string_or_u64")]
+    pub price: u64,
+    #[serde(deserialize_with = "deserialize_string_or_i128")]
+    pub quantity: i128,
+}
+
+/// Both sides of one incremental depth update.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DepthChanges {
+    /// Signed changes to the bid side.
+    #[serde(default, rename = "buys")]
+    pub bids: Vec<DepthChange>,
+    /// Signed changes to the ask side.
+    #[serde(default, rename = "sells")]
+    pub asks: Vec<DepthChange>,
 }
 
 /// Depth snapshot from GET /v1/depth or WebSocket subscribe_depth.
@@ -1323,16 +1380,87 @@ pub struct DepthSnapshot {
     pub asks: Vec<DepthLevel>,
 }
 
-/// Depth update from WebSocket subscribe_depth_update.
+/// One message from the WebSocket depth stream.
+///
+/// The subscription ack and every reconnect replay carry a full snapshot in
+/// `view` with ABSOLUTE level quantities; it replaces the whole book. Every
+/// other message carries SIGNED RELATIVE adjustments in `changes`; add each
+/// one to the level's current quantity and drop the level when the sum
+/// reaches zero. [`DepthBook`] maintains a book with these semantics.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DepthUpdate {
     pub action: String,
-    pub changes: Option<DepthSnapshot>,
-    #[serde(alias = "view")]
+    pub changes: Option<DepthChanges>,
+    #[serde(alias = "orders")]
     pub view: Option<DepthSnapshot>,
     pub market_id: MarketId,
     pub onchain_timestamp: Option<String>,
     pub seen_timestamp: Option<String>,
+}
+
+/// A local order book maintained from a depth stream.
+///
+/// Feed every [`DepthUpdate`] to [`DepthBook::apply`]. A snapshot replaces
+/// the book with its absolute quantities; an incremental update adds each
+/// signed change to the level it names and removes the level when its
+/// quantity reaches zero.
+///
+/// `bids` and `asks` map the chain-integer price of each non-empty level to
+/// its quantity.
+#[derive(Debug, Clone, Default)]
+pub struct DepthBook {
+    pub bids: std::collections::BTreeMap<u64, u128>,
+    pub asks: std::collections::BTreeMap<u64, u128>,
+}
+
+impl DepthBook {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Apply one stream message to the book.
+    pub fn apply(&mut self, update: &DepthUpdate) {
+        if let Some(view) = &update.view {
+            self.bids.clear();
+            self.asks.clear();
+            for level in &view.bids {
+                if level.quantity > 0 {
+                    self.bids.insert(level.price, u128::from(level.quantity));
+                }
+            }
+            for level in &view.asks {
+                if level.quantity > 0 {
+                    self.asks.insert(level.price, u128::from(level.quantity));
+                }
+            }
+        }
+        if let Some(changes) = &update.changes {
+            Self::apply_side(&mut self.bids, &changes.bids);
+            Self::apply_side(&mut self.asks, &changes.asks);
+        }
+    }
+
+    fn apply_side(side: &mut std::collections::BTreeMap<u64, u128>, changes: &[DepthChange]) {
+        for change in changes {
+            let current = side.get(&change.price).copied().unwrap_or(0) as i128;
+            let new = current.saturating_add(change.quantity);
+            if new > 0 {
+                side.insert(change.price, new as u128);
+            } else {
+                side.remove(&change.price);
+            }
+        }
+    }
+
+    /// Highest non-empty bid price, or None on an empty side.
+    pub fn best_bid(&self) -> Option<u64> {
+        self.bids.keys().next_back().copied()
+    }
+
+    /// Lowest non-empty ask price, or None on an empty side.
+    pub fn best_ask(&self) -> Option<u64> {
+        self.asks.keys().next().copied()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1813,5 +1941,98 @@ mod tests {
             .validate_price_binding(&price)
             .expect_err("precision drift should be rejected");
         assert!(format!("{err}").contains("stale or bound to a different market"));
+    }
+
+    fn depth_snapshot_update() -> DepthUpdate {
+        serde_json::from_str(
+            r#"{
+                "action": "subscribe_depth",
+                "orders": {
+                    "buys": [
+                        {"price": "100", "quantity": "500"},
+                        {"price": "99", "quantity": "10"}
+                    ],
+                    "sells": [{"price": "101", "quantity": "200"}]
+                },
+                "market_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
+            }"#,
+        )
+        .expect("snapshot should deserialize")
+    }
+
+    fn depth_delta(buys: &str, sells: &str) -> DepthUpdate {
+        serde_json::from_str(&format!(
+            r#"{{
+                "action": "subscribe_depth_update",
+                "changes": {{"buys": [{buys}], "sells": [{sells}]}},
+                "market_id": "0x2222222222222222222222222222222222222222222222222222222222222222"
+            }}"#,
+        ))
+        .expect("delta should deserialize")
+    }
+
+    #[test]
+    fn depth_snapshot_under_orders_key_populates_view() {
+        let update = depth_snapshot_update();
+        let view = update.view.expect("ack snapshot arrives under 'orders'");
+        assert_eq!(view.bids.len(), 2);
+        assert_eq!(view.asks.len(), 1);
+    }
+
+    #[test]
+    fn depth_change_deserializes_negative_quantities() {
+        let update = depth_delta(r#"{"price": "100", "quantity": "-25"}"#, "");
+        let changes = update.changes.expect("changes should be present");
+        assert_eq!(changes.bids[0].quantity, -25);
+    }
+
+    #[test]
+    fn depth_book_partial_negative_change_keeps_the_level() {
+        // A fill against part of a level is a negative change smaller than
+        // the level: the level must survive with less quantity.
+        let mut book = DepthBook::new();
+        book.apply(&depth_snapshot_update());
+        book.apply(&depth_delta(r#"{"price": "100", "quantity": "-1"}"#, ""));
+        assert_eq!(book.bids.get(&100), Some(&499));
+        assert_eq!(book.best_bid(), Some(100));
+    }
+
+    #[test]
+    fn depth_book_change_consuming_the_level_removes_it() {
+        let mut book = DepthBook::new();
+        book.apply(&depth_snapshot_update());
+        book.apply(&depth_delta(r#"{"price": "100", "quantity": "-500"}"#, ""));
+        assert!(!book.bids.contains_key(&100));
+        assert_eq!(book.best_bid(), Some(99));
+    }
+
+    #[test]
+    fn depth_book_change_landing_on_exactly_one_keeps_the_level() {
+        // The removal boundary is exactly zero.
+        let mut book = DepthBook::new();
+        book.apply(&depth_snapshot_update());
+        book.apply(&depth_delta(r#"{"price": "100", "quantity": "-499"}"#, ""));
+        assert_eq!(book.bids.get(&100), Some(&1));
+        assert_eq!(book.best_bid(), Some(100));
+    }
+
+    #[test]
+    fn depth_book_positive_change_accumulates() {
+        let mut book = DepthBook::new();
+        book.apply(&depth_snapshot_update());
+        book.apply(&depth_delta("", r#"{"price": "101", "quantity": "40"}"#));
+        assert_eq!(book.asks.get(&101), Some(&240));
+        book.apply(&depth_delta("", r#"{"price": "102", "quantity": "5"}"#));
+        assert_eq!(book.asks.get(&102), Some(&5));
+    }
+
+    #[test]
+    fn depth_book_new_snapshot_replaces_the_book() {
+        let mut book = DepthBook::new();
+        book.apply(&depth_snapshot_update());
+        book.apply(&depth_delta("", r#"{"price": "102", "quantity": "5"}"#));
+        book.apply(&depth_snapshot_update());
+        assert_eq!(book.asks.len(), 1);
+        assert_eq!(book.best_ask(), Some(101));
     }
 }
