@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InvalidSignature, OnChainRevertError, parseApiError } from "../src/errors.js";
 import {
   type BalanceResponse,
+  DepthBook,
   formatPrice,
   formatQuantity,
   type Identity,
@@ -486,6 +487,105 @@ describe("Models Module", () => {
         });
         expect(update.view).toBeUndefined();
         expect(update.changes?.bids[0].price).toBe(100n);
+      });
+
+      it("parses a snapshot delivered under the orders key", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth",
+          market_id: "0xabc",
+          orders: {
+            buys: [{ price: "100", quantity: "50" }],
+            sells: [],
+          },
+        });
+        expect(update.view?.bids[0].price).toBe(100n);
+      });
+
+      it("parses negative change quantities", () => {
+        const update = parseDepthUpdate({
+          action: "subscribe_depth_update",
+          market_id: "0xabc",
+          changes: {
+            buys: [{ price: "100", quantity: "-25" }],
+            sells: [],
+          },
+        });
+        expect(update.changes?.bids[0].quantity).toBe(-25n);
+      });
+    });
+
+    describe("DepthBook", () => {
+      const snapshot = () =>
+        parseDepthUpdate({
+          action: "subscribe_depth",
+          market_id: "0xabc",
+          orders: {
+            buys: [
+              { price: "100", quantity: "500" },
+              { price: "99", quantity: "10" },
+            ],
+            sells: [{ price: "101", quantity: "200" }],
+          },
+        });
+
+      const delta = (buys: object[], sells: object[]) =>
+        parseDepthUpdate({
+          action: "subscribe_depth_update",
+          market_id: "0xabc",
+          changes: { buys, sells },
+        });
+
+      it("populates absolute quantities from a snapshot", () => {
+        const book = new DepthBook();
+        book.apply(snapshot());
+        expect(book.bids.get(100n)).toBe(500n);
+        expect(book.bestBid).toBe(100n);
+        expect(book.bestAsk).toBe(101n);
+      });
+
+      it("keeps a level reduced by a partial negative change", () => {
+        // A fill against part of a level is a negative change smaller
+        // than the level: the level must survive with less quantity.
+        const book = new DepthBook();
+        book.apply(snapshot());
+        book.apply(delta([{ price: "100", quantity: "-1" }], []));
+        expect(book.bids.get(100n)).toBe(499n);
+        expect(book.bestBid).toBe(100n);
+      });
+
+      it("removes a level whose quantity reaches zero", () => {
+        const book = new DepthBook();
+        book.apply(snapshot());
+        book.apply(delta([{ price: "100", quantity: "-500" }], []));
+        expect(book.bids.has(100n)).toBe(false);
+        expect(book.bestBid).toBe(99n);
+      });
+
+      it("keeps a level whose sum lands on exactly one", () => {
+        // The removal boundary is exactly zero.
+        const book = new DepthBook();
+        book.apply(snapshot());
+        book.apply(delta([{ price: "100", quantity: "-499" }], []));
+        expect(book.bids.get(100n)).toBe(1n);
+        expect(book.bestBid).toBe(100n);
+      });
+
+      it("accumulates positive changes", () => {
+        const book = new DepthBook();
+        book.apply(snapshot());
+        book.apply(delta([], [{ price: "101", quantity: "40" }]));
+        expect(book.asks.get(101n)).toBe(240n);
+        book.apply(delta([], [{ price: "102", quantity: "5" }]));
+        expect(book.asks.get(102n)).toBe(5n);
+      });
+
+      it("replaces the book on a new snapshot", () => {
+        const book = new DepthBook();
+        book.apply(snapshot());
+        book.apply(delta([], [{ price: "102", quantity: "5" }]));
+        book.apply(snapshot());
+        expect(book.asks.size).toBe(1);
+        expect(book.bestAsk).toBe(101n);
       });
     });
   });

@@ -192,7 +192,7 @@ Identifier usage:
 | `get_balances(account)` / `get_orders(market, account)` | Account data |
 | `stream_depth(market)` | Real-time order book stream |
 | `stream_orders(account)` / `stream_trades(market)` | Real-time updates |
-| `withdraw(owner, asset, amount)` | Withdraw funds |
+| `withdraw(owner, asset, amount, to=None, *, nonce=None)` | Withdraw funds with automatic or explicit sequential/parallel nonce selection |
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
 

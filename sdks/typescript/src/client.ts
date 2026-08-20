@@ -302,8 +302,7 @@ export class O2Client {
    * 1. Check if account exists
    * 2. Create if needed
    * 3. Mint via faucet (testnet/devnet) - non-fatal on cooldown
-   * 4. Whitelist account
-   * 5. Return trade_account_id and nonce
+   * 4. Return trade_account_id and nonce
    */
   async setupAccount(wallet: Signer): Promise<{ tradeAccountId: TradeAccountId; nonce: bigint }> {
     // 1. Check if account already exists
@@ -330,14 +329,7 @@ export class O2Client {
       }
     }
 
-    // 4. Whitelist (idempotent — returns alreadyWhitelisted:true on repeat)
-    try {
-      await this.api.whitelistAccount(tradeAccountId);
-    } catch (_e: unknown) {
-      // Whitelist error — not fatal on repeat calls
-    }
-
-    // 5. Get current nonce
+    // 4. Get current nonce
     const info = await this.api.getAccount({ tradeAccountId });
     const nonce = info.trade_account?.nonce ?? 0n;
 

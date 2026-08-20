@@ -72,7 +72,7 @@ asyncio.run(main())
 | `stream_trades(market)` | - | `AsyncIterator[TradeUpdate]` | WS trades |
 | `stream_balances(account)` | - | `AsyncIterator[BalanceUpdate]` | WS balances |
 | `stream_nonce(account)` | - | `AsyncIterator[NonceUpdate]` | WS nonce |
-| `withdraw(owner, asset, amount, to=None)` | destination is `Identity \| str \| None` | `WithdrawResponse` | Withdraw funds |
+| `withdraw(owner, asset, amount, to=None, *, nonce=None)` | destination is `Identity \| str \| None`; nonce is `int \| ParallelNonce \| None` | `WithdrawResponse` | Withdraw with automatic or exact sequential/parallel nonce selection |
 | `get_nonce(trade_account_id)` | - | `int` | Current nonce |
 | `refresh_nonce(session)` | - | `int` | Re-fetch nonce from API |
 | `close()` | - | `None` | Close all connections |
@@ -250,6 +250,12 @@ result = await client.create_order("fFUEL/fUSDC", OrderSide.BUY, "0.02", "100")
 
 For EVM accounts, use `ExternalEvmSigner` (same interface but with `evm_address` param and keccak256 hashing).
 
+The `Signer` protocol also requires `sign_digest(digest)`, used for typed owner
+operations such as parallel withdrawals. Custom implementations may raise
+`NotImplementedError` when typed operations are unsupported; the SDK calls
+this method only when such an operation is selected. `ExternalSigner` and
+`ExternalEvmSigner` already forward it to their raw-digest callback.
+
 ### 8. Balance Tracking & Withdrawals
 
 ```python
@@ -327,7 +333,7 @@ On-chain reverts (no code field) raise `OnChainRevert` with `.reason` (e.g., `"N
 - Max 5 actions per batch, max 5 markets per request
 - `setup_account()` is idempotent -- safe on every bot startup
 - Prices/quantities accept dual-mode `NumericInput` (human values auto-scaled, `ChainInt` pass-through)
-- **Parallel nonces**: use `ensure_parallel_session()` for concurrent submission. Never gate parallel capability on a version field -- `sync_state` (`AccountInfo.sync_generation`) reports V3 for every synced account including legacy ones, so probe with `probe_parallel_support()` and classify with `is_selector_mismatch_revert()`. Sequential is still the only track that can upgrade an account. One lane (`nonce_session_id` 0..4) per client sharing a key.
+- **Parallel nonces**: use `ensure_parallel_session()` for concurrent submission. Never gate parallel capability on a version field -- `sync_state` (`AccountInfo.sync_generation`) reports V3 for every synced account including legacy ones, so probe with `probe_parallel_support()` and classify with `is_selector_mismatch_revert()`. Sequential is still the only track that can upgrade an account. One lane (`nonce_session_id` 0..4) per client sharing a key. Withdrawals for the same account share the active session's manager; an explicit `nonce` is exact and is never replaced or retried under another nonce.
 
 ## Integration Test Strategy
 

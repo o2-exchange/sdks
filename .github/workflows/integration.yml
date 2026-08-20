@@ -36,7 +36,7 @@ jobs:
         env:
           PY_INTEGRATION_WALLETS: ${{ secrets.PY_INTEGRATION_WALLETS }}
         run: echo "$PY_INTEGRATION_WALLETS" > .integration-wallets.json
-      - run: pytest tests/test_withdrawal_integration.py tests/test_integration.py -m integration -v --timeout=600
+      - run: pytest tests/test_integration.py -m integration -v --timeout=600
 
   typescript-integration:
     name: TypeScript Integration

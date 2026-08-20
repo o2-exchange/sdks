@@ -52,8 +52,9 @@ For Fuel-native accounts:
            "FUEL/USDC", OrderSide.BUY, 0.02, 100.0
        )
 
-The SDK will call ``my_kms_sign`` with a Fuel-prefixed SHA-256 digest
-for session creation and withdrawals.
+For session creation and sequential withdrawals, the SDK calls
+``my_kms_sign`` with a Fuel-prefixed SHA-256 digest. For a parallel
+withdrawal it passes the final SRC-16 typed-data digest directly.
 
 .. important::
 
@@ -77,10 +78,11 @@ For EVM-compatible accounts (MetaMask, Ledger via Ethereum, etc.):
        sign_digest=my_kms_sign,  # Same callback interface
    )
 
-The only difference is the message framing: :class:`ExternalEvmSigner`
-uses Ethereum's ``\x19Ethereum Signed Message:\n`` prefix + keccak-256,
-while :class:`ExternalSigner` uses Fuel's
-``\x19Fuel Signed Message:\n`` prefix + SHA-256.
+For personal-sign operations, :class:`ExternalEvmSigner` uses Ethereum's
+``\x19Ethereum Signed Message:\n`` prefix + keccak-256, while
+:class:`ExternalSigner` uses Fuel's ``\x19Fuel Signed Message:\n`` prefix +
+SHA-256. For typed withdrawals the distinction is EIP-712 versus SRC-16;
+both classes still pass one final 32-byte digest to the callback.
 
 
 Implementing the callback
@@ -149,8 +151,9 @@ Custom Signer protocol
 -----------------------
 
 You can also implement the :class:`~o2_sdk.crypto.Signer` protocol
-directly for full control.  Use the shared digest helpers to ensure your
-framing matches the SDK:
+directly for full control. Use the shared digest helpers to ensure your
+personal-sign framing matches the SDK. The protocol also exposes
+``sign_digest`` for typed operations:
 
 .. code-block:: python
 
@@ -170,8 +173,25 @@ framing matches the SDK:
            # Sign the 32-byte digest with your own signing backend
            return my_backend_sign(digest)
 
+       def sign_digest(self, digest: bytes) -> bytes:
+           # The SDK has already applied SRC-16/EIP-712 hashing here.
+           return my_backend_sign(digest)
+
    signer = MyCustomSigner()
    session = await client.create_session(owner=signer, markets=["FUEL/USDC"])
 
 For EVM accounts, use :func:`~o2_sdk.crypto.evm_personal_sign_digest`
 instead.
+
+.. important::
+
+   A custom signer may raise :class:`NotImplementedError` from
+   ``sign_digest`` if its backend does not support raw-digest signing. This is
+   safe for existing functionality: the SDK only calls ``sign_digest`` when a
+   typed operation is selected, currently a parallel withdrawal. Sequential
+   withdrawals and session creation use ``personal_sign``.
+
+   .. code-block:: python
+
+      def sign_digest(self, digest: bytes) -> bytes:
+          raise NotImplementedError("typed operations are not supported")

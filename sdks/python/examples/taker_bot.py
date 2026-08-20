@@ -8,7 +8,7 @@ import asyncio
 import logging
 import signal
 
-from o2_sdk import BoundedMarketOrder, Network, O2Client, OrderSide
+from o2_sdk import BoundedMarketOrder, DepthBook, Network, O2Client, OrderSide
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 logger = logging.getLogger("taker_bot")
@@ -50,15 +50,19 @@ async def main():
     logger.info("Watching for asks below %.6f...", BUY_BELOW_PRICE)
 
     try:
+        # Depth messages after the snapshot carry signed relative changes;
+        # DepthBook applies them and keeps a correct local book.
+        book = DepthBook()
         async for update in client.stream_depth(market.pair, precision=1):
             if shutdown_event.is_set():
                 break
 
-            best_ask = update.changes.best_ask
-            if not best_ask:
+            book.apply(update)
+            best_ask = book.best_ask
+            if best_ask is None:
                 continue
 
-            ask_price = market.format_price(int(best_ask.price))
+            ask_price = market.format_price(best_ask)
             logger.debug("Best ask: %.6f", ask_price)
 
             if ask_price <= BUY_BELOW_PRICE:
@@ -67,7 +71,7 @@ async def main():
                 max_price = ask_price * (1 + SLIPPAGE_PCT)
                 quantity = min(
                     MAX_QUANTITY,
-                    market.format_quantity(int(best_ask.quantity)),
+                    market.format_quantity(book.asks[best_ask]),
                 )
 
                 try:

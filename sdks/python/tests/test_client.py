@@ -18,6 +18,7 @@ from o2_sdk import (
     OrderSide,
     SessionInfo,
     SettleBalanceAction,
+    WithdrawResponse,
 )
 
 
@@ -478,7 +479,7 @@ async def test_withdraw_supports_contract_identity(monkeypatch: pytest.MonkeyPat
     async def fake_withdraw(owner_id: str, request: dict):
         captured["owner_id"] = owner_id
         captured["request"] = request
-        return object()
+        return WithdrawResponse(tx_id="0x" + "ab" * 32)
 
     monkeypatch.setattr(client.api, "get_account", fake_get_account)
     monkeypatch.setattr(client.api, "withdraw", fake_withdraw)

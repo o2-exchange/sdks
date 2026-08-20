@@ -1,4 +1,17 @@
 # Changelog
+## 0.3.2 (2026-08-10)
+
+### Fixes
+
+- Stop requiring the retired whitelist during account setup. The whitelist system is retired on every o2 network, and the legacy analytics endpoint fails against markets that have no whitelist contract, which made testnet account setup fatal. Python and Rust now ship `whitelist_required=false` for testnet; TypeScript no longer calls the endpoint during setup. Custom configs can still opt back in where the mechanism exists.
+
+## 0.3.1 (2026-08-07)
+
+### Fixes
+
+- stop retrying stale actions (#65)
+- Stop automatically retrying `/v1/session/actions` after rate-limit or transport failures, and bound each action request with a configurable HTTP timeout. Callers now receive the failure immediately so they can reconcile current state and build fresh actions instead of submitting stale signed intent.
+
 ## 0.3.0 (2026-08-04)
 
 ### Breaking Changes

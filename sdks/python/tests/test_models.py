@@ -3,6 +3,8 @@
 from decimal import Decimal
 from typing import ClassVar
 
+import pytest
+
 from o2_sdk.models import (
     AccountInfo,
     ActionsResponse,
@@ -10,6 +12,9 @@ from o2_sdk.models import (
     Balance,
     ChainInt,
     ContractIdentity,
+    DepthBook,
+    DepthChange,
+    DepthChanges,
     DepthSnapshot,
     DepthUpdate,
     FaucetResponse,
@@ -314,7 +319,131 @@ class TestDepthUpdate:
         }
         update = DepthUpdate.from_dict(data)
         assert not update.is_snapshot
+        assert isinstance(update.changes, DepthChanges)
+        assert isinstance(update.changes.asks[0], DepthChange)
         assert len(update.changes.asks) == 1
+
+    def test_incremental_parses_negative_quantities(self):
+        data = {
+            "action": "subscribe_depth_update",
+            "changes": {
+                "buys": [{"price": "100", "quantity": "-25"}],
+                "sells": [],
+            },
+            "market_id": "0xabc",
+        }
+        update = DepthUpdate.from_dict(data)
+        assert update.changes.bids[0].quantity == "-25"
+
+
+class TestDepthBook:
+    SNAPSHOT: ClassVar[dict] = {
+        "action": "subscribe_depth",
+        "view": {
+            "buys": [
+                {"price": "100", "quantity": "500"},
+                {"price": "99", "quantity": "10"},
+            ],
+            "sells": [{"price": "101", "quantity": "200"}],
+        },
+        "market_id": "0xabc",
+    }
+
+    @staticmethod
+    def _delta(buys=(), sells=()):
+        return DepthUpdate.from_dict(
+            {
+                "action": "subscribe_depth_update",
+                "changes": {"buys": list(buys), "sells": list(sells)},
+                "market_id": "0xabc",
+            }
+        )
+
+    def _book(self):
+        book = DepthBook()
+        book.apply(DepthUpdate.from_dict(self.SNAPSHOT))
+        return book
+
+    def test_snapshot_populates_absolute_quantities(self):
+        book = self._book()
+        assert book.bids == {100: 500, 99: 10}
+        assert book.asks == {101: 200}
+        assert book.best_bid == 100
+        assert book.best_ask == 101
+
+    def test_partial_negative_change_reduces_the_level(self):
+        # A fill against part of a level is a negative change smaller
+        # than the level: the level must survive with less quantity.
+        book = self._book()
+        book.apply(self._delta(buys=[{"price": "100", "quantity": "-1"}]))
+        assert book.bids[100] == 499
+        assert book.best_bid == 100
+
+    def test_change_consuming_the_level_removes_it(self):
+        book = self._book()
+        book.apply(self._delta(buys=[{"price": "100", "quantity": "-500"}]))
+        assert 100 not in book.bids
+        assert book.best_bid == 99
+
+    def test_change_reducing_a_level_to_exactly_one_keeps_it(self):
+        # The removal boundary is exactly zero: a level whose sum lands
+        # on 1 stays on the book.
+        book = self._book()
+        book.apply(self._delta(buys=[{"price": "100", "quantity": "-499"}]))
+        assert book.bids[100] == 1
+        assert book.best_bid == 100
+
+    def test_positive_change_accumulates(self):
+        book = self._book()
+        book.apply(self._delta(sells=[{"price": "101", "quantity": "40"}]))
+        assert book.asks[101] == 240
+
+    def test_positive_change_creates_a_new_level(self):
+        book = self._book()
+        book.apply(self._delta(sells=[{"price": "102", "quantity": "5"}]))
+        assert book.asks[102] == 5
+
+    def test_negative_change_on_an_unknown_level_is_ignored(self):
+        book = self._book()
+        book.apply(self._delta(buys=[{"price": "98", "quantity": "-5"}]))
+        assert 98 not in book.bids
+
+    def test_malformed_entry_raises_before_any_mutation(self):
+        # Apply is atomic per update: a malformed entry must leave the
+        # book exactly as it was, never half-applied. Under relative
+        # semantics a partial application silently corrupts the book.
+        book = self._book()
+        before_bids = dict(book.bids)
+        before_asks = dict(book.asks)
+        with pytest.raises(ValueError):
+            book.apply(
+                self._delta(
+                    buys=[
+                        {"price": "100", "quantity": "-1"},
+                        {"price": "99", "quantity": "junk"},
+                    ]
+                )
+            )
+        assert book.bids == before_bids
+        assert book.asks == before_asks
+
+    def test_new_snapshot_replaces_the_book(self):
+        book = self._book()
+        book.apply(
+            DepthUpdate.from_dict(
+                {
+                    "action": "subscribe_depth",
+                    "view": {
+                        "buys": [{"price": "97", "quantity": "1"}],
+                        "sells": [],
+                    },
+                    "market_id": "0xabc",
+                }
+            )
+        )
+        assert book.bids == {97: 1}
+        assert book.asks == {}
+        assert book.best_ask is None
 
 
 class TestId:

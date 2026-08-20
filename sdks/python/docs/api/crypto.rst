@@ -49,6 +49,22 @@ Signer protocol
       :returns: A 64-byte Fuel compact signature.
       :rtype: bytes
 
+   .. method:: sign_digest(digest)
+
+      Sign an already-computed 32-byte digest without adding personal-sign
+      framing. Typed owner operations, including parallel withdrawals, use
+      this method.
+
+      Custom implementations that do not support typed operations may raise
+      :class:`NotImplementedError`. The SDK only calls this method when a
+      typed operation is actually selected; sequential withdrawals and the
+      existing personal-sign flows continue to use :meth:`personal_sign`.
+
+      :param digest: The final 32-byte typed-data digest.
+      :type digest: bytes
+      :returns: A 64-byte Fuel compact signature.
+      :rtype: bytes
+
 
 Wallet classes
 --------------
@@ -86,6 +102,16 @@ Wallet classes
 
       :param message: The message bytes.
       :type message: bytes
+      :returns: A 64-byte Fuel compact signature.
+      :rtype: bytes
+
+   .. method:: sign_digest(digest)
+
+      Sign a final 32-byte typed-data digest directly, without personal-sign
+      framing.
+
+      :param digest: The final digest to sign.
+      :type digest: bytes
       :returns: A 64-byte Fuel compact signature.
       :rtype: bytes
 
@@ -128,6 +154,16 @@ Wallet classes
 
       :param message: The message bytes.
       :type message: bytes
+      :returns: A 64-byte Fuel compact signature.
+      :rtype: bytes
+
+   .. method:: sign_digest(digest)
+
+      Sign a final 32-byte typed-data digest directly, without Ethereum
+      personal-sign framing.
+
+      :param digest: The final digest to sign.
+      :type digest: bytes
       :returns: A 64-byte Fuel compact signature.
       :rtype: bytes
 
@@ -259,9 +295,10 @@ Signing functions
 
    Sign a message using Fuel's ``personalSign`` format.
 
-   Used for **session creation** and **withdrawals** with Fuel-native
-   wallets.  Delegates to :func:`fuel_personal_sign_digest` for framing
-   and :func:`fuel_compact_sign` for signing.
+   Used for **session creation** and **sequential withdrawals** with
+   Fuel-native wallets. Delegates to :func:`fuel_personal_sign_digest`
+   for framing and :func:`fuel_compact_sign` for signing. Parallel
+   withdrawals instead sign a typed-data digest directly.
 
    :param private_key_bytes: The 32-byte private key.
    :type private_key_bytes: bytes
@@ -289,9 +326,10 @@ Signing functions
 
    Sign using Ethereum's ``personal_sign`` prefix + keccak-256.
 
-   Used for session creation and withdrawals with **EVM wallets**.
+   Used for session creation and sequential withdrawals with **EVM wallets**.
    Delegates to :func:`evm_personal_sign_digest` for framing and
-   :func:`fuel_compact_sign` for signing.
+   :func:`fuel_compact_sign` for signing. Parallel withdrawals instead sign
+   an EIP-712 digest directly.
 
    :param private_key_bytes: The 32-byte private key.
    :type private_key_bytes: bytes
@@ -349,8 +387,10 @@ enclaves, use the external signer classes.
 
    A Fuel-native signer backed by an external signing function.
 
-   The SDK uses :func:`fuel_personal_sign_digest` internally for message
-   framing; your callback only needs to sign a raw 32-byte digest.
+   The SDK uses :func:`fuel_personal_sign_digest` internally for personal-sign
+   operations. For typed operations it passes the already-computed typed-data
+   digest directly. In both cases your callback only signs a raw 32-byte
+   digest.
 
    :param b256_address: The Fuel B256 address for this signer.
    :type b256_address: str
@@ -378,7 +418,8 @@ enclaves, use the external signer classes.
 
    Same as :class:`ExternalSigner` but uses
    :func:`evm_personal_sign_digest` for Ethereum ``personal_sign``
-   message framing (prefix + keccak-256 hashing).
+   message framing (prefix + keccak-256 hashing). Typed operations pass the
+   final typed-data digest to the callback without personal-sign framing.
 
    :param b256_address: The Fuel B256 address (EVM address zero-padded).
    :type b256_address: str

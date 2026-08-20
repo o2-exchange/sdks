@@ -76,6 +76,18 @@ class Signer(Protocol):
         """
         ...
 
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign an already-computed 32-byte digest.
+
+        Typed owner operations such as parallel withdrawals use this path.
+        Implementations that do not support typed operations may raise
+        :class:`NotImplementedError`; the SDK calls this method only when such
+        an operation is requested.
+
+        Returns a 64-byte Fuel compact signature.
+        """
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Wallet dataclasses
@@ -105,6 +117,10 @@ class Wallet:
         )
         return fuel_compact_sign(self.private_key, digest)
 
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign an already-computed typed-data digest."""
+        return fuel_compact_sign(self.private_key, digest)
+
 
 @dataclass
 class EvmWallet:
@@ -128,6 +144,10 @@ class EvmWallet:
         logger.debug(
             "EvmWallet.personal_sign: payload=%d bytes, digest=%s", len(message), digest.hex()
         )
+        return fuel_compact_sign(self.private_key, digest)
+
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign an already-computed typed-data digest without personal-sign framing."""
         return fuel_compact_sign(self.private_key, digest)
 
 
@@ -395,6 +415,10 @@ class ExternalSigner:
         )
         return self._sign_digest(digest)
 
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign an already-computed typed-data digest with the external backend."""
+        return self._sign_digest(digest)
+
 
 class ExternalEvmSigner:
     """An EVM signer backed by an external signing function.
@@ -446,4 +470,8 @@ class ExternalEvmSigner:
             len(message),
             digest.hex(),
         )
+        return self._sign_digest(digest)
+
+    def sign_digest(self, digest: bytes) -> bytes:
+        """Sign an already-computed typed-data digest with the external backend."""
         return self._sign_digest(digest)

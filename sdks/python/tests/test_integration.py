@@ -14,6 +14,7 @@ import pytest
 
 from o2_sdk import (
     BalanceUpdate,
+    ContractIdentity,
     Network,
     NonceUpdate,
     O2Client,
@@ -25,6 +26,8 @@ from o2_sdk import (
 )
 from o2_sdk.api import O2Api
 from o2_sdk.config import get_config
+from o2_sdk.crypto import Wallet
+from o2_sdk.models import Market, SessionInfo
 
 pytestmark = pytest.mark.integration
 
@@ -40,6 +43,26 @@ async def _mint_with_retry(api, trade_account_id, max_retries=4):
         except Exception:
             if attempt < max_retries - 1:
                 await asyncio.sleep(65)
+
+
+async def _wait_for_trading_account_balance(
+    client: O2Client,
+    trade_account_id: str,
+    asset_id: str,
+    expected: int,
+    *,
+    at_least: bool = False,
+) -> int:
+    """Wait for the balance indexer to observe a withdrawal or faucet mint."""
+    for _ in range(20):
+        balance = await client.api.get_balance(asset_id=asset_id, contract=trade_account_id)
+        raw = int(balance.trading_account_balance)
+        matches = raw >= expected if at_least else raw == expected
+        if matches:
+            return raw
+        await asyncio.sleep(1)
+    comparison = "at least" if at_least else "exactly"
+    raise AssertionError(f"trading account balance did not reach {comparison} {expected}")
 
 
 def _load_cached_wallet(client: O2Client, role: str):
@@ -1226,50 +1249,7 @@ class TestWebSocket:
 
 
 @pytest.mark.integration
-async def test_parallel_nonce_read_path_testnet():
-    """Validate the parallel-nonce read path against a live testnet account.
-    Exercises
-    get_account + get_account_window + WindowResponse +
-    ParallelNonceManager.init/next_nonce end-to-end."""
-    from o2_sdk.client import O2Client
-    from o2_sdk.config import Network
-    from o2_sdk.nonce import ParallelNonce, ParallelNonceManager, WindowResponse
 
-    client = O2Client(network=Network.TESTNET)
-    try:
-        wallet = _load_or_create_wallet(client, "parallel_test_tn")
-        acct = await client.api.get_account(owner=wallet.b256_address)
-        if acct.trade_account is None:
-            trade_account_id = acct.trade_account_id
-            if trade_account_id is None:
-                trade_account_id = (
-                    await client.api.create_account(wallet.b256_address)
-                ).trade_account_id
-            acct = await _wait_for_indexed_account(
-                client.api,
-                trade_account_id=trade_account_id,
-                require_trade_account=True,
-            )
-        assert acct.trade_account is not None
-        ta = acct.trade_account_id
-
-        async def _fetch():
-            return WindowResponse.from_dict(
-                await client.api.get_account_window(ta, nonce_session_id=0)
-            )
-
-        window = await _fetch()
-        assert window.nonce_session_id == 0
-        mgr = ParallelNonceManager(window_fetcher=_fetch)
-        await mgr.init()
-        n = ParallelNonce.decode(mgr.next_nonce())
-        assert window.base <= n.word_position < window.base + 8
-        assert n.nonce_session_id == 0
-    finally:
-        await client.close()
-
-
-@pytest.mark.integration
 async def test_parallel_nonce_concurrent_submission():
     """Fire N concurrent batch_actions on the parallel track and assert there are
     no nonce conflicts and the cursor advances by N (one distinct slot each).
@@ -1345,7 +1325,7 @@ async def test_parallel_nonce_concurrent_submission():
         await client.close()
 
 
-async def _parallel_recovery_setup(client):
+async def _parallel_recovery_setup(client: O2Client) -> tuple[Wallet, Market, SessionInfo]:
     """Shared setup for the two nonce-recovery tests: a funded testnet account
     on the parallel track with an empty book, so open-order counts are small
     and unambiguous.
@@ -1507,4 +1487,138 @@ async def test_parallel_nonce_already_used_is_surfaced_not_retried():
     finally:
         with contextlib.suppress(Exception):
             await client.cancel_all_orders(market.pair, session=session)
+        await client.close()
+
+
+@pytest.mark.integration
+async def test_sequential_withdraw_to_address_and_contract_id():
+    """Tries a withdrawal on the live testnet environment."""
+    client = O2Client(network=Network.TESTNET)
+    try:
+        wallet = _load_or_create_wallet(client, "parallel_test_tn")
+        account = await client.api.get_account(owner=wallet.b256_address)
+        if account.trade_account_id is None:
+            created = await client.api.create_account(wallet.b256_address)
+            account = await client.api.get_account(trade_account_id=created.trade_account_id)
+        assert account.trade_account_id is not None
+
+        recipient_wallet = _load_or_create_wallet(client, "withdraw_recipient_tn")
+        recipient = await client.api.get_account(owner=recipient_wallet.b256_address)
+        if recipient.trade_account_id is None:
+            created = await client.api.create_account(recipient_wallet.b256_address)
+            recipient = await client.api.get_account(trade_account_id=created.trade_account_id)
+        assert recipient.trade_account_id is not None
+
+        market = (await client.get_markets())[0]
+        asset = market.quote
+        before_response = await client.api.get_balance(
+            asset_id=asset.asset,
+            contract=account.trade_account_id,
+        )
+        before = int(before_response.trading_account_balance)
+        if before < 2:
+            await _mint_with_retry(client.api, account.trade_account_id)
+            before = await _wait_for_trading_account_balance(
+                client,
+                account.trade_account_id,
+                asset.asset,
+                2,
+                at_least=True,
+            )
+
+        atomic_amount = 10.0 ** (-asset.decimals)
+        assert int(atomic_amount * (10**asset.decimals)) == 1
+        assert client.session is None
+
+        address_result = await client.withdraw(
+            wallet,
+            asset.asset,
+            atomic_amount,
+            wallet.b256_address,
+        )
+        assert address_result.success, address_result.message
+
+        contract_result = await client.withdraw(
+            wallet,
+            asset.asset,
+            atomic_amount,
+            ContractIdentity(str(recipient.trade_account_id)),
+        )
+        assert contract_result.success, contract_result.message
+
+        after = await _wait_for_trading_account_balance(
+            client,
+            account.trade_account_id,
+            asset.asset,
+            before - 2,
+        )
+        assert after == before - 2
+    finally:
+        await client.close()
+
+
+@pytest.mark.integration
+async def test_parallel_nonce_withdrawal_recovery():
+    """Exercise typed withdrawals and both managed-nonce recovery branches.
+
+    A normal managed withdrawal must land, an out-of-window nonce must resync
+    and land exactly once, and an already-consumed slot must resync local state
+    while surfacing the error without a retry.
+    """
+    from o2_sdk.nonce import (
+        NONCE_BITMAP_SIZE,
+        NONCE_SESSION_SLIDING_WINDOW_SIZE,
+        is_parallel_nonce_already_used,
+    )
+
+    client = O2Client(network=Network.TESTNET)
+    try:
+        wallet, market, session = await _parallel_recovery_setup(client)
+        manager = session.nonce_manager
+        assert manager is not None
+
+        account = await client.api.get_account(owner=wallet.b256_address)
+        assert account.trade_account_id is not None
+        asset = market.quote
+        balance = await client.api.get_balance(
+            asset_id=asset.asset,
+            contract=account.trade_account_id,
+        )
+        if int(balance.trading_account_balance) < 2:
+            await _mint_with_retry(client.api, account.trade_account_id)
+            await _wait_for_trading_account_balance(
+                client,
+                account.trade_account_id,
+                asset.asset,
+                2,
+                at_least=True,
+            )
+        atomic_amount = 10.0 ** (-asset.decimals)
+        assert int(atomic_amount * (10**asset.decimals)) == 1
+
+        consumed_cursor = manager.cursor
+        happy = await client.withdraw(wallet, asset.asset, atomic_amount)
+        assert happy.success
+
+        generation_before_out_of_window = manager.resync_generation
+        burn = NONCE_BITMAP_SIZE * NONCE_SESSION_SLIDING_WINDOW_SIZE + NONCE_BITMAP_SIZE
+        for _ in range(burn):
+            manager.next_nonce()
+
+        recovered = await client.withdraw(wallet, asset.asset, atomic_amount)
+        assert recovered.success
+        assert manager.resync_generation > generation_before_out_of_window
+
+        generation_before_already_used = manager.resync_generation
+        with manager._lock:
+            manager._word, manager._bit = consumed_cursor
+
+        with pytest.raises(O2Error) as exc_info:
+            await client.withdraw(wallet, asset.asset, atomic_amount)
+
+        assert is_parallel_nonce_already_used(exc_info.value), (
+            f"expected an already-used rejection, got: {exc_info.value}"
+        )
+        assert manager.resync_generation > generation_before_already_used
+    finally:
         await client.close()

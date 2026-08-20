@@ -348,12 +348,32 @@ export interface MarketTicker {
 // ── Depth ───────────────────────────────────────────────────────────
 
 /**
- * A single price level in the order book depth.
+ * A single resting price level in the order book depth.
+ *
+ * `quantity` is the ABSOLUTE size resting at `price` (always positive).
+ * Compare {@link DepthChange}, whose quantity is a signed adjustment.
  */
 export interface DepthLevel {
   /** Price at this level (chain integer). */
   price: bigint;
   /** Total quantity at this level (chain integer). */
+  quantity: bigint;
+}
+
+/**
+ * One signed change to a depth level from the incremental stream.
+ *
+ * `quantity` is a RELATIVE adjustment to the level's resting size, not a
+ * new absolute size: positive when liquidity is added, negative when a
+ * cancel or a fill removes some. Add it to the current quantity; the level
+ * is empty when the running sum reaches zero. A partial fill arrives as a
+ * negative change smaller than the level, and the level survives it.
+ * {@link DepthBook} applies these semantics for you.
+ */
+export interface DepthChange {
+  /** Price of the changed level (chain integer). */
+  price: bigint;
+  /** Signed quantity adjustment (chain integer). */
   quantity: bigint;
 }
 
@@ -377,14 +397,18 @@ export interface DepthSnapshot {
 /**
  * A WebSocket depth update message.
  *
- * Can be either a full snapshot (`action: "subscribe_depth"`)
- * or an incremental update (`action: "subscribe_depth_update"`).
+ * A snapshot (`action: "subscribe_depth"`, the subscription ack and every
+ * reconnect replay) carries `view` with ABSOLUTE level quantities and
+ * replaces the whole book. Every other message carries `changes` with
+ * SIGNED RELATIVE adjustments; add each one to the level's current
+ * quantity and drop the level when the sum reaches zero. {@link DepthBook}
+ * maintains a book with these semantics.
  */
 export interface DepthUpdate {
   /** The action type (`"subscribe_depth"` or `"subscribe_depth_update"`). */
   action: string;
-  /** Incremental changes (present on updates). */
-  changes?: { bids: DepthLevel[]; asks: DepthLevel[] };
+  /** Signed incremental changes (present on updates). */
+  changes?: { bids: DepthChange[]; asks: DepthChange[] };
   /** Full order book view (present on snapshots). */
   view?: { precision?: number; bids: DepthLevel[]; asks: DepthLevel[] };
   /** Market identifier. */
@@ -393,6 +417,69 @@ export interface DepthUpdate {
   onchain_timestamp?: string;
   /** Server-observed timestamp. */
   seen_timestamp?: string;
+}
+
+/**
+ * A local order book maintained from a depth stream.
+ *
+ * Feed every {@link DepthUpdate} to {@link DepthBook.apply}. A snapshot
+ * replaces the book with its absolute quantities; an incremental update
+ * adds each signed change to the level it names and removes the level
+ * when its quantity reaches zero.
+ *
+ * `bids` and `asks` map the chain-integer price of each non-empty level
+ * to its quantity.
+ */
+export class DepthBook {
+  bids = new Map<bigint, bigint>();
+  asks = new Map<bigint, bigint>();
+
+  /** Apply one stream message to the book. */
+  apply(update: DepthUpdate): void {
+    if (update.view) {
+      this.bids.clear();
+      this.asks.clear();
+      for (const level of update.view.bids) {
+        if (level.quantity > 0n) this.bids.set(level.price, level.quantity);
+      }
+      for (const level of update.view.asks) {
+        if (level.quantity > 0n) this.asks.set(level.price, level.quantity);
+      }
+    }
+    if (update.changes) {
+      DepthBook.applySide(this.bids, update.changes.bids);
+      DepthBook.applySide(this.asks, update.changes.asks);
+    }
+  }
+
+  private static applySide(side: Map<bigint, bigint>, changes: DepthChange[]): void {
+    for (const change of changes) {
+      const quantity = (side.get(change.price) ?? 0n) + change.quantity;
+      if (quantity > 0n) {
+        side.set(change.price, quantity);
+      } else {
+        side.delete(change.price);
+      }
+    }
+  }
+
+  /** Highest non-empty bid price, or undefined on an empty side. */
+  get bestBid(): bigint | undefined {
+    let best: bigint | undefined;
+    for (const price of this.bids.keys()) {
+      if (best === undefined || price > best) best = price;
+    }
+    return best;
+  }
+
+  /** Lowest non-empty ask price, or undefined on an empty side. */
+  get bestAsk(): bigint | undefined {
+    let best: bigint | undefined;
+    for (const price of this.asks.keys()) {
+      if (best === undefined || price < best) best = price;
+    }
+    return best;
+  }
 }
 
 // ── Account ─────────────────────────────────────────────────────────
@@ -1429,6 +1516,14 @@ export function parseDepthLevel(raw: Record<string, unknown>): DepthLevel {
   };
 }
 
+/** Parse a raw signed depth change into a typed {@link DepthChange}. */
+export function parseDepthChange(raw: Record<string, unknown>): DepthChange {
+  return {
+    price: raw.price != null ? parseBigInt(raw.price) : 0n,
+    quantity: raw.quantity != null ? parseBigInt(raw.quantity) : 0n,
+  };
+}
+
 /** Parse a raw trade into a typed {@link Trade}. */
 export function parseTrade(raw: Record<string, unknown>): Trade {
   const traderSide = raw.trader_side as string | undefined;
@@ -1572,14 +1667,18 @@ export function parseDepthUpdate(raw: Record<string, unknown>): DepthUpdate {
   if (raw.changes) {
     const changes = raw.changes as Record<string, unknown>;
     result.changes = {
-      // Wire format uses "buys"/"sells"; we map to bids/asks
-      bids: ((changes.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
-      asks: ((changes.sells ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
+      // Wire format uses "buys"/"sells"; we map to bids/asks. Each entry
+      // is a SIGNED RELATIVE quantity change, not a level size.
+      bids: ((changes.buys ?? []) as Record<string, unknown>[]).map(parseDepthChange),
+      asks: ((changes.sells ?? []) as Record<string, unknown>[]).map(parseDepthChange),
     };
   }
 
-  if (raw.view) {
-    const view = raw.view as Record<string, unknown>;
+  // The subscribe_depth ack delivers the snapshot under "orders"; direct
+  // depth responses use "view".
+  const rawView = raw.orders ?? raw.view;
+  if (rawView) {
+    const view = rawView as Record<string, unknown>;
     result.view = {
       precision: typeof view.precision === "number" ? view.precision : undefined,
       bids: ((view.buys ?? []) as Record<string, unknown>[]).map(parseDepthLevel),
