@@ -43,64 +43,59 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Listening for depth updates (buy when ask <= {buy_below_price})...");
 
+    // Depth messages after the snapshot carry signed relative changes;
+    // DepthBook applies them and keeps a correct local book.
+    let mut book = o2_sdk::DepthBook::new();
     while let Some(Ok(update)) = depth_stream.next().await {
-        // Get best ask from snapshot or update
-        let sells = update
-            .view
-            .as_ref()
-            .map(|v| &v.asks)
-            .or_else(|| update.changes.as_ref().map(|c| &c.asks));
+        book.apply(&update);
 
-        if let Some(sell_levels) = sells {
-            if let Some(best_ask) = sell_levels.first() {
-                let ask_price: u64 = best_ask.price;
-                if ask_price == 0 {
-                    continue;
-                }
-                let ask_human = market.format_price(ask_price);
+        if let Some(ask_price) = book.best_ask() {
+            if ask_price == 0 {
+                continue;
+            }
+            let ask_human = market.format_price(ask_price);
 
-                if ask_human <= buy_below_price {
-                    println!("Target price hit! Best ask: {ask_human}");
+            if ask_human <= buy_below_price {
+                println!("Target price hit! Best ask: {ask_human}");
 
-                    // Use a price slightly above the ask (0.5% slippage)
-                    let slippage_factor: UnsignedDecimal = "1.005".parse()?;
-                    let taker_price = ask_human * slippage_factor;
-                    let price = match market.price_from_decimal(taker_price) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            eprintln!("Skipping order due to invalid taker price: {e}");
-                            continue;
-                        }
-                    };
-
-                    let result = client
-                        .create_order(
-                            &mut session,
-                            market_pair.as_str(),
-                            Side::Buy,
-                            price,
-                            max_quantity,
-                            OrderType::Spot,
-                            true,
-                            true,
-                        )
-                        .await;
-
-                    match result {
-                        Ok(resp) if resp.is_success() => {
-                            println!("Order placed! tx: {}", resp.tx_id.as_deref().unwrap_or("?"));
-                        }
-                        Ok(resp) => {
-                            eprintln!("Order failed: {:?}", resp.message);
-                        }
-                        Err(e) => {
-                            eprintln!("Order error: {e}");
-                            let _ = client.refresh_nonce(&mut session).await;
-                        }
+                // Use a price slightly above the ask (0.5% slippage)
+                let slippage_factor: UnsignedDecimal = "1.005".parse()?;
+                let taker_price = ask_human * slippage_factor;
+                let price = match market.price_from_decimal(taker_price) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("Skipping order due to invalid taker price: {e}");
+                        continue;
                     }
-                } else {
-                    println!("Best ask: {ask_human} (waiting for <= {buy_below_price})");
+                };
+
+                let result = client
+                    .create_order(
+                        &mut session,
+                        market_pair.as_str(),
+                        Side::Buy,
+                        price,
+                        max_quantity,
+                        OrderType::Spot,
+                        true,
+                        true,
+                    )
+                    .await;
+
+                match result {
+                    Ok(resp) if resp.is_success() => {
+                        println!("Order placed! tx: {}", resp.tx_id.as_deref().unwrap_or("?"));
+                    }
+                    Ok(resp) => {
+                        eprintln!("Order failed: {:?}", resp.message);
+                    }
+                    Err(e) => {
+                        eprintln!("Order error: {e}");
+                        let _ = client.refresh_nonce(&mut session).await;
+                    }
                 }
+            } else {
+                println!("Best ask: {ask_human} (waiting for <= {buy_below_price})");
             }
         }
     }
