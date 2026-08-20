@@ -86,9 +86,7 @@ def _protected_price_to_precision(value: str, side: str, precision: int) -> str:
     truncated_decimal = Decimal(truncated)
     if side == "buy":
         if truncated_decimal <= 0:
-            raise InvalidOrder(
-                "create_order market maxPrice is below the minimum price precision"
-            )
+            raise InvalidOrder("create_order market maxPrice is below the minimum price precision")
         return truncated
     input_decimal = Decimal(value)
     if truncated_decimal >= input_decimal:
