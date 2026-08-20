@@ -47,6 +47,36 @@ describe("O2WebSocket parser error handling", () => {
           quantity: "50",
           timestamp: "0",
           close: false,
+          active_trigger_orders: [
+            {
+              order_id: "0x2",
+              owner: { ContractId: "0x3" },
+              side: "Sell",
+              order_type: { Spot: { price: "90" } },
+              market_id: "0x4",
+              trigger_price: "100",
+              timestamp: "1",
+              status: "Active",
+              possible_amount: "50",
+              available_amount: "10",
+              history: [],
+            },
+          ],
+        },
+      ],
+      standalone_trigger_orders: [
+        {
+          order_id: "0x5",
+          owner: { ContractId: "0x3" },
+          side: "Buy",
+          order_type: "Market",
+          market_id: "0x4",
+          trigger_price: "80",
+          timestamp: "2",
+          status: "Active",
+          possible_amount: "25",
+          available_amount: "25",
+          history: [],
         },
       ],
     });
@@ -60,6 +90,11 @@ describe("O2WebSocket parser error handling", () => {
     expect(result.value.orders.length).toBe(1);
     expect(result.value.orders[0].price).toBe(100n);
     expect(result.value.orders[0].quantity).toBe(50n);
+    expect(result.value.orders[0].active_trigger_orders?.[0].trigger_price).toBe(100n);
+    expect(result.value.orders[0].active_trigger_orders?.[0].order_type).toEqual({
+      Spot: { price: 90n },
+    });
+    expect(result.value.standalone_trigger_orders[0].possible_amount).toBe(25n);
 
     await stream.return(undefined);
   });

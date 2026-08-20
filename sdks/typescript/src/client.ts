@@ -48,13 +48,17 @@ import {
   type MarketInfo,
   scaleDecimalString,
   scalePriceString,
+  triggerLockAmount,
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
 import { O2Error, SessionExpired } from "./errors.js";
 import type {
   ActionPayload,
+  ActiveOrderEntry,
+  ActiveOrdersCursor,
   AssetId,
+  AttachedTriggerOrderArgs,
   BalanceResponse,
   BalanceUpdate,
   Bar,
@@ -71,23 +75,37 @@ import type {
   OrderId,
   OrderType,
   OrderUpdate,
+  ParentOrderRef,
   SessionActionsResponse,
   SessionState,
   TradeAccountId,
   TradeUpdate,
+  TriggerOrderArgs,
+  TriggerOrderId,
   WalletState,
+  WireTriggerOrderArgs,
 } from "./models.js";
-import { depthPrecision, tradeAccountId } from "./models.js";
+import { depthPrecision, orderId, tradeAccountId } from "./models.js";
 import {
   capitalizeSide,
   ensureNumeric,
   resolveAsset as resolveAssetFromMarkets,
   resolveMarket as resolveMarketFromMarkets,
+  scaleNumericPrice,
   scaleOrderType,
 } from "./utils.js";
 import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
+const PENDING_PARENT_ORDER_ID = orderId(`0x${"00".repeat(32)}`);
+
+/** Add the wire-only parent marker for a trigger attached to a new spot order. */
+function withPendingParentQuantity(args: AttachedTriggerOrderArgs): TriggerOrderArgs {
+  return {
+    ...args,
+    quantity: { ParentOrder: { parent_order_id: PENDING_PARENT_ORDER_ID } },
+  };
+}
 
 /** Convert a wire-format Market to the MarketInfo used by encoding helpers. */
 function toMarketInfo(market: Market): MarketInfo {
@@ -496,6 +514,200 @@ export class O2Client {
     return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
   }
 
+  /**
+   * Create a take-profit or stop-loss trigger order.
+   *
+   * `args.quantity` selects the mode: `{ Quantity: {...} }` locks funds upfront
+   * (standalone), `{ ParentOrder: {...} }` derives quantity from an existing
+   * spot order (pass `parent` too, no funds locked).
+   *
+   * Creates one independent trigger. For a TP/SL pair that auto-cancels its
+   * sibling when one fires, use {@link createTriggerOrders} instead.
+   *
+   * @param market - Market pair string or Market object.
+   * @param args - Trigger order type, quantity, trigger price, and side.
+   * @param parent - Parent order ref, required when quantity is `ParentOrder`.
+   * @param session - Explicit session to use. Defaults to the client's active session.
+   */
+  async createTriggerOrder(
+    market: MarketRef,
+    args: TriggerOrderArgs,
+    parent: ParentOrderRef | null = null,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            { SettleBalance: { to: { ContractId: activeSession.tradeAccountId } } },
+            {
+              CreateTriggerOrder: {
+                args: this.normalizeTriggerOrderArgs(args, resolved, "args"),
+                parent: this.normalizeParentOrderRef(parent, resolved),
+              },
+            },
+          ],
+        },
+      ],
+      true,
+      activeSession,
+    );
+  }
+
+  /** Atomically create an OCO pair of trigger orders. */
+  async createTriggerOrders(
+    market: MarketRef,
+    first: TriggerOrderArgs,
+    second: TriggerOrderArgs,
+    parent: ParentOrderRef | null = null,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const normalizedFirst = this.normalizeTriggerOrderArgs(first, resolved, "first");
+    const normalizedSecond = this.normalizeTriggerOrderArgs(second, resolved, "second");
+
+    // The contract makes trigger_order_1 canonical and requires its exact lock
+    // amount. Put the more expensive standalone leg first so the shared OCO
+    // lock can fund either sibling at its full requested quantity.
+    const shouldSwap =
+      triggerLockAmount(normalizedSecond, resolved.base.decimals) >
+      triggerLockAmount(normalizedFirst, resolved.base.decimals);
+    const canonicalFirst = shouldSwap ? normalizedSecond : normalizedFirst;
+    const canonicalSecond = shouldSwap ? normalizedFirst : normalizedSecond;
+
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            { SettleBalance: { to: { ContractId: activeSession.tradeAccountId } } },
+            {
+              CreateTriggerOrders: {
+                first: canonicalFirst,
+                second: canonicalSecond,
+                parent: this.normalizeParentOrderRef(parent, resolved),
+              },
+            },
+          ],
+        },
+      ],
+      true,
+      activeSession,
+    );
+  }
+
+  /**
+   * Atomically create a spot order and attach one or two triggers to it.
+   *
+   * Avoids the race of creating an order then attaching a trigger separately
+   * (the trigger needs the new order's on-chain ID, which doesn't exist yet).
+   * If both `trigger1` and `trigger2` are given, they're linked as an OCO pair.
+   * Their quantities are inherited from the new spot order; the SDK supplies
+   * the protocol's pending-parent marker internally.
+   * Triggers must be on the opposite side of the spot order; `"Limit"` order
+   * type is rejected on-chain.
+   *
+   * @param market - Market pair string or Market object.
+   * @param side - Spot order side (`"buy"` or `"sell"`).
+   * @param price - Spot order price as decimal string or raw bigint.
+   * @param quantity - Spot order quantity as decimal string or raw bigint.
+   * @param orderType - Spot order type (`"Limit"` not allowed here).
+   * @param trigger1 - First trigger (take-profit or stop-loss) leg.
+   * @param trigger2 - Optional second leg; forms an OCO pair with `trigger1`.
+   * @param session - Explicit session to use. Defaults to the client's active session.
+   */
+  async createOrderWithTriggers(
+    market: MarketRef,
+    side: "buy" | "sell",
+    price: Numeric,
+    quantity: Numeric,
+    orderType: OrderType,
+    trigger1: AttachedTriggerOrderArgs,
+    trigger2: AttachedTriggerOrderArgs | null = null,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+      resolved,
+      price,
+      quantity,
+      "price",
+      "quantity",
+    );
+
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            { SettleBalance: { to: { ContractId: activeSession.tradeAccountId } } },
+            {
+              CreateOrderWithTriggers: {
+                side: capitalizeSide(side),
+                price: scaledPrice.toString(),
+                quantity: scaledQuantity.toString(),
+                order_type: scaleOrderType(orderType, resolved),
+                trigger_1: this.normalizeTriggerOrderArgs(
+                  withPendingParentQuantity(trigger1),
+                  resolved,
+                  "trigger_1",
+                ),
+                trigger_2: trigger2
+                  ? this.normalizeTriggerOrderArgs(
+                      withPendingParentQuantity(trigger2),
+                      resolved,
+                      "trigger_2",
+                    )
+                  : null,
+              },
+            },
+          ],
+        },
+      ],
+      true,
+      activeSession,
+    );
+  }
+
+  /**
+   * Cancel a trigger order by ID.
+   *
+   * @param orderId - The trigger order's ID.
+   * @param market - Market pair string or Market object.
+   * @param session - Explicit session to use. Defaults to the client's active session.
+   */
+  async cancelTriggerOrder(
+    orderId: TriggerOrderId,
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            { SettleBalance: { to: { ContractId: activeSession.tradeAccountId } } },
+            { CancelTriggerOrder: { order_id: orderId } },
+          ],
+        },
+      ],
+      false,
+      activeSession,
+    );
+  }
+
   /** Cancel an order. The session nonce is updated in-place. */
   async cancelOrder(
     orderId: OrderId,
@@ -519,7 +731,8 @@ export class O2Client {
   }
 
   /**
-   * Cancel all open orders for a market. Returns one result per chunk, or null if no orders.
+   * Cancel all open spot and standalone trigger orders for a market.
+   * Returns one result per chunk, or null if no orders are active.
    */
   async cancelAllOrders(
     market: MarketRef,
@@ -529,24 +742,48 @@ export class O2Client {
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
 
-    const orders = await this.api.getOrders(
-      resolved.market_id,
-      activeSession.tradeAccountId,
-      "desc",
-      200,
-      true,
-    );
+    const activeEntries: ActiveOrderEntry[] = [];
+    let cursor: ActiveOrdersCursor | undefined;
+    const seenCursors = new Set<string>();
 
-    if (orders.orders.length === 0) return null;
+    while (true) {
+      const page = await this.api.getActiveOrders(resolved.market_id, {
+        contract: activeSession.tradeAccountId,
+        direction: "desc",
+        count: 200,
+        cursor,
+      });
+      activeEntries.push(...page.entries);
+
+      if (page.next_timestamp == null || page.next_id == null || page.next_kind == null) {
+        cursor = undefined;
+        break;
+      }
+
+      const cursorKey = `${page.next_timestamp}:${page.next_id}:${page.next_kind}`;
+      if (seenCursors.has(cursorKey)) {
+        throw new O2Error("Active-orders pagination returned a repeated cursor");
+      }
+      seenCursors.add(cursorKey);
+      cursor = {
+        startTimestamp: page.next_timestamp,
+        startId: page.next_id,
+        startKind: page.next_kind,
+      };
+    }
+
+    if (activeEntries.length === 0) return null;
 
     const results: SessionActionsResponse[] = [];
 
     // Process in chunks of 5 (max actions per batch)
-    for (let i = 0; i < orders.orders.length; i += 5) {
-      const chunk = orders.orders.slice(i, i + 5);
-      const cancelActions: ActionPayload[] = chunk.map((o) => ({
-        CancelOrder: { order_id: o.order_id },
-      }));
+    for (let i = 0; i < activeEntries.length; i += 5) {
+      const chunk = activeEntries.slice(i, i + 5);
+      const cancelActions: ActionPayload[] = chunk.map((entry) =>
+        entry.kind === "trigger"
+          ? { CancelTriggerOrder: { order_id: entry.order_id } }
+          : { CancelOrder: { order_id: entry.order_id } },
+      );
 
       const result = await this.submitBatch(
         [{ market_id: resolved.market_id, actions: cancelActions }],
@@ -1158,6 +1395,124 @@ export class O2Client {
     }
 
     return { scaledPrice, scaledQuantity };
+  }
+
+  /** Convert user-facing trigger args to the backend wire format. */
+  protected normalizeTriggerOrderArgs(
+    args: TriggerOrderArgs,
+    market: Market,
+    fieldPrefix: string,
+  ): WireTriggerOrderArgs {
+    const normalizePrice = (price: Numeric, fieldName: string): string => {
+      const normalizedPrice = ensureNumeric(price, fieldName);
+      if (typeof normalizedPrice === "bigint") {
+        this.ensureBigIntPricePrecision(normalizedPrice, market);
+      }
+      return scaleNumericPrice(
+        normalizedPrice,
+        market.quote.decimals,
+        market.quote.max_precision,
+        fieldName,
+      );
+    };
+
+    const triggerPrice = normalizePrice(args.trigger_price, `${fieldPrefix}.trigger_price`);
+
+    let orderType: WireTriggerOrderArgs["order_type"];
+    let effectivePrice = BigInt(triggerPrice);
+    let effectivePriceField = `${fieldPrefix}.trigger_price`;
+    if (args.order_type === "Market") {
+      orderType = "Market";
+    } else if ("MarketBounded" in args.order_type) {
+      const maxPrice = normalizePrice(
+        args.order_type.MarketBounded.max_price,
+        `${fieldPrefix}.order_type.MarketBounded.max_price`,
+      );
+      orderType = {
+        MarketBounded: {
+          max_price: maxPrice,
+          min_price: normalizePrice(
+            args.order_type.MarketBounded.min_price,
+            `${fieldPrefix}.order_type.MarketBounded.min_price`,
+          ),
+        },
+      };
+      effectivePrice = BigInt(maxPrice);
+      effectivePriceField = `${fieldPrefix}.order_type.MarketBounded.max_price`;
+    } else {
+      const spotPrice = normalizePrice(
+        args.order_type.Spot.price,
+        `${fieldPrefix}.order_type.Spot.price`,
+      );
+      orderType = {
+        Spot: {
+          price: spotPrice,
+        },
+      };
+      effectivePrice = BigInt(spotPrice);
+      effectivePriceField = `${fieldPrefix}.order_type.Spot.price`;
+    }
+
+    let triggerQuantity: WireTriggerOrderArgs["quantity"];
+    if ("ParentOrder" in args.quantity) {
+      triggerQuantity = args.quantity;
+    } else {
+      const quantity = ensureNumeric(
+        args.quantity.Quantity.quantity,
+        `${fieldPrefix}.quantity.Quantity.quantity`,
+      );
+      let scaledQuantity =
+        typeof quantity === "bigint"
+          ? quantity
+          : scaleDecimalString(quantity, market.base.decimals);
+
+      if (!validateFractionalPrice(effectivePrice, scaledQuantity, market.base.decimals)) {
+        scaledQuantity = adjustQuantityForFractionalPrice(
+          effectivePrice,
+          scaledQuantity,
+          market.base.decimals,
+        );
+      }
+
+      if (
+        !validateMinOrder(effectivePrice, scaledQuantity, market.base.decimals, market.min_order)
+      ) {
+        throw new O2Error(
+          `${fieldPrefix} order value below min_order. ` +
+            `(${effectivePriceField} * ${fieldPrefix}.quantity.Quantity.quantity) / ` +
+            `10^${market.base.decimals} must be >= ${market.min_order}`,
+        );
+      }
+
+      triggerQuantity = {
+        Quantity: {
+          quantity: scaledQuantity.toString(),
+        },
+      };
+    }
+
+    return {
+      order_type: orderType,
+      quantity: triggerQuantity,
+      trigger_price: triggerPrice,
+      side: capitalizeSide(args.side),
+    };
+  }
+
+  /** Scale a parent quantity snapshot while preserving its order ID. */
+  protected normalizeParentOrderRef(
+    parent: ParentOrderRef | null,
+    market: Market,
+  ): { order_id: OrderId; expected_quantity: string } | null {
+    if (!parent) return null;
+    const quantity = ensureNumeric(parent.expected_quantity, "parent.expected_quantity");
+    return {
+      order_id: parent.order_id,
+      expected_quantity:
+        typeof quantity === "bigint"
+          ? quantity.toString()
+          : scaleDecimalString(quantity, market.base.decimals).toString(),
+    };
   }
 
   /** Convert a type-safe Action to the wire-format ActionPayload. */

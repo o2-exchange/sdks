@@ -150,8 +150,11 @@ Identifier usage:
 | `setSession(session)` / `clearSession()` | Restore or clear the active client session |
 | `createSession(wallet, markets, expiryDays?)` | Create and store a trading session |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
+| `createTriggerOrder(market, args, parent?, session?)` | Create a standalone or existing-parent trigger order |
+| `createTriggerOrders(market, first, second, parent?, session?)` | Create an OCO trigger pair |
+| `createOrderWithTriggers(market, side, price, qty, orderType, trigger1, trigger2?, session?)` | Create a spot order with attached triggers whose quantity is inherited automatically |
 | `cancelOrder(orderId, market, session?)` | Cancel a specific order |
-| `cancelAllOrders(market, session?)` | Cancel all open orders |
+| `cancelAllOrders(market, session?)` | Cancel all open spot and standalone trigger orders |
 | `settleBalance(market, session?)` | Settle filled order proceeds |
 | `batchActions(marketActions, collectOrders?, session?)` | Submit type-safe action batches |
 | `getMarkets()` / `getMarket(pair)` | Fetch market info |

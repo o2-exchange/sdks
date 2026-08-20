@@ -10,6 +10,7 @@ import {
   marketId,
   orderId,
   tradeAccountId,
+  triggerOrderId,
 } from "../src/models.js";
 
 const OWNER = `0x${"11".repeat(32)}`;
@@ -515,6 +516,420 @@ describe("O2Client management", () => {
         trade_account_id: session.tradeAccountId,
       }),
     );
+  });
+
+  it("cancelAllOrders paginates and cancels spot and standalone trigger entries", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+
+    const spotIds = ["01", "02", "03", "04"].map((byte) => orderId(`0x${byte.repeat(32)}`));
+    const triggerIds = ["05", "06"].map((byte) => triggerOrderId(`0x${byte.repeat(32)}`));
+    const cursorId = triggerOrderId(`0x${"07".repeat(32)}`);
+    const orderEntry = (id: (typeof spotIds)[number]) => ({
+      kind: "order" as const,
+      order_id: id,
+    });
+    const triggerEntry = (id: (typeof triggerIds)[number]) => ({
+      kind: "trigger" as const,
+      order_id: id,
+    });
+
+    const getActiveOrdersSpy = vi
+      .spyOn(client.api, "getActiveOrders")
+      .mockResolvedValueOnce({
+        entries: [
+          orderEntry(spotIds[0]!),
+          triggerEntry(triggerIds[0]!),
+          orderEntry(spotIds[1]!),
+          orderEntry(spotIds[2]!),
+          orderEntry(spotIds[3]!),
+        ],
+        next_timestamp: "123",
+        next_id: cursorId,
+        next_kind: "trigger",
+      } as never)
+      .mockResolvedValueOnce({
+        entries: [triggerEntry(triggerIds[1]!)],
+        next_timestamp: null,
+        next_id: null,
+        next_kind: null,
+      } as never);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    const results = await client.cancelAllOrders(MARKET);
+
+    expect(results).toHaveLength(2);
+    expect(getActiveOrdersSpy).toHaveBeenNthCalledWith(
+      2,
+      MARKET_ID,
+      expect.objectContaining({
+        cursor: {
+          startTimestamp: "123",
+          startId: cursorId,
+          startKind: "trigger",
+        },
+      }),
+    );
+    const submittedActions = submitActionsSpy.mock.calls.flatMap(
+      ([, request]) => request.actions[0]!.actions,
+    );
+    expect(submittedActions).toEqual([
+      { CancelOrder: { order_id: spotIds[0] } },
+      { CancelTriggerOrder: { order_id: triggerIds[0] } },
+      { CancelOrder: { order_id: spotIds[1] } },
+      { CancelOrder: { order_id: spotIds[2] } },
+      { CancelOrder: { order_id: spotIds[3] } },
+      { CancelTriggerOrder: { order_id: triggerIds[1] } },
+    ]);
+  });
+
+  it("cancelAllOrders returns null when there are no active entries", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    vi.spyOn(client.api, "getActiveOrders").mockResolvedValue({
+      entries: [],
+      next_timestamp: null,
+      next_id: null,
+      next_kind: null,
+    } as never);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(client.cancelAllOrders(MARKET)).resolves.toBeNull();
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("O2Client trigger orders", () => {
+  it("scales and submits a standalone trigger order", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createTriggerOrder("fFUEL/fUSDC", {
+      order_type: { Spot: { price: "0.9" } },
+      quantity: { Quantity: { quantity: "1.5" } },
+      trigger_price: "1",
+      side: "sell",
+    });
+
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET.market_id,
+            actions: [
+              { SettleBalance: { to: { ContractId: TRADE_ACCOUNT_ID } } },
+              {
+                CreateTriggerOrder: {
+                  args: {
+                    order_type: { Spot: { price: "900000000" } },
+                    quantity: { Quantity: { quantity: "1500000000" } },
+                    trigger_price: "1000000000",
+                    side: "Sell",
+                  },
+                  parent: null,
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
+  it("submits a parent-linked OCO pair with a scaled quantity snapshot", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+    const parentId = orderId(`0x${"ca".repeat(32)}`);
+    const quantity = { ParentOrder: { parent_order_id: parentId } };
+
+    await client.createTriggerOrders(
+      MARKET,
+      { order_type: "Market", quantity, trigger_price: "0.8", side: "sell" },
+      { order_type: "Market", quantity, trigger_price: "1.2", side: "sell" },
+      { order_id: parentId, expected_quantity: "2" },
+    );
+
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({
+            actions: expect.arrayContaining([
+              {
+                CreateTriggerOrders: expect.objectContaining({
+                  parent: { order_id: parentId, expected_quantity: "2000000000" },
+                }),
+              },
+            ]),
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("makes the higher-priced buy leg canonical for the shared OCO lock", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createTriggerOrders(
+      MARKET,
+      {
+        order_type: { Spot: { price: "0.9" } },
+        quantity: { Quantity: { quantity: "2" } },
+        trigger_price: "0.8",
+        side: "buy",
+      },
+      {
+        order_type: { MarketBounded: { max_price: "1.2", min_price: "1" } },
+        quantity: { Quantity: { quantity: "2" } },
+        trigger_price: "1.1",
+        side: "buy",
+      },
+    );
+
+    const request = submitActionsSpy.mock.calls[0]![1];
+    const action = request.actions[0]!.actions[1]!;
+    expect(action).toEqual({
+      CreateTriggerOrders: expect.objectContaining({
+        first: expect.objectContaining({
+          order_type: { MarketBounded: { max_price: "1200000000", min_price: "1000000000" } },
+          trigger_price: "1100000000",
+        }),
+        second: expect.objectContaining({
+          order_type: { Spot: { price: "900000000" } },
+          trigger_price: "800000000",
+        }),
+      }),
+    });
+  });
+
+  it("makes the larger sell leg canonical for the shared OCO lock", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createTriggerOrders(
+      MARKET,
+      {
+        order_type: "Market",
+        quantity: { Quantity: { quantity: "1" } },
+        trigger_price: "0.8",
+        side: "sell",
+      },
+      {
+        order_type: "Market",
+        quantity: { Quantity: { quantity: "2" } },
+        trigger_price: "1.2",
+        side: "sell",
+      },
+    );
+
+    const request = submitActionsSpy.mock.calls[0]![1];
+    const action = request.actions[0]!.actions[1]!;
+    expect(action).toEqual({
+      CreateTriggerOrders: expect.objectContaining({
+        first: expect.objectContaining({
+          quantity: { Quantity: { quantity: "2000000000" } },
+          trigger_price: "1200000000",
+        }),
+        second: expect.objectContaining({
+          quantity: { Quantity: { quantity: "1000000000" } },
+          trigger_price: "800000000",
+        }),
+      }),
+    });
+  });
+
+  it("submits a spot order with attached triggers and cancels a trigger", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+    const trigger = {
+      order_type: { MarketBounded: { max_price: "1.1", min_price: "0.9" } },
+      trigger_price: "1",
+      side: "sell" as const,
+    };
+
+    await client.createOrderWithTriggers(MARKET, "buy", "1", "2", "Spot", trigger);
+
+    expect(submitActionsSpy).toHaveBeenLastCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({
+            actions: expect.arrayContaining([
+              {
+                CreateOrderWithTriggers: expect.objectContaining({
+                  price: "1000000000",
+                  quantity: "2000000000",
+                  trigger_1: expect.objectContaining({
+                    quantity: {
+                      ParentOrder: { parent_order_id: `0x${"00".repeat(32)}` },
+                    },
+                    side: "Sell",
+                  }),
+                  trigger_2: null,
+                }),
+              },
+            ]),
+          }),
+        ],
+      }),
+    );
+
+    const id = triggerOrderId(`0x${"de".repeat(32)}`);
+    await client.cancelTriggerOrder(id, MARKET);
+    expect(submitActionsSpy).toHaveBeenLastCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({
+            market_id: MARKET.market_id,
+            actions: expect.arrayContaining([{ CancelTriggerOrder: { order_id: id } }]),
+          }),
+        ],
+      }),
+    );
+  });
+
+  it.each([
+    {
+      field: "trigger_price",
+      args: {
+        order_type: "Market" as const,
+        quantity: { Quantity: { quantity: 123000000n } },
+        trigger_price: 123456789n,
+        side: "buy" as const,
+      },
+    },
+    {
+      field: "MarketBounded.max_price",
+      args: {
+        order_type: { MarketBounded: { max_price: 123456789n, min_price: 123000000n } },
+        quantity: { Quantity: { quantity: 123000000n } },
+        trigger_price: 123000000n,
+        side: "buy" as const,
+      },
+    },
+    {
+      field: "MarketBounded.min_price",
+      args: {
+        order_type: { MarketBounded: { max_price: 123000000n, min_price: 123456789n } },
+        quantity: { Quantity: { quantity: 123000000n } },
+        trigger_price: 123000000n,
+        side: "buy" as const,
+      },
+    },
+    {
+      field: "Spot.price",
+      args: {
+        order_type: { Spot: { price: 123456789n } },
+        quantity: { Quantity: { quantity: 123000000n } },
+        trigger_price: 123000000n,
+        side: "buy" as const,
+      },
+    },
+  ])("rejects imprecise bigint $field values", async ({ args }) => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(LOW_PRECISION_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(client.createTriggerOrder(LOW_PRECISION_MARKET, args)).rejects.toThrow(
+      "Price must be a multiple of 1000000",
+    );
+    expect(submitActionsSpy).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { order_type: "Market" as const, trigger_price: 6n },
+    { order_type: { MarketBounded: { max_price: 6n, min_price: 4n } }, trigger_price: 8n },
+    { order_type: { Spot: { price: 6n } }, trigger_price: 8n },
+  ])("adjusts standalone quantity using the trigger type's effective price", async (prices) => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(FRACTIONAL_PRICE_MARKETS_RESPONSE);
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createTriggerOrder(FRACTIONAL_PRICE_MARKET, {
+      ...prices,
+      quantity: { Quantity: { quantity: 7n } },
+      side: "buy",
+    });
+
+    expect(submitActionsSpy).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          expect.objectContaining({
+            actions: expect.arrayContaining([
+              expect.objectContaining({
+                CreateTriggerOrder: expect.objectContaining({
+                  args: expect.objectContaining({
+                    quantity: { Quantity: { quantity: "5" } },
+                  }),
+                }),
+              }),
+            ]),
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("rejects a standalone trigger below min_order and identifies the leg price field", async () => {
+    const market = { ...FRACTIONAL_PRICE_MARKET, min_order: 4n };
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue({
+      ...FRACTIONAL_PRICE_MARKETS_RESPONSE,
+      markets: [market],
+    });
+    const submitActionsSpy = vi.spyOn(client.api, "submitActions");
+
+    await expect(
+      client.createTriggerOrders(
+        market,
+        {
+          order_type: "Market",
+          quantity: { ParentOrder: { parent_order_id: orderId(`0x${"ca".repeat(32)}`) } },
+          trigger_price: 8n,
+          side: "buy",
+        },
+        {
+          order_type: { Spot: { price: 6n } },
+          quantity: { Quantity: { quantity: 7n } },
+          trigger_price: 8n,
+          side: "buy",
+        },
+      ),
+    ).rejects.toThrow("second.order_type.Spot.price");
+    expect(submitActionsSpy).not.toHaveBeenCalled();
   });
 });
 

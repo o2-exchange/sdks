@@ -23,9 +23,17 @@ import {
   scalePriceForMarket,
   scaleQuantityForMarket,
   type Trade,
+  TriggerOrderErrorCode,
 } from "../src/models.js";
 
 describe("Models Module", () => {
+  it("exposes the backend trigger-order validation codes", () => {
+    expect(TriggerOrderErrorCode.ParentOrderAlreadyHasFills).toBe(7006);
+    expect(TriggerOrderErrorCode.TriggerOrderQuotaExceeded).toBe(7011);
+    expect(TriggerOrderErrorCode.ActiveSpotOrderLimitExceeded).toBe(7012);
+    expect(TriggerOrderErrorCode.ParentOrderIdMismatch).toBe(7013);
+  });
+
   describe("Identity helpers", () => {
     it("isAddress identifies Address identity", () => {
       const id: Identity = { Address: "0xabc123" };

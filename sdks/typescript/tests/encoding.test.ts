@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionToCall,
   adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
@@ -12,6 +13,7 @@ import {
   encodeOptionNone,
   encodeOptionSome,
   encodeOrderArgs,
+  encodeTriggerOrderArgs,
   formatDecimal,
   functionSelector,
   GAS_MAX,
@@ -50,6 +52,11 @@ describe("Encoding Module", () => {
 
     it("accepts BigInt values", () => {
       expect(bytesToHex(u64BE(18446744073709551615n))).toBe("0xffffffffffffffff");
+    });
+
+    it("rejects values outside the u64 range instead of wrapping", () => {
+      expect(() => u64BE(-1n)).toThrow(RangeError);
+      expect(() => u64BE(18446744073709551616n)).toThrow(RangeError);
     });
   });
 
@@ -190,6 +197,240 @@ describe("Encoding Module", () => {
       expect(spot.length).toBe(24);
       expect(limit.length).toBe(40);
       // No padding: Spot is not padded to 40 bytes
+    });
+  });
+
+  describe("Trigger order encoding", () => {
+    const parentOrderId = `0x${"ab".repeat(32)}`;
+
+    it("encodes standalone Spot trigger args in contract field order", () => {
+      const result = encodeTriggerOrderArgs({
+        order_type: { Spot: { price: "90" } },
+        quantity: { Quantity: { quantity: "5" } },
+        trigger_price: "100",
+        side: "Sell",
+      });
+
+      expect(bytesToHex(result)).toBe(
+        "0x00000000000000000000000000000005" +
+          "0000000000000002000000000000005a" +
+          "0000000000000064",
+      );
+    });
+
+    it("encodes parent quantity with its full order id", () => {
+      const result = encodeTriggerOrderArgs({
+        order_type: "Market",
+        quantity: { ParentOrder: { parent_order_id: parentOrderId } },
+        trigger_price: "100",
+        side: "Sell",
+      });
+
+      expect(bytesToHex(result)).toBe(
+        `0x0000000000000001${"ab".repeat(32)}00000000000000000000000000000064`,
+      );
+    });
+
+    it("encodes MarketBounded trigger args as a complete golden vector", () => {
+      const result = encodeTriggerOrderArgs({
+        order_type: { MarketBounded: { max_price: "120", min_price: "80" } },
+        quantity: { Quantity: { quantity: "5" } },
+        trigger_price: "100",
+        side: "Buy",
+      });
+
+      expect(bytesToHex(result)).toBe(
+        "0x00000000000000000000000000000005" +
+          "00000000000000010000000000000078" +
+          "00000000000000500000000000000064",
+      );
+    });
+
+    it("encodes CreateTriggerOrder parent Some as a complete golden vector", () => {
+      const market = {
+        contractId: `0x${"11".repeat(32)}`,
+        marketId: `0x${"22".repeat(32)}`,
+        base: { asset: `0x${"33".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "BASE" },
+        quote: { asset: `0x${"44".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "QUOTE" },
+      };
+      const call = actionToCall(
+        {
+          CreateTriggerOrder: {
+            args: {
+              order_type: "Market",
+              quantity: { Quantity: { quantity: "5" } },
+              trigger_price: "100",
+              side: "Sell",
+            },
+            parent: { order_id: parentOrderId, expected_quantity: "7" },
+          },
+        },
+        market,
+      );
+
+      expect(bytesToHex(call.callData!)).toBe(
+        "0x00000000000000000000000000000005" +
+          "00000000000000000000000000000064" +
+          "00000000000000010000000000000007",
+      );
+    });
+
+    it("encodes CreateOrderWithTriggers with trigger_2 as complete calldata", () => {
+      const market = {
+        contractId: `0x${"11".repeat(32)}`,
+        marketId: `0x${"22".repeat(32)}`,
+        base: { asset: `0x${"33".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "BASE" },
+        quote: { asset: `0x${"44".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "QUOTE" },
+      };
+      const call = actionToCall(
+        {
+          CreateOrderWithTriggers: {
+            side: "Buy",
+            price: "10",
+            quantity: "20",
+            order_type: "Spot",
+            trigger_1: {
+              order_type: "Market",
+              quantity: { Quantity: { quantity: "20" } },
+              trigger_price: "8",
+              side: "Sell",
+            },
+            trigger_2: {
+              order_type: { Spot: { price: "12" } },
+              quantity: { ParentOrder: { parent_order_id: parentOrderId } },
+              trigger_price: "11",
+              side: "Sell",
+            },
+          },
+        },
+        market,
+      );
+
+      expect(bytesToHex(call.callData!)).toBe(
+        "0x000000000000000a00000000000000140000000000000001" +
+          "0000000000000000000000000000001400000000000000000000000000000008" +
+          "00000000000000010000000000000001" +
+          `${"ab".repeat(32)}` +
+          "0000000000000002000000000000000c000000000000000b",
+      );
+    });
+
+    it("builds paired trigger call data and forwards only one standalone lock", () => {
+      const market = {
+        contractId: `0x${"11".repeat(32)}`,
+        marketId: `0x${"22".repeat(32)}`,
+        base: {
+          asset: `0x${"33".repeat(32)}`,
+          decimals: 1,
+          maxPrecision: 1,
+          symbol: "BASE",
+        },
+        quote: {
+          asset: `0x${"44".repeat(32)}`,
+          decimals: 1,
+          maxPrecision: 1,
+          symbol: "QUOTE",
+        },
+      };
+      const first = {
+        order_type: { MarketBounded: { max_price: "120", min_price: "80" } },
+        quantity: { Quantity: { quantity: "5" } },
+        trigger_price: "100",
+        side: "Buy" as const,
+      };
+      const call = actionToCall(
+        {
+          CreateTriggerOrders: {
+            first,
+            second: { ...first, trigger_price: "110" },
+            parent: null,
+          },
+        },
+        market,
+      );
+
+      expect(call.functionSelector).toEqual(functionSelector("create_trigger_orders"));
+      expect(call.amount).toBe(60n);
+      expect(bytesToHex(call.assetId)).toBe(market.quote.asset);
+      expect(call.callData?.slice(-8)).toEqual(u64BE(0));
+    });
+
+    it("rejects a paired trigger call whose second leg needs a larger lock", () => {
+      const market = {
+        contractId: `0x${"11".repeat(32)}`,
+        marketId: `0x${"22".repeat(32)}`,
+        base: { asset: `0x${"33".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "BASE" },
+        quote: { asset: `0x${"44".repeat(32)}`, decimals: 1, maxPrecision: 1, symbol: "QUOTE" },
+      };
+      const first = {
+        order_type: { Spot: { price: "100" } },
+        quantity: { Quantity: { quantity: "5" } },
+        trigger_price: "90",
+        side: "Buy" as const,
+      };
+
+      expect(() =>
+        actionToCall(
+          {
+            CreateTriggerOrders: {
+              first,
+              second: {
+                ...first,
+                order_type: { Spot: { price: "120" } },
+                trigger_price: "110",
+              },
+              parent: null,
+            },
+          },
+          market,
+        ),
+      ).toThrow("CreateTriggerOrders must place the larger-lock leg first");
+    });
+
+    it("rejects a computed trigger lock amount above u64 when signing", () => {
+      const market = {
+        contractId: `0x${"11".repeat(32)}`,
+        marketId: `0x${"22".repeat(32)}`,
+        base: { asset: `0x${"33".repeat(32)}`, decimals: 0, maxPrecision: 0, symbol: "BASE" },
+        quote: { asset: `0x${"44".repeat(32)}`, decimals: 0, maxPrecision: 0, symbol: "QUOTE" },
+      };
+      const call = actionToCall(
+        {
+          CreateTriggerOrder: {
+            args: {
+              order_type: { Spot: { price: "18446744073709551615" } },
+              quantity: { Quantity: { quantity: "2" } },
+              trigger_price: "1",
+              side: "Buy",
+            },
+            parent: null,
+          },
+        },
+        market,
+      );
+
+      expect(call.amount).toBe(36893488147419103230n);
+      expect(() => buildActionsSigningBytes(0n, [call])).toThrow(RangeError);
+    });
+
+    it("uses the shared cancel_order contract selector for trigger cancellation", () => {
+      const call = actionToCall(
+        { CancelTriggerOrder: { order_id: parentOrderId } },
+        {
+          contractId: `0x${"11".repeat(32)}`,
+          marketId: `0x${"22".repeat(32)}`,
+          base: { asset: `0x${"33".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "B" },
+          quote: {
+            asset: `0x${"44".repeat(32)}`,
+            decimals: 9,
+            maxPrecision: 9,
+            symbol: "Q",
+          },
+        },
+      );
+
+      expect(call.functionSelector).toEqual(functionSelector("cancel_order"));
+      expect(bytesToHex(call.callData!)).toBe(parentOrderId);
     });
   });
 
