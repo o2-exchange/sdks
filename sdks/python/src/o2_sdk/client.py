@@ -1520,10 +1520,18 @@ class O2Client:
             "amount": str(scaled_amount),
         }
 
-        result = await self.api.withdraw(owner.b256_address, withdraw_request)
-        if result.success:
-            self._nonce_cache[trade_account_id] = nonce + 1
-        return result
+        try:
+            result = await self.api.withdraw(owner.b256_address, withdraw_request)
+            if result.success:
+                self._nonce_cache[trade_account_id] = nonce + 1
+            else:
+                raise O2Error(message=result.message or "API response returned success=false")
+            return result
+        except O2Error as e:
+            logger.warning("Withdrawal failed (nonce=%d): %s", nonce, e)
+            self._nonce_cache.pop(trade_account_id, None)
+            await self._get_nonce(trade_account_id)  # performs a fresh API request
+            raise
 
     async def withdraw_parallel(
         self,
