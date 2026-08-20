@@ -113,3 +113,38 @@ describe("O2Api trades parsing", () => {
     expect(trades[0].price).toBe(5n);
   });
 });
+
+describe("O2Api ticker parsing", () => {
+  it("unwraps the live one-item list and injects the requested market id", async () => {
+    const api = new O2Api({ config: TESTNET });
+    vi.spyOn(api as any, "request").mockResolvedValue([
+      {
+        last_price: "1.5",
+        base_volume: "10",
+        quote_volume: "15",
+        best_ask: "1.6",
+        best_bid: "1.4",
+      },
+    ]);
+
+    const ticker = await api.getMarketTicker(MARKET_ID);
+
+    expect(ticker).toEqual({
+      market_id: MARKET_ID,
+      last_price: "1.5",
+      base_volume: "10",
+      quote_volume: "15",
+      best_ask: "1.6",
+      best_bid: "1.4",
+    });
+  });
+
+  it("rejects an empty live ticker list", async () => {
+    const api = new O2Api({ config: TESTNET });
+    vi.spyOn(api as any, "request").mockResolvedValue([]);
+
+    await expect(api.getMarketTicker(MARKET_ID)).rejects.toThrow(
+      `No valid ticker returned for market ${MARKET_ID}`,
+    );
+  });
+});

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
+from decimal import Decimal, InvalidOperation
 from typing import Any, TypeVar, cast
 
 import ccxt.async_support as ccxt
@@ -61,12 +62,39 @@ def _optional_bool(params: Params, key: str, fallback: bool) -> bool:
 
 def _positive_numeric(params: Params, key: str) -> str:
     value = params.get(key)
-    parsed = number_or_none(value)
-    if parsed is None or parsed <= 0:
+    try:
+        parsed = Decimal(str(value))
+    except InvalidOperation:
+        parsed = Decimal(0)
+    if not parsed.is_finite() or parsed <= 0:
         raise ArgumentsRequired(
             f"create_order market orders require a positive params.{key} O2 price bound"
         )
     return str(value)
+
+
+def _protected_price_to_precision(value: str, side: str, precision: int) -> str:
+    truncated = cast(
+        str,
+        ccxt.decimal_to_precision(
+            value,
+            ccxt.TRUNCATE,
+            precision,
+            ccxt.DECIMAL_PLACES,
+        ),
+    )
+    truncated_decimal = Decimal(truncated)
+    if side == "buy":
+        if truncated_decimal <= 0:
+            raise InvalidOrder(
+                "create_order market maxPrice is below the minimum price precision"
+            )
+        return truncated
+    input_decimal = Decimal(value)
+    if truncated_decimal >= input_decimal:
+        return truncated
+    step = Decimal(1).scaleb(-precision)
+    return format(truncated_decimal + step, "f")
 
 
 def _network(value: Network | str | None) -> Network:
@@ -347,10 +375,11 @@ class O2CCXT(ccxt.Exchange):
         if normalized_side not in ("buy", "sell"):
             raise InvalidOrder(f"Invalid order side: {side}")
         market = await self._resolve_market(symbol)
+        native_amount = self.amount_to_precision(symbol, amount)
         if normalized_type == "limit":
             if price is None:
                 raise ArgumentsRequired("create_order requires a limit price")
-            native_price = str(price)
+            native_price = self.price_to_precision(symbol, price)
             requested_type = options.get("orderType", OrderType.SPOT)
             if isinstance(requested_type, str):
                 try:
@@ -370,12 +399,17 @@ class O2CCXT(ccxt.Exchange):
                 raise InvalidOrder(
                     "create_order market price must be between minPrice and maxPrice"
                 )
-            native_price = (
+            protected_price = (
                 str(price)
                 if price is not None
                 else max_price
                 if normalized_side == "buy"
                 else min_price
+            )
+            native_price = _protected_price_to_precision(
+                protected_price,
+                normalized_side,
+                int(market["precision"]["price"]),
             )
             # O2 BoundedMarket is a resting trigger-style order, not an immediate
             # CCXT market order. Emulate bounded execution with a protected FOK.
@@ -386,7 +420,7 @@ class O2CCXT(ccxt.Exchange):
                     native_market(market),
                     OrderSide.BUY if normalized_side == "buy" else OrderSide.SELL,
                     native_price,
-                    str(amount),
+                    native_amount,
                     order_type=order_type,
                     settle_first=_optional_bool(options, "settleFirst", True),
                     collect_orders=True,

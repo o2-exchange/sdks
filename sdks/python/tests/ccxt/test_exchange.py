@@ -224,6 +224,46 @@ async def test_limit_and_bounded_market_orders() -> None:
         await exchange.close()
 
 
+async def test_order_inputs_use_ccxt_precision_and_directional_market_bounds() -> None:
+    client, exchange = setup_exchange()
+    client.create_order = AsyncMock(  # type: ignore[method-assign]
+        return_value=ActionsResponse(Id("0x" + "77" * 32), [RAW_ORDER])
+    )
+    try:
+        await exchange.create_order("FUEL/USDC", "limit", "buy", 2.123456, 1.23456)
+        client.create_order.assert_awaited_once_with(  # type: ignore[attr-defined]
+            MARKET,
+            OrderSide.BUY,
+            "1.235",
+            "2.1234",
+            order_type=OrderType.SPOT,
+            settle_first=True,
+            collect_orders=True,
+        )
+
+        client.create_order.reset_mock()  # type: ignore[attr-defined]
+        await exchange.create_order(
+            "FUEL/USDC",
+            "market",
+            "buy",
+            2.123456,
+            params={"maxPrice": 1.6009, "minPrice": 1.4},
+        )
+        assert client.create_order.await_args.args[2:4] == ("1.6", "2.1234")  # type: ignore[attr-defined]
+
+        client.create_order.reset_mock()  # type: ignore[attr-defined]
+        await exchange.create_order(
+            "FUEL/USDC",
+            "market",
+            "sell",
+            2.123456,
+            params={"maxPrice": 1.6, "minPrice": 1.4001},
+        )
+        assert client.create_order.await_args.args[2:4] == ("1.401", "2.1234")  # type: ignore[attr-defined]
+    finally:
+        await exchange.close()
+
+
 async def test_submission_fault_is_not_retried() -> None:
     client, exchange = setup_exchange()
     client.create_order = AsyncMock(side_effect=ConnectionError("socket closed"))  # type: ignore[method-assign]
