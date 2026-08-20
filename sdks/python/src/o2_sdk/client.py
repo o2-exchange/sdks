@@ -1339,6 +1339,12 @@ class O2Client:
     ) -> AsyncIterator[DepthUpdate]:
         """Stream order book depth updates.
 
+        The first message (and every reconnect replay) is a snapshot with
+        ABSOLUTE level quantities; every later message carries SIGNED
+        RELATIVE changes to apply on top of it. Use :class:`DepthBook` to
+        maintain a correct local book, or see :class:`DepthUpdate` for
+        the semantics if you apply the messages yourself.
+
         Args:
             market: Market pair (e.g. ``"ETH/USDC"``) or :class:`Market` object.
             precision: Price grouping level, from ``1`` (most precise) to ``18``
