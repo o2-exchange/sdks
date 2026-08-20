@@ -864,19 +864,24 @@ class DepthBook:
         self.asks: dict[int, int] = {}
 
     def apply(self, update: DepthUpdate) -> None:
+        # Parse every entry before mutating anything: a malformed entry
+        # raises with the book untouched. Under relative semantics a
+        # partially applied update would silently corrupt the book, so
+        # apply is atomic per update.
+        parsed = [
+            (int(level.price), int(level.quantity), book) for level, book in self._paired(update)
+        ]
         if update.is_snapshot:
             self.bids.clear()
             self.asks.clear()
-            for level, book in self._paired(update):
-                quantity = int(level.quantity)
+            for price, quantity, book in parsed:
                 if quantity > 0:
-                    book[int(level.price)] = quantity
+                    book[price] = quantity
             return
-        for change, book in self._paired(update):
-            price = int(change.price)
-            quantity = book.get(price, 0) + int(change.quantity)
-            if quantity > 0:
-                book[price] = quantity
+        for price, quantity, book in parsed:
+            new_quantity = book.get(price, 0) + quantity
+            if new_quantity > 0:
+                book[price] = new_quantity
             else:
                 book.pop(price, None)
 

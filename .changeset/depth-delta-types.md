@@ -13,6 +13,9 @@ read the `subscribe_depth` ack's snapshot from its `orders` key, and the Rust
 change type can deserialize the negative quantities the stream sends (the
 previous `u64` could not represent them).
 
+`DepthBook.apply` is atomic per update in Python: a malformed entry raises
+before any mutation, so a book can never be half-applied.
+
 Breaking for Python and Rust: `DepthUpdate.changes` is now
 `DepthSnapshot | DepthChanges` in Python and `Option<DepthChanges>` (signed
 `i128` quantities) in Rust.

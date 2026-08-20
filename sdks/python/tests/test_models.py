@@ -3,6 +3,8 @@
 from decimal import Decimal
 from typing import ClassVar
 
+import pytest
+
 from o2_sdk.models import (
     AccountInfo,
     ActionsResponse,
@@ -405,6 +407,25 @@ class TestDepthBook:
         book = self._book()
         book.apply(self._delta(buys=[{"price": "98", "quantity": "-5"}]))
         assert 98 not in book.bids
+
+    def test_malformed_entry_raises_before_any_mutation(self):
+        # Apply is atomic per update: a malformed entry must leave the
+        # book exactly as it was, never half-applied. Under relative
+        # semantics a partial application silently corrupts the book.
+        book = self._book()
+        before_bids = dict(book.bids)
+        before_asks = dict(book.asks)
+        with pytest.raises(ValueError):
+            book.apply(
+                self._delta(
+                    buys=[
+                        {"price": "100", "quantity": "-1"},
+                        {"price": "99", "quantity": "junk"},
+                    ]
+                )
+            )
+        assert book.bids == before_bids
+        assert book.asks == before_asks
 
     def test_new_snapshot_replaces_the_book(self):
         book = self._book()
