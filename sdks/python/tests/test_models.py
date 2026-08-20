@@ -383,6 +383,14 @@ class TestDepthBook:
         assert 100 not in book.bids
         assert book.best_bid == 99
 
+    def test_change_reducing_a_level_to_exactly_one_keeps_it(self):
+        # The removal boundary is exactly zero: a level whose sum lands
+        # on 1 stays on the book.
+        book = self._book()
+        book.apply(self._delta(buys=[{"price": "100", "quantity": "-499"}]))
+        assert book.bids[100] == 1
+        assert book.best_bid == 100
+
     def test_positive_change_accumulates(self):
         book = self._book()
         book.apply(self._delta(sells=[{"price": "101", "quantity": "40"}]))

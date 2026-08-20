@@ -561,6 +561,15 @@ describe("Models Module", () => {
         expect(book.bestBid).toBe(99n);
       });
 
+      it("keeps a level whose sum lands on exactly one", () => {
+        // The removal boundary is exactly zero.
+        const book = new DepthBook();
+        book.apply(snapshot());
+        book.apply(delta([{ price: "100", quantity: "-499" }], []));
+        expect(book.bids.get(100n)).toBe(1n);
+        expect(book.bestBid).toBe(100n);
+      });
+
       it("accumulates positive changes", () => {
         const book = new DepthBook();
         book.apply(snapshot());

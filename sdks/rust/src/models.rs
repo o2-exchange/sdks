@@ -2007,6 +2007,16 @@ mod tests {
     }
 
     #[test]
+    fn depth_book_change_landing_on_exactly_one_keeps_the_level() {
+        // The removal boundary is exactly zero.
+        let mut book = DepthBook::new();
+        book.apply(&depth_snapshot_update());
+        book.apply(&depth_delta(r#"{"price": "100", "quantity": "-499"}"#, ""));
+        assert_eq!(book.bids.get(&100), Some(&1));
+        assert_eq!(book.best_bid(), Some(100));
+    }
+
+    #[test]
     fn depth_book_positive_change_accumulates() {
         let mut book = DepthBook::new();
         book.apply(&depth_snapshot_update());
