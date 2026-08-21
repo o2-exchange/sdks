@@ -1,0 +1,8 @@
+{
+  "insufficient-funds": "InsufficientFunds",
+  "fok-not-filled": "InvalidOrder",
+  "post-only-cross": "InvalidOrder",
+  "minimum-order": "InvalidOrder",
+  "read-transport": "NetworkError",
+  "private-transport": "O2AmbiguousSubmission"
+}

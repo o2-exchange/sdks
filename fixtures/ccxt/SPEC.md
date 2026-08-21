@@ -1,0 +1,55 @@
+# O2 CCXT Compatibility Specification (Alpha)
+
+This specification is shared by the TypeScript and async Python adapters. The
+adapters are O2-maintained and are not distributed as official CCXT exchanges.
+They extend the official CCXT Exchange classes through optional dependencies,
+so importing the core O2 SDK does not require CCXT.
+
+## General rules
+
+- Network methods use the exact CCXT-style positional signatures, including
+  optional `symbol`, `since`, `limit`, `reload`, and `params` arguments.
+- Timestamps are Unix milliseconds. Missing values are `null`.
+- Human-readable prices, quantities, balances, and costs are JSON numbers.
+- The parsed native O2 value is retained in `info`.
+- Chain integers in shared fixtures are decimal strings.
+- Unsupported values are `null`; fields are not silently invented.
+- Limit and price-bounded FOK market order creation are supported during alpha.
+- CCXT market orders map to O2 `FillOrKill` at `maxPrice` for buys or
+  `minPrice` for sells, so the complete amount fills within the bound or fails.
+- If callers supply CCXT's optional positional `price` for a market order, it
+  must be between `minPrice` and `maxPrice`; it cannot override those bounds.
+- Neither adapter retries ambiguous private submissions.
+
+## Trade side
+
+- Public O2 trades report the maker order side. CCXT public trade direction is
+  normalized to the opposite, taker side.
+- For account trades with `trader_side: "maker"`, account side equals O2 side.
+- For account trades with `trader_side: "taker"`, account side is opposite O2
+  side.
+- For `trader_side: "both"`, normalized `side` is `null`. Emit one trade only
+  and preserve the raw role information in `info`.
+
+## Balances
+
+- `total_unlocked` becomes `free`.
+- `total_locked` becomes `used`.
+- `free + used` becomes `total`.
+- `trading_account_balance` is already included in `total_unlocked` and must not
+  be added again.
+
+## Errors
+
+Adapters use official CCXT error classes. Errors are compatible with
+`instanceof ccxt.ExchangeError` and Python
+`isinstance(error, ccxt.ExchangeError)` when the CCXT dependency is installed.
+
+An accepted private request whose response is missing or lost raises
+`O2AmbiguousSubmission`. The adapter must not retry it. Callers must reconcile
+orders and account nonce before resubmitting.
+
+The cases in `raw/errors.json` and class names in `expected/errors.json` are a
+cross-language contract. TypeScript and Python must map every case to the same
+official CCXT category (or the O2 ambiguity subclass) before either adapter is
+released.

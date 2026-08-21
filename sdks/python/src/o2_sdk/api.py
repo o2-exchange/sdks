@@ -222,7 +222,15 @@ class O2Api:
 
     async def get_market_ticker(self, market_id: str) -> MarketTicker:
         data = await self._request("GET", "/v1/markets/ticker", params={"market_id": market_id})
-        return MarketTicker.from_dict(data)
+        # The live endpoint returns a one-item list even when market_id is
+        # supplied. Accept the historical object shape as well.
+        if isinstance(data, list):
+            if not data:
+                raise O2Error(message=f"No ticker returned for market {market_id}")
+            data = data[0]
+        if not isinstance(data, dict):
+            raise O2Error(message=f"Invalid ticker response for market {market_id}")
+        return MarketTicker.from_dict({"market_id": market_id, **data})
 
     async def get_depth(
         self,
@@ -475,6 +483,9 @@ class O2Api:
             "/v1/session",
             json=session_request,
             headers={"O2-Owner-Id": owner_id},
+            # The signed owner nonce makes an accepted-but-lost response
+            # ambiguous. Never replay the same session registration.
+            max_retries=1,
         )
         return SessionResponse.from_dict(data)
 
@@ -505,6 +516,9 @@ class O2Api:
             "/v1/accounts/withdraw",
             json=withdraw_request,
             headers={"O2-Owner-Id": owner_id},
+            # A withdrawal can be accepted before its response is lost.
+            # Callers must reconcile the owner nonce instead of replaying it.
+            max_retries=1,
         )
         return WithdrawResponse.from_dict(data)
 

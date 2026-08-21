@@ -139,6 +139,33 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest tests/ -m "not integration" -v
 
+  python-ccxt:
+    name: Test Python CCXT (${{ matrix.label }})
+    needs: lint-python
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - label: minimum
+            ccxt: "==4.5.0"
+          - label: latest-v4
+            ccxt: ">=4.5.0,<5"
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: sdks/python/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: pip install --upgrade --force-reinstall "ccxt${{ matrix.ccxt }}"
+      - run: mypy src/o2_sdk
+      - run: pytest tests/ccxt -v
+
   typescript:
     name: Test TypeScript (${{ matrix.runtime }})
     needs: lint-typescript
@@ -176,6 +203,47 @@ jobs:
         if: matrix.runtime == 'bun'
       - run: bun run test
         if: matrix.runtime == 'bun'
+
+  typescript-ccxt:
+    name: Test TypeScript CCXT (${{ matrix.label }})
+    needs: lint-typescript
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - label: minimum
+            ccxt: "4.5.0"
+          - label: latest-v4
+            ccxt: "^4.5.0"
+    defaults:
+      run:
+        working-directory: sdks/typescript
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: sdks/typescript/package-lock.json
+      - run: npm ci
+      - run: npm install --no-save --package-lock=false "ccxt@${{ matrix.ccxt }}"
+      - run: npm run typecheck
+      - run: npx vitest run tests/ccxt/ccxt.test.ts tests/ccxt/ccxt-parsers.test.ts tests/ccxt/ccxt-errors.test.ts
+      - name: Smoke test packed CCXT consumer
+        env:
+          CCXT_VERSION: ${{ matrix.ccxt }}
+        run: |
+          npm run build
+          package_name="$(npm pack --pack-destination "$RUNNER_TEMP" --silent)"
+          package_path="$RUNNER_TEMP/$package_name"
+          consumer_dir="$(mktemp -d "$RUNNER_TEMP/o2-ccxt-consumer.XXXXXX")"
+          cp -R tests/package/ccxt-consumer/. "$consumer_dir/"
+          cd "$consumer_dir"
+          npm install --no-package-lock "$package_path" "ccxt@$CCXT_VERSION" "typescript@^5.7.0" "@types/node@^22"
+          node esm.mjs
+          node cjs.cjs
+          npx tsc --noEmit
 
   typescript-browser:
     name: Test TypeScript (playwright)

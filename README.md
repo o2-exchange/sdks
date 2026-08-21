@@ -184,7 +184,7 @@ just integration rust
 
 > **Note:** Integration tests require testnet connectivity and may take several minutes due to faucet cooldowns and on-chain confirmation times.
 
-Each SDK's integration suite starts with a dedicated devnet regression that creates
+Each SDK's integration suite starts with a dedicated testnet regression that creates
 disposable accounts, uses the faucet, then withdraws to both an owner address and
 another trading account's `ContractId`.
 

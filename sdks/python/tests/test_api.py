@@ -104,6 +104,33 @@ async def test_submit_actions_wraps_timeout_without_retry():
 
 
 @pytest.mark.asyncio
+async def test_market_ticker_accepts_live_single_item_list_shape():
+    market_id = "0x" + "11" * 32
+    session = _Session([_Response(200, [{"last_price": "1.5", "best_bid": "1.4"}])])
+    api = O2Api(_CONFIG, session=session)
+
+    ticker = await api.get_market_ticker(market_id)
+
+    assert str(ticker.market_id) == market_id
+    assert ticker.data["last_price"] == "1.5"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["create_session", "withdraw"])
+async def test_signed_owner_actions_do_not_retry_transport_failure(operation: str):
+    session = _Session([aiohttp.ClientConnectionError("response lost")])
+    api = O2Api(_CONFIG, session=session)
+
+    with pytest.raises(O2Error, match="response lost"):
+        if operation == "create_session":
+            await api.create_session("owner", {"signature": {}})
+        else:
+            await api.withdraw("owner", {"signature": {}})
+
+    assert len(session.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_non_action_request_keeps_rate_limit_backoff(monkeypatch):
     session = _Session(
         [

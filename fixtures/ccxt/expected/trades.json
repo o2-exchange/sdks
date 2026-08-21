@@ -1,0 +1,6 @@
+[
+  { "id": "trade-public", "side": "sell", "price": 1.5, "amount": 2, "cost": 3 },
+  { "id": "trade-maker", "side": "buy", "price": 1.5, "amount": 2, "cost": 3 },
+  { "id": "trade-taker", "side": "sell", "price": 1.5, "amount": 2, "cost": 3 },
+  { "id": "trade-self", "side": null, "price": 1.5, "amount": 2, "cost": 3 }
+]

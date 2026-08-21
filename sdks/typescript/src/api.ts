@@ -222,9 +222,19 @@ export class O2Api {
    * @param marketId - The market identifier.
    */
   async getMarketTicker(marketId: MarketId): Promise<MarketTicker> {
-    return this.get<MarketTicker>("/v1/markets/ticker", {
+    const raw = await this.get<MarketTicker | Array<Partial<MarketTicker>>>("/v1/markets/ticker", {
       market_id: marketId,
     });
+    // The live endpoint returns a one-item list even when market_id is
+    // supplied. Accept the historical object shape as well.
+    const ticker = Array.isArray(raw) ? raw[0] : raw;
+    if (!ticker || typeof ticker !== "object" || Array.isArray(ticker)) {
+      throw new O2Error(`No valid ticker returned for market ${marketId}`);
+    }
+    return {
+      ...ticker,
+      market_id: marketId,
+    } as MarketTicker;
   }
 
   /**

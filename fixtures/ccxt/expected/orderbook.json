@@ -1,0 +1,8 @@
+{
+  "symbol": "FUEL/USDC",
+  "bids": [[1.5, 2]],
+  "asks": [[1.6, 3]],
+  "timestamp": null,
+  "datetime": null,
+  "nonce": null
+}

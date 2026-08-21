@@ -23,7 +23,7 @@
  */
 
 import type { Action, MarketActionGroup, Numeric } from "./actions.js";
-import { O2Api } from "./api.js";
+import { O2Api, type O2ApiOptions } from "./api.js";
 import { getNetworkConfig, Network, type NetworkConfig } from "./config.js";
 import {
   bytesToHex,
@@ -123,6 +123,8 @@ export interface O2ClientOptions {
   config?: NetworkConfig;
   /** Markets cache TTL in milliseconds (default: `60_000`). */
   marketsCacheTtlMs?: number;
+  /** Optional low-level request policy. Defaults preserve the standard SDK behavior. */
+  apiOptions?: Omit<O2ApiOptions, "config">;
   /**
    * Optional WebSocket factory for custom runtimes/tests.
    * Defaults to `globalThis.WebSocket`.
@@ -189,7 +191,7 @@ export class O2Client {
     const options: O2ClientOptions =
       typeof optionsOrNetwork === "string" ? { network: optionsOrNetwork } : optionsOrNetwork;
     this.config = options.config ?? getNetworkConfig(options.network ?? Network.TESTNET);
-    this.api = new O2Api({ config: this.config });
+    this.api = new O2Api({ config: this.config, ...options.apiOptions });
     this.marketsCacheTtlMs = options.marketsCacheTtlMs ?? DEFAULT_MARKETS_CACHE_TTL_MS;
     this.webSocketFactory = options.webSocketFactory;
   }
