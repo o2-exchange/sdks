@@ -58,6 +58,7 @@ import type {
   BalanceResponse,
   BalanceUpdate,
   Bar,
+  ContractId,
   DepthSnapshot,
   DepthUpdate,
   FaucetResponse,
@@ -78,6 +79,8 @@ import type {
   WalletState,
 } from "./models.js";
 import { depthPrecision, tradeAccountId } from "./models.js";
+import { TurboClient } from "./turbo/client.js";
+import type { PreparedBatch, PreparedMarketActions, TurboHost } from "./turbo/host.js";
 import {
   capitalizeSide,
   ensureNumeric,
@@ -90,7 +93,7 @@ import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
 
 /** Convert a wire-format Market to the MarketInfo used by encoding helpers. */
-function toMarketInfo(market: Market): MarketInfo {
+export function toMarketInfo(market: Market): MarketInfo {
   return {
     contractId: market.contract_id,
     marketId: market.market_id,
@@ -174,9 +177,28 @@ function validateDepthPrecision(precision: number | string): void {
   }
 }
 
+/** Options for {@link O2Client.createSession}. */
+export interface CreateSessionOptions {
+  /** Session expiry in days. Defaults to 30. */
+  expiryDays?: number;
+  /**
+   * Also scope the session to this deployment's margin contracts, so the
+   * session can open and trade a Turbo account.
+   *
+   * Adds the pool, every margin child this owner already has, and the next
+   * few they could open. Costs two or three extra requests at session
+   * creation and saves a wallet signature later — the scope is signed, so
+   * it cannot be added afterwards.
+   */
+  turbo?: boolean;
+  /** Extra contract ids to authorise, beyond the markets and Turbo scope. */
+  extraContractIds?: string[];
+}
+
 export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
+  private _turbo: TurboClient | null = null;
   protected wsClient: O2WebSocket | null = null;
   /** Network endpoint and contract configuration used by this client. */
   public readonly config: NetworkConfig;
@@ -368,8 +390,11 @@ export class O2Client {
   async createSession(
     wallet: Signer,
     markets: MarketRef[],
-    expiryDays = 30,
+    options: number | CreateSessionOptions = 30,
   ): Promise<SessionState> {
+    const opts: CreateSessionOptions =
+      typeof options === "number" ? { expiryDays: options } : options;
+    const expiryDays = opts.expiryDays ?? 30;
     // Resolve trade account
     const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
     const tradeAccountId = accountInfo.trade_account_id;
@@ -384,6 +409,32 @@ export class O2Client {
       return m;
     });
     const contractIds = resolvedMarkets.map((m) => m.contract_id);
+
+    // THE SESSION'S SCOPE IS THE WHOLE GAME for Turbo. The trade account
+    // runs `is_contract_allowed` per call, so a margin action whose target
+    // is outside `contract_ids` is refused with
+    // `MarginAccountNotInSessionScope` — and the scope cannot be widened
+    // after the fact, because it is part of what the wallet signed. So the
+    // pool, every existing child AND the next few unopened ones are all
+    // gathered here, at creation time. A child's id is a pure function of
+    // `(oracle, parent, index)`, which is what makes scoping an account
+    // the trader has not opened yet possible at all.
+    //
+    // Best effort: margin may not be wired on this deployment, and that
+    // must not stop an ordinary session being created.
+    if (opts.turbo) {
+      const scope = await TurboClient.sessionScope(this.api, wallet.b256Address);
+      for (const id of scope) {
+        if (!contractIds.some((existing) => existing.toLowerCase() === id.toLowerCase())) {
+          contractIds.push(id as ContractId);
+        }
+      }
+    }
+    for (const id of opts.extraContractIds ?? []) {
+      if (!contractIds.some((existing) => existing.toLowerCase() === id.toLowerCase())) {
+        contractIds.push(id as ContractId);
+      }
+    }
 
     // Parse chain_id
     const chainId = BigInt(
@@ -1201,6 +1252,55 @@ export class O2Client {
    * Internal batch submission. Handles encoding, signing, nonce management.
    * The selected session nonce is updated in-place after each call.
    */
+  // ── Turbo (margin) ──────────────────────────────────────────────
+
+  /**
+   * The Turbo (margin) surface: open an account, go long or short against
+   * the credit line, close, and manage referrals.
+   *
+   * Lazily constructed and then cached, so the wiring it resolves on first
+   * use is not re-fetched.
+   *
+   * The session must be scoped to the margin contracts BEFORE any of this
+   * works — pass `{ turbo: true }` to {@link O2Client.createSession}. The
+   * scope is part of what the wallet signed and cannot be widened
+   * afterwards, so a session created without it can do nothing with a
+   * Turbo account and the only repair is a new session.
+   *
+   * @example
+   * ```ts
+   * await client.createSession(wallet, ["fETH/fUSDC"], { turbo: true });
+   *
+   * const tiers = await client.turbo.tiers();
+   * await client.turbo.open({ tierId: tiers[0].tier_id, collateral: 500_000000n, period: "Month" });
+   *
+   * await client.turbo.long("fETH/fUSDC", { notional: "2000" });
+   * await client.turbo.short("fETH/fUSDC", { quantity: "0.5" });
+   * await client.turbo.closePosition("fETH/fUSDC");
+   * ```
+   */
+  get turbo(): TurboClient {
+    if (!this._turbo) {
+      const host: TurboHost = {
+        api: this.api,
+        ensureSession: () => this.ensureSession(),
+        fetchMarkets: () => this.fetchMarkets(),
+        resolveMarket: (data, pair) => this.resolveMarket(data, pair),
+        normalizeCreateOrderValues: (market, price, quantity, pf, qf) =>
+          this.normalizeCreateOrderValues(market, price, quantity, pf, qf),
+        spotActionToCall: (action, market) =>
+          actionToCall(
+            action as unknown as ActionJSON,
+            toMarketInfo(market),
+            this.marketsCache?.accounts_registry_id,
+          ),
+        submitPrepared: (batch: PreparedBatch) => this.submitPrepared(batch),
+      };
+      this._turbo = new TurboClient(host);
+    }
+    return this._turbo;
+  }
+
   protected async submitBatch(
     marketActions: MarketActions[],
     collectOrders = false,
@@ -1224,19 +1324,57 @@ export class O2Client {
       }
     }
 
+    return this.submitPrepared({
+      marketActions: marketActions as unknown as PreparedMarketActions[],
+      calls,
+      tradeAccountId: activeSession.tradeAccountId,
+      collectOrders,
+      session: activeSession,
+    });
+  }
+
+  /**
+   * Sign and submit a batch whose contract calls the caller has already
+   * derived.
+   *
+   * Split out of {@link O2Client.submitBatch} for the Turbo path, whose
+   * calls do NOT derive from market metadata: a margin action targets the
+   * pool, the margin child or the registry, and which account signs depends
+   * on the action rather than on the session.
+   *
+   * @internal
+   */
+  protected async submitPrepared(batch: {
+    marketActions: PreparedMarketActions[];
+    calls: ContractCall[];
+    tradeAccountId: string;
+    collectOrders?: boolean;
+    endpoint?: "session" | "marginAccounts";
+    session?: SessionState;
+  }): Promise<SessionActionsResponse> {
+    const activeSession = batch.session ?? this.ensureSession();
+    if (activeSession.expiry > 0 && Math.floor(Date.now() / 1000) >= activeSession.expiry) {
+      throw new SessionExpired();
+    }
+
     // Build signing bytes and sign
-    const signingBytes = buildActionsSigningBytes(activeSession.nonce, calls);
+    const signingBytes = buildActionsSigningBytes(activeSession.nonce, batch.calls);
     const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
+    const request = {
+      actions: batch.marketActions as unknown as MarketActions[],
+      signature: { Secp256k1: bytesToHex(signature) },
+      nonce: activeSession.nonce.toString(),
+      trade_account_id: batch.tradeAccountId as TradeAccountId,
+      session_id: { Address: activeSession.sessionAddress },
+      collect_orders: batch.collectOrders ?? false,
+    };
+
     try {
-      const response = await this.api.submitActions(activeSession.ownerAddress, {
-        actions: marketActions,
-        signature: { Secp256k1: bytesToHex(signature) },
-        nonce: activeSession.nonce.toString(),
-        trade_account_id: activeSession.tradeAccountId,
-        session_id: { Address: activeSession.sessionAddress },
-        collect_orders: collectOrders,
-      });
+      const response =
+        batch.endpoint === "marginAccounts"
+          ? await this.api.submitMarginAccountActions(activeSession.ownerAddress, request)
+          : await this.api.submitActions(activeSession.ownerAddress, request);
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {

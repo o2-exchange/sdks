@@ -33,6 +33,14 @@ export interface NetworkConfig {
   fuelRpc: string;
   /** Faucet URL for minting test tokens, or `null` if unavailable (mainnet). */
   faucetUrl: string | null;
+  /**
+   * Base URL for the analytics surface (whitelisting, Turbo referral).
+   *
+   * Optional: on the public deployments analytics is mounted on the same
+   * host as the REST API, so this defaults to {@link NetworkConfig.apiBase}.
+   * Set it only for a split deployment.
+   */
+  analyticsBase?: string;
 }
 
 /** Pre-configured endpoints for O2 Exchange testnet. */

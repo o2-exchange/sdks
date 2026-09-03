@@ -54,6 +54,20 @@ import {
   type WithdrawRequest,
   type WithdrawResponse,
 } from "./models.js";
+import type {
+  SignedEnvelope,
+  TurboReferralActivation,
+  TurboReferralCode,
+  TurboReferralStatus,
+} from "./turbo/referral.js";
+import type {
+  Hex,
+  MarginPoolWire,
+  MarginStateWire,
+  MarginTierWire,
+  NextMarginAccount,
+  OrderBookCleanup,
+} from "./turbo/wire.js";
 
 /**
  * Configuration options for {@link O2Api}.
@@ -86,6 +100,15 @@ export interface O2ApiOptions {
  */
 export class O2Api {
   protected readonly baseUrl: string;
+  /**
+   * Base for the analytics surface.
+   *
+   * Defaults to {@link O2Api.baseUrl} — on the public deployments analytics
+   * is mounted on the same host, which is why `/analytics/v1/whitelist` has
+   * always worked without one. Split deployments set `analyticsBase` on the
+   * {@link NetworkConfig}.
+   */
+  protected readonly analyticsBaseUrl: string;
   protected readonly faucetUrl: string | null;
   protected readonly maxRetries: number;
   protected readonly retryDelayMs: number;
@@ -93,6 +116,7 @@ export class O2Api {
 
   constructor(options: O2ApiOptions) {
     this.baseUrl = options.config.apiBase;
+    this.analyticsBaseUrl = options.config.analyticsBase ?? options.config.apiBase;
     this.faucetUrl = options.config.faucetUrl;
     this.maxRetries = options.maxRetries ?? 3;
     this.retryDelayMs = options.retryDelayMs ?? 1000;
@@ -108,9 +132,11 @@ export class O2Api {
       body?: unknown;
       headers?: Record<string, string>;
       query?: Record<string, string | number | boolean | undefined>;
+      /** Override the host. Used for the analytics surface. */
+      baseUrl?: string;
     } = {},
   ): Promise<T> {
-    let url = `${this.baseUrl}${path}`;
+    let url = `${options.baseUrl ?? this.baseUrl}${path}`;
     if (options.query) {
       const params = new URLSearchParams();
       for (const [key, val] of Object.entries(options.query)) {
@@ -189,6 +215,16 @@ export class O2Api {
     headers?: Record<string, string>,
   ): Promise<T> {
     return this.request<T>("PUT", path, { body, headers });
+  }
+
+  /** GET against the analytics surface. */
+  protected async getAnalytics<T>(path: string): Promise<T> {
+    return this.request<T>("GET", path, { baseUrl: this.analyticsBaseUrl });
+  }
+
+  /** POST against the analytics surface. */
+  protected async postAnalytics<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>("POST", path, { body, baseUrl: this.analyticsBaseUrl });
   }
 
   // ── Market Data ─────────────────────────────────────────────────
@@ -525,6 +561,155 @@ export class O2Api {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
       "O2-Owner-Id": ownerId,
     });
+  }
+
+  // ── Margin ("Turbo") ────────────────────────────────────────────
+
+  /**
+   * The tiers currently on sale — the products a Turbo account is opened
+   * onto.
+   *
+   * Latest-version-only; the history lives at `/v1/margin/tiers/history`.
+   */
+  async getMarginTiers(): Promise<MarginTierWire[]> {
+    const body = await this.get<{ tiers?: MarginTierWire[] } | MarginTierWire[]>(
+      "/v1/margin/tiers",
+    );
+    return Array.isArray(body) ? body : (body.tiers ?? []);
+  }
+
+  /**
+   * Everything the API knows about one margin account: session, tier,
+   * balances and the oracle prints every risk figure is derived from.
+   */
+  async getMarginState(marginAccountId: Hex): Promise<MarginStateWire> {
+    return this.get<MarginStateWire>(
+      `/v1/margin/state?account=${encodeURIComponent(marginAccountId)}`,
+    );
+  }
+
+  /**
+   * The pool's inventory and pause flag.
+   *
+   * The inventory is what bounds a borrow: a credit line is permission to
+   * borrow, not a promise the coins exist.
+   */
+  async getMarginPool(): Promise<MarginPoolWire> {
+    return this.get<MarginPoolWire>("/v1/margin/pool");
+  }
+
+  /**
+   * The id of the next margin account this parent could open.
+   *
+   * A pure function of `(oracle, parent, index)`, so it can be signed
+   * against before the account exists — which is exactly what registration
+   * does.
+   *
+   * @param index - Ask for a specific index rather than the next one.
+   *   Older deployments ignore this and always answer with the next.
+   */
+  async getNextMarginAccount(
+    parentContractId: Hex,
+    index?: number,
+  ): Promise<NextMarginAccount | null> {
+    const params = new URLSearchParams({ parent_contract: parentContractId });
+    if (index !== undefined) params.set("index", String(index));
+    try {
+      return await this.get<NextMarginAccount>(`/v1/margin/next-account?${params}`);
+    } catch {
+      // Margin may not be wired on this deployment at all. That is a fact
+      // about the network, not a failure of the caller's request.
+      return null;
+    }
+  }
+
+  /** Ledger entries for one margin account. */
+  async getMarginActivity(marginAccountId: Hex, limit?: number): Promise<unknown[]> {
+    const params = new URLSearchParams({ account: marginAccountId });
+    if (limit !== undefined) params.set("limit", String(limit));
+    const body = await this.get<{ activity?: unknown[] } | unknown[]>(
+      `/v1/margin/activity?${params}`,
+    );
+    return Array.isArray(body) ? body : (body.activity ?? []);
+  }
+
+  /**
+   * Every book still holding something of this account's, with its live
+   * order ids — the list a clean close must carry.
+   *
+   * The chain re-verifies completeness, so a stale list reverts rather than
+   * stranding value. Fetch it at close time, never earlier.
+   */
+  async getMarginCloseCleanups(marginAccountId: Hex): Promise<OrderBookCleanup[]> {
+    const params = new URLSearchParams({ account: marginAccountId });
+    try {
+      const body = await this.get<{ cleanups?: OrderBookCleanup[] } | OrderBookCleanup[]>(
+        `/v1/margin/close-cleanups?${params}`,
+      );
+      return Array.isArray(body) ? body : (body.cleanups ?? []);
+    } catch {
+      // Older deployments do not serve the route; an empty list still
+      // settles every book the chain finds drained.
+      return [];
+    }
+  }
+
+  /**
+   * Submit a session batch that REGISTERS a margin account.
+   *
+   * Its own route because the proxies do not exist yet and only this one
+   * deploys them before running the signed batch. Same payload and same
+   * core as `/v1/session/actions` — the deploy is the entire difference.
+   */
+  async submitMarginAccountActions(
+    ownerId: string,
+    request: SessionActionsRequest,
+  ): Promise<SessionActionsResponse> {
+    const body = await this.request<Record<string, unknown>>("POST", "/v1/margin/accounts", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+    });
+
+    if (isActionsSuccess(body)) {
+      return SessionActionsResponse.fromResponse(body, parseOrder);
+    }
+    const error = parseApiError(body);
+    if (error.code != null) {
+      return new SessionActionsResponse(null, null, null, null, error.code, error.message);
+    }
+    throw error;
+  }
+
+  // ── Turbo referral ──────────────────────────────────────────────
+
+  /**
+   * Whether this wallet was referred, and whether its discount is live.
+   *
+   * Never-referred is a FACT, not an error: the endpoint answers
+   * `{ referred: false }` rather than 404ing.
+   */
+  async getTurboReferralStatus(refereeAddress: string): Promise<TurboReferralStatus> {
+    const params = new URLSearchParams({ referee: refereeAddress });
+    return this.getAnalytics<TurboReferralStatus>(`/analytics/v1/turbo/referral/status?${params}`);
+  }
+
+  /** Mint (or re-read) a referral code. Idempotent. */
+  async createTurboReferralCode(envelope: SignedEnvelope): Promise<TurboReferralCode> {
+    return this.postAnalytics<TurboReferralCode>("/analytics/v1/turbo/referral/code", envelope);
+  }
+
+  /**
+   * Bind this wallet to a referrer's code.
+   *
+   * PERMANENT: `referee_address` is unique and first code wins, which is
+   * why the payload is signed. 404 is an unknown code, 409 means this
+   * wallet was already referred, 400 covers self-referral.
+   */
+  async activateTurboReferral(envelope: SignedEnvelope): Promise<TurboReferralActivation> {
+    return this.postAnalytics<TurboReferralActivation>(
+      "/analytics/v1/turbo/referral/activate",
+      envelope,
+    );
   }
 
   // ── Analytics ───────────────────────────────────────────────────
