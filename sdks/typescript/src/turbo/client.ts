@@ -124,9 +124,20 @@ export interface TurboSnapshot {
   availableToTrade: bigint;
   /** Seconds of session life remaining, from SERVER time. */
   secondsRemaining: number | null;
-  /** Close-only: the pool will admit no new exposure. */
+  /**
+   * Close-only: the pool will admit no new exposure.
+   *
+   * The pool's own freeze test — STRESSED equity against the live freeze
+   * line — not a comparison of raw equity to the tier's `open_buffer`,
+   * which reads false on exactly the accounts that need topping up.
+   */
   frozen: boolean;
-  /** Keeper-eligible. Still recoverable — this is not a teardown. */
+  /**
+   * Keeper-eligible. Still recoverable — this is not a teardown.
+   *
+   * Stated in `V` against the live liquidation line, which on a prepaid
+   * session is an anchored floor allowed to sit below `k` itself.
+   */
   liquidatable: boolean;
   limits: MarginLimits | null;
 }
@@ -267,12 +278,21 @@ export class TurboClient {
     try {
       const markets = await api.getMarkets();
       const raw = (markets as unknown as { margin?: { margin_pool_id?: string } | null }).margin;
-      if (raw?.margin_pool_id) scope.add(normaliseHex(raw.margin_pool_id));
+      if (!raw?.margin_pool_id) return [];
+      scope.add(normaliseHex(raw.margin_pool_id));
+      // THE REGISTRY, TOO. `RegisterMarginAccount` targets it, so a scope
+      // without it opens no account at all — `turbo.open()` is refused with
+      // `MarginAccountNotInSessionScope` and no retry helps, because the
+      // scope is part of what the wallet signed.
+      if (markets.accounts_registry_id) {
+        scope.add(normaliseHex(markets.accounts_registry_id));
+      }
     } catch {
       return [];
     }
 
     let parent: string | undefined;
+    let nextIndex = 0;
     try {
       const info = (await api.getAccount({ owner: ownerAddress })) as unknown as {
         margin_accounts?: NextMarginAccount[];
@@ -285,19 +305,33 @@ export class TurboClient {
       }
       if (info.next_margin_account) {
         scope.add(normaliseHex(info.next_margin_account.contract_id));
+        nextIndex = info.next_margin_account.index;
+      } else {
+        // No prediction served: the next free slot is one past whatever
+        // this owner already holds.
+        nextIndex = (info.margin_accounts ?? []).length;
       }
     } catch {
-      // Discovery failed; the pool alone is still worth scoping.
+      // Discovery failed; the pool and registry alone are still worth
+      // scoping — they are what every account shares.
     }
 
     if (parent) {
-      // Cover the next few indices too, so one signature carries the
-      // trader through opening a second and third account. A deployment
-      // that ignores `index` answers with the same id each time and the
-      // set simply collapses — the coverage we would have had anyway.
+      // Cover the next few accounts the trader COULD open, so one
+      // signature carries them through a second and a third.
+      //
+      // Asked from `nextIndex` upward, NOT from zero: absolute indices
+      // 0..depth are slots this owner may already occupy, and asking for
+      // those returns ids that are in scope already — the prediction
+      // collapses and the trader needs a fresh signature for their next
+      // account after all.
+      //
+      // A deployment that ignores `index` answers with the same id each
+      // time and the set simply collapses to one, which is the coverage
+      // we would have had anyway.
       const predictions = await Promise.all(
         Array.from({ length: depth }, (_, offset) =>
-          api.getNextMarginAccount(parent as Hex, offset).catch(() => null),
+          api.getNextMarginAccount(parent as Hex, nextIndex + offset).catch(() => null),
         ),
       );
       for (const p of predictions) {
@@ -388,13 +422,19 @@ export class TurboClient {
     const session = marginSession(wire);
     const expiresAt = session?.expires_at === undefined ? null : Number(session.expires_at);
 
-    // `equity = V - k`, so both risk edges are the tier's own fields
-    // compared against it — no arithmetic of our own. `frozen` is
-    // close-only and `liquidatable` is keeper-eligible; NEITHER means the
-    // account is gone. A liquidated session leaves no `session` at all.
-    const maintenance = wire.tier ? big(wire.tier.maintenance) : 0n;
-    const openBuffer = wire.tier ? big(wire.tier.open_buffer) : 0n;
-
+    // BOTH FLAGS COME FROM THE GATE STACK, not from arithmetic here.
+    //
+    // `frozen` is the pool's own freeze test — STRESSED equity against the
+    // live freeze line plus its absorption cushion — which `marginLimits`
+    // has already evaluated as `stressFrozen`. Comparing unstressed equity
+    // to the tier's `open_buffer` is only the same thing on a legacy tier
+    // at a zero band, and it reads `false` on a prepaid or stressed account
+    // that the pool has already put into close-only. A caller who tops up
+    // margin when `frozen` goes true would miss exactly that window.
+    //
+    // `liquidatable` is stated by the pool in `V`, not in equity, against
+    // the live liquidation line — the anchored floor on a prepaid session,
+    // which is allowed to sit below `k + maintenance` and below `k` itself.
     return {
       marginAccountId: id,
       tier: wire.tier ?? null,
@@ -402,8 +442,8 @@ export class TurboClient {
       equity: limits?.equity ?? 0n,
       availableToTrade: limits?.spendable ?? 0n,
       secondsRemaining: expiresAt === null ? null : Math.max(0, expiresAt - wire.now),
-      frozen: limits ? limits.equity < openBuffer : false,
-      liquidatable: limits ? limits.equity <= maintenance : false,
+      frozen: limits?.stressFrozen ?? false,
+      liquidatable: limits ? limits.markToMarket <= limits.liquidationThreshold : false,
       limits,
     };
   }
@@ -639,6 +679,11 @@ export class TurboClient {
    * less this round retires debt and the next round takes more, whereas
    * an open has no next round.
    *
+   * When they clamp, the ORDER shrinks with them. A full-size order behind
+   * a clamped funding leg is the custody revert the open/close split
+   * exists to avoid, just moved one step later — so call this again to
+   * close the remainder.
+   *
    * This submits the closing order. Retiring the debt the position leaves
    * behind — `repayDrawn` for a long, buying back for a short — is a
    * separate step, because the fill is not known at signing time.
@@ -806,9 +851,8 @@ export class TurboClient {
     // buy) needs a Draw; forwarding BASE (a sell) needs a Borrow, because
     // on a credit line you do not own the asset you are selling.
     const escrowIsQuote = side === "buy";
-    const escrowAmount = escrowIsQuote
-      ? (scaledPrice * scaledQuantity) / 10n ** BigInt(resolved.base.decimals)
-      : scaledQuantity;
+    const quoteCostOf = (quantity: bigint): bigint =>
+      (scaledPrice * quantity) / 10n ** BigInt(resolved.base.decimals);
 
     // ADDING exposure must be fully funded; a REDUCING trade may clamp.
     // A clamped leg behind a full-size opening order is a custody revert
@@ -821,14 +865,35 @@ export class TurboClient {
     // SWEEP FIRST — see `long`.
     const spotActions: Record<string, unknown>[] = [{ SettleBalance: { to: settleTo } }];
 
+    // The order quantity is not fixed until the funding is: a clamped
+    // funding leg behind a full-size order is the very custody revert the
+    // open/close split exists to avoid, and a close that clamps must
+    // therefore SHRINK THE ORDER to what it can actually fund. It loops,
+    // so the remainder is the next round's problem, not a reverted batch.
+    let orderQuantity = scaledQuantity;
+
     if (escrowIsQuote) {
+      const escrowAmount = quoteCostOf(orderQuantity);
       const needed = marginDrawAmount(limits, escrowAmount);
       if (needed > 0n) {
         const amount = min(needed, limits.drawable);
-        if (requireFull && amount < needed) {
-          throw new O2Error(
-            `Not enough available credit: this order escrows ${escrowAmount} but the line can only draw ${limits.drawable}.`,
-          );
+        if (amount < needed) {
+          if (requireFull) {
+            throw new O2Error(
+              `Not enough available credit: this order escrows ${escrowAmount} but the line can only draw ${limits.drawable}.`,
+            );
+          }
+          // Fund what we can, then buy only what that funds. `own` is the
+          // cash the draw was sized on top of, so the affordable escrow is
+          // the two together.
+          const own = escrowAmount - needed;
+          const affordable = own + amount;
+          orderQuantity = (affordable * 10n ** BigInt(resolved.base.decimals)) / scaledPrice;
+          if (orderQuantity <= 0n) {
+            throw new O2Error(
+              "Nothing of this position can be closed right now: the line has no room to draw and the account holds no spendable cash.",
+            );
+          }
         }
         if (amount > 0n) actions.push(drawAction(amount));
       }
@@ -838,15 +903,40 @@ export class TurboClient {
         throw new O2Error("The collateral asset is drawn, never borrowed — it cannot be shorted.");
       }
       const row = wire.balances.find((b) => sameHex(b.asset_id, assetId));
-      const onHand = row ? big(row.on_account) : 0n;
-      const needed = max(0n, escrowAmount - onHand);
+      // COUNT SETTLED, because this batch sweeps before it sells.
+      //
+      // The `SettleBalance` above brings settled base home BEFORE the order
+      // runs, so those coins are on the account by the time custody is
+      // checked. Sizing against `on_account` alone therefore borrows over
+      // the top of base the account already owns — harmless on the net
+      // position (it holds and owes the same excess) but it leaves an
+      // in-kind debt that eats the loan cap and blocks a clean
+      // `closeAccount`, which is exactly what closing a filled long would
+      // have done every time.
+      //
+      // The caveat is that `settled` is per ASSET while a batch sweeps one
+      // BOOK, so base settled on a DIFFERENT market quoting the same asset
+      // is counted here but not swept. That is rare, loud when it happens
+      // (a custody revert the caller can retry after settling), and the
+      // safer trade against a silent debt on every close.
+      const onHand = row ? big(row.on_account) + big(row.settled) : 0n;
+      const needed = max(0n, orderQuantity - onHand);
       if (needed > 0n) {
         const borrowable = marginBorrowableBase(wire, limits, assetId, pool.inventory);
         const amount = min(needed, borrowable);
-        if (requireFull && amount < needed) {
-          throw new O2Error(
-            `Size unavailable to short: ${needed} needed, ${borrowable} borrowable (tier asset list, pool inventory and loan cap all bind).`,
-          );
+        if (amount < needed) {
+          if (requireFull) {
+            throw new O2Error(
+              `Size unavailable to short: ${needed} needed, ${borrowable} borrowable (tier asset list, pool inventory and loan cap all bind).`,
+            );
+          }
+          // Sell only what the account will actually hold.
+          orderQuantity = onHand + amount;
+          if (orderQuantity <= 0n) {
+            throw new O2Error(
+              "Nothing of this position can be closed right now: the account holds none of the asset and the pool will lend none.",
+            );
+          }
         }
         if (amount > 0n) {
           // FREE THE LINE FIRST, sized to the shortfall only. Handing back
@@ -868,7 +958,7 @@ export class TurboClient {
       CreateOrder: {
         side: capitalizeSide(side),
         price: scaledPrice.toString(),
-        quantity: scaledQuantity.toString(),
+        quantity: orderQuantity.toString(),
         order_type: scaleOrderType(options.orderType ?? "Spot", resolved),
       },
     });

@@ -141,7 +141,7 @@ function makeHost(
         margin: {
           margin_pool_id: POOL,
           collateral_asset_id: COLLATERAL,
-          stress_band_bps: "0",
+          stress_band_bps: opts.stressBandBps ?? "0",
         },
       }) as never,
     resolveMarket: () => MARKET,
@@ -443,5 +443,252 @@ describe("session scope", () => {
     const { api } = makeHost();
     api.getMarkets.mockRejectedValue(new Error("margin not wired here"));
     await expect(TurboClient.sessionScope(api as never, "0xowner")).resolves.toEqual([]);
+  });
+});
+
+// ── Regressions from review (PR #76) ────────────────────────────────
+
+describe("regression: sell funding counts settled base", () => {
+  it("emits NO borrow when settled base the sweep will bring home covers the sale", async () => {
+    // The batch settles BEFORE it sells, so settled base is on the account
+    // by the time custody is checked. Sizing against `on_account` alone
+    // borrowed over the top of coins the account already owned and left an
+    // in-kind debt behind every close of a filled long.
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: (10n ** 9n).toString(), // 1 ETH settled on the book
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({ wire });
+    await new TurboClient(host).use(CHILD).short(MARKET, { quantity: "1" }, { price: "2000" });
+    expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "CreateOrder"]);
+  });
+
+  it("borrows only what settled plus on-account cannot cover", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: (3n * 10n ** 8n).toString(),
+          received: "0",
+          locked: "0",
+          settled: (4n * 10n ** 8n).toString(),
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({ wire });
+    await new TurboClient(host).use(CHILD).short(MARKET, { quantity: "1" }, { price: "2000" });
+    const borrow = submitted[0].marketActions[0].actions.find((a) => "Borrow" in a) as {
+      Borrow: { amount: string };
+    };
+    expect(borrow.Borrow.amount).toBe((3n * 10n ** 8n).toString());
+  });
+});
+
+describe("regression: a clamped close shrinks the ORDER too", () => {
+  it("reduces a buy-to-close to what the line can actually draw", async () => {
+    // Clamping the funding while leaving the order full size signs a batch
+    // the custody check reverts — the exact failure the open/close split
+    // was written to avoid.
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: (10n ** 9n).toString(), // short 1 ETH
+        },
+      ],
+    });
+    // The pool holds only $500 of collateral float, so a $2,000 buy-back
+    // cannot be fully drawn.
+    const { host, submitted } = makeHost({
+      wire,
+      inventory: [{ asset_id: COLLATERAL, amount: "500000000" }],
+    });
+    await new TurboClient(host).use(CHILD).closePosition(MARKET, { price: "2000" });
+
+    const draw = submitted[0].marketActions[0].actions.find((a) => "Draw" in a) as {
+      Draw: { amount: string };
+    };
+    const order = submitted[0].marketActions[0].actions.at(-1) as {
+      CreateOrder: { quantity: string; side: string };
+    };
+    expect(order.CreateOrder.side).toBe("Buy");
+    expect(draw.Draw.amount).toBe("500000000");
+    // $500 of draw at $2,000 buys 0.25 ETH, not the full 1.
+    expect(order.CreateOrder.quantity).toBe((25n * 10n ** 7n).toString());
+  });
+
+  it("reduces a sell-to-close to what the pool will lend", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: (2n * 10n ** 8n).toString(), // holds 0.2
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({
+      wire,
+      inventory: [
+        { asset_id: COLLATERAL, amount: "100000000000" },
+        { asset_id: ETH, amount: (1n * 10n ** 8n).toString() }, // pool lends 0.1
+      ],
+    });
+    await new TurboClient(host).use(CHILD).closePosition(MARKET, { price: "2000", quantity: "1" });
+    const order = submitted[0].marketActions[0].actions.at(-1) as {
+      CreateOrder: { quantity: string };
+    };
+    // 0.2 held + 0.1 borrowable = 0.3 sellable.
+    expect(order.CreateOrder.quantity).toBe((3n * 10n ** 8n).toString());
+  });
+
+  it("still REFUSES an under-funded open rather than silently shrinking it", async () => {
+    const { host } = makeHost({ inventory: [{ asset_id: COLLATERAL, amount: "1000000" }] });
+    await expect(
+      new TurboClient(host).use(CHILD).long(MARKET, { quantity: "1" }, { price: "2000" }),
+    ).rejects.toThrow(/available credit/);
+  });
+});
+
+describe("regression: snapshot flags come from the gate stack", () => {
+  it("reports frozen from the pool's STRESSED freeze test, not raw equity", async () => {
+    // A 50% adverse band against a long puts stressed equity under the
+    // freeze line while unstressed equity still looks comfortable. The old
+    // comparison read `false` here and a caller topping up on `frozen`
+    // would have missed the window entirely.
+    const wire = state({
+      tier: {
+        ...(state().tier as NonNullable<MarginStateWire["tier"]>),
+        price_band_bps: 5000,
+        open_buffer: "9000000000",
+        maintenance: "8000000000",
+      },
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: (5n * 10n ** 9n).toString(),
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+      ],
+    });
+    // The DEPLOYMENT's stress band is what the pool shocks by, and it
+    // overrides the tier's (much smaller) concession band — so the test
+    // states the band it means rather than inheriting a zero.
+    const { host } = makeHost({ wire, stressBandBps: "5000" });
+    const turbo = new TurboClient(host).use(CHILD);
+    const limits = await turbo.limits();
+    const snapshot = await turbo.snapshot();
+    expect(snapshot.frozen).toBe(limits?.stressFrozen);
+    expect(snapshot.frozen).toBe(true);
+    // And the UNSTRESSED comparison this replaced would have read false.
+    expect((limits as NonNullable<typeof limits>).equity).toBeGreaterThan(
+      (limits as NonNullable<typeof limits>).openBuffer,
+    );
+  });
+
+  it("reports liquidatable in V against the live line, not equity against maintenance", async () => {
+    const { host } = makeHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    const limits = await turbo.limits();
+    const snapshot = await turbo.snapshot();
+    expect(snapshot.liquidatable).toBe(
+      (limits as NonNullable<typeof limits>).markToMarket <=
+        (limits as NonNullable<typeof limits>).liquidationThreshold,
+    );
+  });
+});
+
+describe("regression: session scope", () => {
+  it("includes the accounts REGISTRY — RegisterMarginAccount targets it", async () => {
+    const { api } = makeHost();
+    api.getMarkets.mockResolvedValue({
+      margin: { margin_pool_id: POOL },
+      accounts_registry_id: REGISTRY,
+    });
+    api.getNextMarginAccount.mockResolvedValue(null);
+    const scope = await TurboClient.sessionScope(api as never, "0xowner");
+    // Without it, turbo.open() is refused with MarginAccountNotInSessionScope
+    // and no retry helps — the scope is part of what was signed.
+    expect(scope).toContain(REGISTRY);
+    expect(scope).toContain(POOL);
+  });
+
+  it("predicts from the NEXT index, not from absolute zero", async () => {
+    const { api } = makeHost();
+    api.getMarkets.mockResolvedValue({
+      margin: { margin_pool_id: POOL },
+      accounts_registry_id: REGISTRY,
+    });
+    api.getAccount.mockResolvedValue({
+      trade_account_id: PARENT,
+      margin_accounts: [{ contract_id: CHILD, index: 0 }],
+      next_margin_account: { contract_id: "0xnext", index: 1 },
+    });
+    api.getNextMarginAccount.mockResolvedValue(null);
+
+    await TurboClient.sessionScope(api as never, "0xowner", 3);
+    const asked = api.getNextMarginAccount.mock.calls.map((c: unknown[]) => c[1]);
+    // Slots 0 is already taken; asking for it again just re-adds an id
+    // already in scope and leaves the trader needing a fresh signature.
+    expect(asked).toEqual([1, 2, 3]);
   });
 });

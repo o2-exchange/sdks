@@ -71,6 +71,20 @@ export interface MarginLimits {
   /** `V - k` at spot — the trader's own money. */
   equity: bigint;
   /**
+   * `V` at spot: everything the account is worth, before `k`.
+   *
+   * Exposed because the pool's liquidation test is stated in `V`, not in
+   * equity — comparing equity against the tier's `maintenance` is only the
+   * same thing on a legacy tier whose floor happens to be `k + maintenance`.
+   */
+  markToMarket: bigint;
+  /**
+   * The LIVE liquidation line, in `V` — the anchored floor plus its
+   * absorption cushion on a prepaid session, the tier's static `threshold`
+   * on a legacy one. `liquidatable` is `markToMarket <= this`.
+   */
+  liquidationThreshold: bigint;
+  /**
    * How much value the account may CONCEDE before the batch-level
    * liquidation line refuses it: `max(0, V - threshold - 1)`, strict
    * because the chain liquidates AT the threshold.
@@ -298,6 +312,8 @@ export function marginLimits(
     cash,
     onAccountCash,
     reserve,
+    markToMarket: spot.v,
+    liquidationThreshold: threshold,
     spendableCash,
     drawable,
     spendable,

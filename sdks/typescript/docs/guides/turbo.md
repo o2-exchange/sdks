@@ -105,7 +105,10 @@ open — an under-funded leg behind a full-size order is a custody revert with
 extra steps, discovered after you signed.
 
 `closePosition` clamps instead, because a close *loops*: taking less this
-round retires debt and the next round takes more.
+round retires debt and the next round takes more. **When the funding clamps,
+the order shrinks with it** — a full-size order behind a clamped funding leg
+is the same custody revert one step later — so call `closePosition` again to
+close the remainder.
 
 ### What is shortable
 
@@ -203,6 +206,14 @@ activation call merely succeeding. Until the on-chain grant lands the
 discount does not exist.
 
 ---
+
+## Nonces
+
+Each account has its own on-chain nonce, and a Turbo batch executes as the
+margin **child**. The SDK tracks child nonces separately from the session's
+own, so Turbo trading and ordinary spot trading cannot desync each other. If
+a child has been driven from somewhere else, `client.refreshAccountNonce(id)`
+re-reads it.
 
 ## Units
 

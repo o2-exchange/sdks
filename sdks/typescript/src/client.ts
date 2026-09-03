@@ -199,6 +199,11 @@ export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
   private _turbo: TurboClient | null = null;
+  /**
+   * Locally tracked nonces for accounts OTHER than the session's own —
+   * margin children, which have their own on-chain counters.
+   */
+  protected readonly accountNonces = new Map<string, bigint>();
   protected wsClient: O2WebSocket | null = null;
   /** Network endpoint and contract configuration used by this client. */
   public readonly config: NetworkConfig;
@@ -1357,14 +1362,36 @@ export class O2Client {
       throw new SessionExpired();
     }
 
+    // THE NONCE BELONGS TO THE ACCOUNT THE BATCH EXECUTES AS, not to the
+    // session.
+    //
+    // A sequential nonce coordinates with that account's own on-chain
+    // counter, and a Turbo batch executes as the margin CHILD — which has
+    // a counter entirely separate from its parent's. Signing a child batch
+    // with the parent's nonce submits the wrong number; worse, advancing
+    // the parent's local counter afterwards desyncs every later parent
+    // action, so one Turbo trade would break ordinary trading.
+    //
+    // The session's own account keeps using `session.nonce` byte for byte,
+    // so nothing about spot trading changes.
+    const usesSessionAccount = batch.tradeAccountId === activeSession.tradeAccountId;
+    const nonce = usesSessionAccount
+      ? activeSession.nonce
+      : await this.nonceFor(batch.tradeAccountId as TradeAccountId);
+
+    const advance = (to: bigint): void => {
+      if (usesSessionAccount) activeSession.nonce = to;
+      else this.accountNonces.set(batch.tradeAccountId, to);
+    };
+
     // Build signing bytes and sign
-    const signingBytes = buildActionsSigningBytes(activeSession.nonce, batch.calls);
+    const signingBytes = buildActionsSigningBytes(nonce, batch.calls);
     const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
     const request = {
       actions: batch.marketActions as unknown as MarketActions[],
       signature: { Secp256k1: bytesToHex(signature) },
-      nonce: activeSession.nonce.toString(),
+      nonce: nonce.toString(),
       trade_account_id: batch.tradeAccountId as TradeAccountId,
       session_id: { Address: activeSession.sessionAddress },
       collect_orders: batch.collectOrders ?? false,
@@ -1378,24 +1405,53 @@ export class O2Client {
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {
-        activeSession.nonce += 1n;
+        advance(nonce + 1n);
       }
       return response;
     } catch (error) {
       // Nonce increments on-chain even on revert
-      activeSession.nonce += 1n;
-      // Re-fetch nonce on error for resync
+      advance(nonce + 1n);
+      // Re-fetch nonce on error for resync — from the account that actually
+      // executed, which is the only one whose counter moved.
       try {
         const info = await this.api.getAccount({
-          tradeAccountId: activeSession.tradeAccountId,
+          tradeAccountId: batch.tradeAccountId as TradeAccountId,
         });
         if (info.trade_account) {
-          activeSession.nonce = info.trade_account.nonce;
+          advance(info.trade_account.nonce);
         }
       } catch (_e: unknown) {
         // If re-fetch fails, keep incremented nonce
       }
       throw error;
     }
+  }
+
+  /**
+   * The next nonce for an account that is not the session's own.
+   *
+   * Fetched once and then tracked locally, the same way the session tracks
+   * its own — a margin child's counter advances on its own submissions and
+   * nothing else touches it.
+   */
+  protected async nonceFor(tradeAccountId: TradeAccountId): Promise<bigint> {
+    const cached = this.accountNonces.get(tradeAccountId as unknown as string);
+    if (cached !== undefined) return cached;
+    const fetched = await this.getNonce(tradeAccountId);
+    this.accountNonces.set(tradeAccountId as unknown as string, fetched);
+    return fetched;
+  }
+
+  /**
+   * Re-read an auxiliary account's nonce from the API, discarding the
+   * locally tracked one.
+   *
+   * The margin equivalent of {@link O2Client.refreshNonce}. Useful when a
+   * margin child has been driven from somewhere else.
+   */
+  async refreshAccountNonce(tradeAccountId: TradeAccountId): Promise<bigint> {
+    const fetched = await this.getNonce(tradeAccountId);
+    this.accountNonces.set(tradeAccountId as unknown as string, fetched);
+    return fetched;
   }
 }
