@@ -692,3 +692,106 @@ describe("regression: session scope", () => {
     expect(asked).toEqual([1, 2, 3]);
   });
 });
+
+describe("regression: every emitted quantity satisfies the fractional-price rule", () => {
+  /**
+   * `create_order` reverts `OrderCreationError::FractionalPrice` unless
+   * `price * quantity` divides by `10^base_decimals`.
+   *
+   * Asserted as the INVARIANT rather than against a fixed number: the
+   * earlier clamp tests priced at 2000, where the quantum works out to 1
+   * and every quantity trivially passes — so they could not have caught a
+   * path that skips the adjustment. This price makes the quantum 2.
+   */
+  const PRICE = "2000.5"; // 2_000_500_000 raw → quantum 2
+  const SCALED_PRICE = 2_000_500_000n;
+  const FACTOR = 10n ** 9n; // base decimals
+
+  const divides = (quantity: bigint) => (SCALED_PRICE * quantity) % FACTOR === 0n;
+
+  const quantityOf = (batch: PreparedBatch): bigint =>
+    BigInt(
+      (batch.marketActions[0].actions.at(-1) as { CreateOrder: { quantity: string } }).CreateOrder
+        .quantity,
+    );
+
+  it("holds for a CLAMPED BUY — the path that was missing the adjustment", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: (10n ** 9n).toString(), // short 1 ETH, so closing is a BUY
+        },
+      ],
+    });
+    // A float that cannot fund the whole buy-back forces the clamp.
+    const { host, submitted } = makeHost({
+      wire,
+      inventory: [{ asset_id: COLLATERAL, amount: "333333333" }],
+    });
+    await new TurboClient(host).use(CHILD).closePosition(MARKET, { price: PRICE });
+
+    const quantity = quantityOf(submitted[0]);
+    expect(quantity).toBeGreaterThan(0n);
+    expect(divides(quantity)).toBe(true);
+    expect(quantity % 2n).toBe(0n);
+  });
+
+  it("holds for a CLAMPED SELL", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "333333333",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({
+      wire,
+      inventory: [
+        { asset_id: COLLATERAL, amount: "100000000000" },
+        { asset_id: ETH, amount: "111111111" },
+      ],
+    });
+    await new TurboClient(host).use(CHILD).closePosition(MARKET, { price: PRICE, quantity: "1" });
+    expect(divides(quantityOf(submitted[0]))).toBe(true);
+  });
+
+  it("holds for a NOTIONAL-sized open, which never went through normalize()", async () => {
+    const { host, submitted } = makeHost();
+    await new TurboClient(host).use(CHILD).long(MARKET, { notional: "4001" }, { price: PRICE });
+    expect(divides(quantityOf(submitted[0]))).toBe(true);
+  });
+
+  it("refuses outright when no quantity at this price can satisfy the rule", async () => {
+    const { host } = makeHost();
+    // One raw base unit at a quantum of 2 rounds down to zero.
+    await expect(
+      new TurboClient(host).use(CHILD).long(MARKET, { quantity: 1n }, { price: PRICE }),
+    ).rejects.toThrow(/fractional-price rule/);
+  });
+});

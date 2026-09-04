@@ -1216,7 +1216,9 @@ export class TurboClient {
           // the two together.
           const own = escrowAmount - needed;
           const affordable = own + amount;
-          orderQuantity = (affordable * 10n ** BigInt(resolved.base.decimals)) / scaledPrice;
+          orderQuantity = fitPrice(
+            (affordable * 10n ** BigInt(resolved.base.decimals)) / scaledPrice,
+          );
           if (orderQuantity <= 0n) {
             throw new O2Error(
               "Nothing of this position can be closed right now: the line has no room to draw and the account holds no spendable cash.",
