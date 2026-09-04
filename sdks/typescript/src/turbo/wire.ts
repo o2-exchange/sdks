@@ -32,6 +32,20 @@ export const PROLONG_PERIODS: readonly ProlongPeriod[] = [
   "Month",
 ] as const;
 
+/** Seconds each period is worth, in {@link PROLONG_PERIODS} order. */
+export const PROLONG_PERIOD_SECONDS: Readonly<Record<ProlongPeriod, number>> = {
+  SixHours: 21_600,
+  Day: 86_400,
+  Week: 604_800,
+  Month: 2_592_000,
+};
+
+/** The period a term length corresponds to, or `null` if it matches none. */
+export function periodForSeconds(seconds: number | string): ProlongPeriod | null {
+  const target = Number(seconds);
+  return PROLONG_PERIODS.find((period) => PROLONG_PERIOD_SECONDS[period] === target) ?? null;
+}
+
 /** Index of a period in the tier's `prolong_fee` / `prolong_seconds` arrays. */
 export function prolongPeriodIndex(period: ProlongPeriod): number {
   const index = PROLONG_PERIODS.indexOf(period);
@@ -46,7 +60,8 @@ export function prolongPeriodIndex(period: ProlongPeriod): number {
  * legacy branch of every risk line — see {@link marginCohortOf}.
  */
 export interface TurboTermsWire {
-  forfeit_collateral: boolean;
+  /** Absent on the deployed payloads; treat as `false` when missing. */
+  forfeit_collateral?: boolean;
   /** Drawdown allowance in bps of the line, indexed by rollovers used. */
   max_loss_bps: [string, string, string, string];
   rollover_profit_bps: string;
@@ -230,4 +245,29 @@ export function normaliseHex(id: string): Hex {
 export function sameHex(a: string | null | undefined, b: string | null | undefined): boolean {
   if (!a || !b) return false;
   return normaliseHex(a) === normaliseHex(b);
+}
+
+/**
+ * The deployment's margin wiring, as `/v1/markets` carries it.
+ *
+ * Absent when Turbo is not wired on this deployment — which is a fact
+ * about the network, not an error.
+ */
+export interface MarginWiringWire {
+  /** The asset the credit line is denominated in. */
+  collateral_asset_id: Hex;
+  margin_pool_id: Hex;
+  margin_oracle_id?: Hex;
+  price_feed_id?: Hex;
+  /**
+   * The CONCESSION band, bps as a decimal string — what `band_guard`
+   * measures an order's bound against.
+   */
+  price_band_bps?: string;
+  /**
+   * The STRESS band the chain shocks marks by. A different (much smaller)
+   * number than {@link MarginWiringWire.price_band_bps}; reading the wrong
+   * one makes the client refuse sizes the chain would take.
+   */
+  stress_band_bps?: string;
 }

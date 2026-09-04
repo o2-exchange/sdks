@@ -42,6 +42,7 @@ import {
   actionToCall,
   adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
+  buildParallelActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
   type ContractCall,
@@ -72,6 +73,7 @@ import type {
   OrderId,
   OrderType,
   OrderUpdate,
+  SessionActionsRequest,
   SessionActionsResponse,
   SessionState,
   TradeAccountId,
@@ -1354,6 +1356,12 @@ export class O2Client {
     calls: ContractCall[];
     tradeAccountId: string;
     collectOrders?: boolean;
+    ownerId?: string;
+    /**
+     * Sign with a PARALLEL nonce instead of the account's sequential
+     * counter. Margin-account batches accept no other kind.
+     */
+    parallelNonce?: string;
     endpoint?: "session" | "marginAccounts";
     session?: SessionState;
   }): Promise<SessionActionsResponse> {
@@ -1375,33 +1383,54 @@ export class O2Client {
     // The session's own account keeps using `session.nonce` byte for byte,
     // so nothing about spot trading changes.
     const usesSessionAccount = batch.tradeAccountId === activeSession.tradeAccountId;
-    const nonce = usesSessionAccount
-      ? activeSession.nonce
-      : await this.nonceFor(batch.tradeAccountId as TradeAccountId);
+    const parallel = batch.parallelNonce;
+
+    // A parallel nonce is minted by the caller and burned whether or not
+    // the batch lands, so there is no counter here to advance or resync.
+    const nonce =
+      parallel !== undefined
+        ? 0n
+        : usesSessionAccount
+          ? activeSession.nonce
+          : await this.nonceFor(batch.tradeAccountId as TradeAccountId);
 
     const advance = (to: bigint): void => {
+      if (parallel !== undefined) return;
       if (usesSessionAccount) activeSession.nonce = to;
       else this.accountNonces.set(batch.tradeAccountId, to);
     };
 
-    // Build signing bytes and sign
-    const signingBytes = buildActionsSigningBytes(nonce, batch.calls);
+    // Build signing bytes and sign. The parallel digest prefixes the packed
+    // nonce as a full u256 rather than the sequential u64, and the backend
+    // refuses a parallel nonce that does not arrive with the TYPED
+    // signature variant.
+    const signingBytes =
+      parallel !== undefined
+        ? buildParallelActionsSigningBytes(parallel, batch.calls)
+        : buildActionsSigningBytes(nonce, batch.calls);
     const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
-    const request = {
+    const request: SessionActionsRequest = {
       actions: batch.marketActions as unknown as MarketActions[],
-      signature: { Secp256k1: bytesToHex(signature) },
-      nonce: nonce.toString(),
+      signature:
+        parallel !== undefined
+          ? { TypedSecp256k1: bytesToHex(signature) }
+          : { Secp256k1: bytesToHex(signature) },
+      ...(parallel !== undefined ? { parallel_nonce: parallel } : { nonce: nonce.toString() }),
       trade_account_id: batch.tradeAccountId as TradeAccountId,
       session_id: { Address: activeSession.sessionAddress },
       collect_orders: batch.collectOrders ?? false,
     };
 
+    // A margin CHILD's owner is the PARENT CONTRACT, so its batches are
+    // authorised under a different `O2-Owner-Id` than the session's wallet.
+    const ownerId = batch.ownerId ?? activeSession.ownerAddress;
+
     try {
       const response =
         batch.endpoint === "marginAccounts"
-          ? await this.api.submitMarginAccountActions(activeSession.ownerAddress, request)
-          : await this.api.submitActions(activeSession.ownerAddress, request);
+          ? await this.api.submitMarginAccountActions(ownerId, request)
+          : await this.api.submitActions(ownerId, request);
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {
@@ -1412,7 +1441,10 @@ export class O2Client {
       // Nonce increments on-chain even on revert
       advance(nonce + 1n);
       // Re-fetch nonce on error for resync — from the account that actually
-      // executed, which is the only one whose counter moved.
+      // executed, which is the only one whose counter moved. A parallel
+      // nonce has no counter, so `advance` is a no-op above and this read
+      // is skipped entirely.
+      if (parallel !== undefined) throw error;
       try {
         const info = await this.api.getAccount({
           tradeAccountId: batch.tradeAccountId as TradeAccountId,

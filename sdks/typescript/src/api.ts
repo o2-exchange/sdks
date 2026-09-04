@@ -65,6 +65,7 @@ import type {
   MarginPoolWire,
   MarginStateWire,
   MarginTierWire,
+  MarginWiringWire,
   NextMarginAccount,
   OrderBookCleanup,
 } from "./turbo/wire.js";
@@ -240,6 +241,11 @@ export class O2Api {
       chain_id: raw.chain_id as string,
       base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
+      // PASSED THROUGH, not dropped. This response is rebuilt from an
+      // explicit field list, so anything not named here vanishes — and
+      // `margin` vanishing made the whole Turbo surface report itself as
+      // unavailable on deployments where it is perfectly well wired.
+      margin: (raw.margin as MarginWiringWire | null | undefined) ?? undefined,
     };
   }
 

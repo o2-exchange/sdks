@@ -568,3 +568,39 @@ export function bytesToHex(bytes: Uint8Array): string {
 }
 
 export { hexToBytes };
+
+/**
+ * Build action signing bytes for a PARALLEL nonce.
+ *
+ * Identical to {@link buildActionsSigningBytes} except the prefix is the
+ * packed nonce as a full u256 (32 bytes) rather than the sequential u64
+ * counter, matching the backend's `parallel_session_digest` over
+ * `(parallel_nonce, calls)`.
+ *
+ * Margin-account batches accept no other nonce kind.
+ */
+export function buildParallelActionsSigningBytes(
+  parallelNonce: bigint | string,
+  calls: ContractCall[],
+): Uint8Array {
+  let n = typeof parallelNonce === "bigint" ? parallelNonce : BigInt(parallelNonce);
+  if (n < 0n) throw new Error("parallel nonce cannot be negative");
+  const packed = new Uint8Array(32);
+  for (let i = 31; i >= 0 && n > 0n; i--) {
+    packed[i] = Number(n & 0xffn);
+    n >>= 8n;
+  }
+  if (n > 0n) throw new Error("parallel nonce does not fit in u256");
+
+  const parts: Uint8Array[] = [packed, u64BE(calls.length)];
+  for (const call of calls) {
+    parts.push(call.contractId);
+    parts.push(u64BE(call.functionSelector.length));
+    parts.push(call.functionSelector);
+    parts.push(u64BE(call.amount));
+    parts.push(call.assetId);
+    parts.push(u64BE(call.gas));
+    parts.push(encodeOptionCallData(call.callData));
+  }
+  return concat(parts);
+}

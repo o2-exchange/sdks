@@ -1,7 +1,7 @@
 {
   "name": "@o2exchange/sdk",
   "version": "0.3.0",
-  "description": "TypeScript SDK for the O2 Exchange — a fully on-chain order book DEX on the Fuel Network",
+  "description": "TypeScript SDK for the O2 Exchange \u2014 a fully on-chain order book DEX on the Fuel Network",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -43,7 +43,8 @@
     "format": "biome check --write src tests examples",
     "format:check": "biome ci --linter-enabled=false --assist-enabled=false src tests examples",
     "docs": "typedoc",
-    "docs:watch": "typedoc --watch"
+    "docs:watch": "typedoc --watch",
+    "test:integration:turbo": "O2_INTEGRATION=1 vitest run tests/turbo/turbo.integration.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.0.0",

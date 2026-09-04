@@ -35,19 +35,16 @@ async function main() {
   const turbo = client.turbo;
 
   // ── Open an account ────────────────────────────────────────────
-  const tiers = await turbo.tiers();
-  const tier = tiers[0];
-  if (!tier) throw new Error("No Turbo tiers published on this deployment");
-
-  // The entry buys its first term, so it costs the tier's collateral plus
-  // `open_fee + prolong_fee[period]`.
-  const collateral =
-    BigInt(tier.required_collateral) + BigInt(tier.open_fee) + BigInt(tier.prolong_fee[3]);
+  // `tiers()` hides retired tiers, and `cheapestTier()` picks by what
+  // opening actually costs — collateral PLUS the premium the entry pays.
+  const tier = await turbo.cheapestTier();
+  if (!tier) throw new Error("No Turbo tiers on sale on this deployment");
 
   const account = await turbo.open({
     tierId: tier.tier_id,
-    collateral,
-    period: "Month",
+    collateral: turbo.openingCost(tier),
+    // `period` omitted: a prepaid tier sells exactly one term and the SDK
+    // reads it off the tier rather than making you know it.
     // Opening is two submissions with an indexing wait between them —
     // without this it reads as a hung call.
     onProgress: (stage) => console.log(`  ${stage}…`),

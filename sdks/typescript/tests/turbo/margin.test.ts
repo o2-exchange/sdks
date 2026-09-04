@@ -1,6 +1,7 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import * as secp from "@noble/secp256k1";
 import { describe, expect, it } from "vitest";
+import { TESTNET } from "../../src/config.js";
 import { hexToBytes } from "../../src/encoding.js";
 import {
   addCollateralAction,
@@ -328,5 +329,55 @@ describe("referral envelopes", () => {
     });
     expect(envelope.signature).toMatch(/^0x[0-9a-f]{128}$/);
     expect(JSON.parse(envelope.payload).code).toBe("X");
+  });
+});
+
+describe("regression: /v1/markets margin wiring survives parsing", () => {
+  it("keeps the `margin` block that the whole Turbo surface keys off", async () => {
+    // `getMarkets` rebuilds the response from an EXPLICIT field list, so
+    // anything not named there vanishes. `margin` vanishing made
+    // `turbo.wiring()` and `sessionScope()` report Turbo as unavailable on
+    // every deployment — including testnet, where it is wired. Every unit
+    // test still passed, because the fake host supplied `margin` itself.
+    const payload = {
+      books_registry_id: `0x${"1".repeat(64)}`,
+      accounts_registry_id: `0x${"2".repeat(64)}`,
+      trade_account_oracle_id: `0x${"3".repeat(64)}`,
+      chain_id: "0x0",
+      base_asset_id: `0x${"4".repeat(64)}`,
+      markets: [],
+      margin: {
+        collateral_asset_id: `0x${"5".repeat(64)}`,
+        margin_pool_id: `0x${"6".repeat(64)}`,
+        margin_oracle_id: `0x${"7".repeat(64)}`,
+        price_feed_id: `0x${"8".repeat(64)}`,
+        price_band_bps: "1000",
+        stress_band_bps: "0",
+      },
+    };
+
+    const { O2Api } = await import("../../src/api.js");
+    const api = new O2Api({ config: TESTNET });
+    (api as unknown as { get: (p: string) => Promise<unknown> }).get = async () => payload;
+
+    const markets = await api.getMarkets();
+    expect(markets.margin?.margin_pool_id).toBe(payload.margin.margin_pool_id);
+    expect(markets.margin?.collateral_asset_id).toBe(payload.margin.collateral_asset_id);
+    expect(markets.margin?.stress_band_bps).toBe("0");
+  });
+
+  it("leaves `margin` undefined when the deployment has no Turbo", async () => {
+    const { O2Api } = await import("../../src/api.js");
+    const api = new O2Api({ config: TESTNET });
+    (api as unknown as { get: (p: string) => Promise<unknown> }).get = async () => ({
+      books_registry_id: `0x${"1".repeat(64)}`,
+      accounts_registry_id: `0x${"2".repeat(64)}`,
+      trade_account_oracle_id: `0x${"3".repeat(64)}`,
+      chain_id: "0x0",
+      base_asset_id: `0x${"4".repeat(64)}`,
+      markets: [],
+    });
+    const markets = await api.getMarkets();
+    expect(markets.margin).toBeUndefined();
   });
 });

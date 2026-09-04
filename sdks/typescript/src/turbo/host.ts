@@ -47,6 +47,24 @@ export interface PreparedBatch {
   tradeAccountId: string;
   collectOrders?: boolean;
   /**
+   * The `O2-Owner-Id` this batch is authorised under.
+   *
+   * Defaults to the session's owner wallet. A margin CHILD's owner is the
+   * PARENT CONTRACT, not the wallet — the backend compares the header
+   * against the account's own owner and refuses "the wallet's owner id"
+   * driving a child — so Turbo trading passes the parent's contract id.
+   */
+  ownerId?: string;
+  /**
+   * Sign with a PARALLEL nonce (packed u256, decimal string) instead of the
+   * account's sequential counter.
+   *
+   * Margin-account batches are accepted under no other kind — the backend
+   * answers "margin account actions support only parallel_nonce" — and a
+   * parallel nonce requires the TYPED signature variant.
+   */
+  parallelNonce?: string;
+  /**
    * `"marginAccounts"` routes to `/v1/margin/accounts`, which deploys the
    * proxies before running the signed batch. Defaults to
    * `/v1/session/actions`.

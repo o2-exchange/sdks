@@ -50,21 +50,28 @@ account that does not exist yet possible at all.
 ## Opening an account
 
 ```ts
-const tiers = await client.turbo.tiers();
-const tier = tiers[0];
-
-// The entry buys its first term, so it costs the tier's collateral plus
-// `open_fee + prolong_fee[period]`.
-const collateral =
-  BigInt(tier.required_collateral) + BigInt(tier.open_fee) + BigInt(tier.prolong_fee[3]);
+const tier = await client.turbo.cheapestTier();
+if (!tier) throw new Error("No Turbo tiers on sale here");
 
 const account = await client.turbo.open({
   tierId: tier.tier_id,
-  collateral,
-  period: "Month",
+  collateral: client.turbo.openingCost(tier),
   onProgress: (stage) => console.log(stage),
 });
 ```
+
+`tiers()` returns only what is actually **on sale** — `/v1/margin/tiers`
+serves retired versions alongside live ones, and on testnet the first entry
+is disabled, so `tiers()[0]` would open nothing. Pass
+`{ includeDisabled: true }` if you need the history.
+
+`openingCost()` is the collateral plus the premium: the entry *buys its
+first term*, so `required_collateral` alone is not enough to open.
+
+`period` is optional because a **prepaid** tier sells exactly one term — a
+flat week on the deployed tiers — and the pool refuses any other. The SDK
+reads it off the tier; passing one it does not sell throws before signing
+rather than after.
 
 Opening is **two submissions with a wait between them**, and they cannot be
 merged: the backend requires the child *absent* from storage to register it
@@ -207,13 +214,35 @@ discount does not exist.
 
 ---
 
-## Nonces
+## How a Turbo batch differs on the wire
 
-Each account has its own on-chain nonce, and a Turbo batch executes as the
-margin **child**. The SDK tracks child nonces separately from the session's
-own, so Turbo trading and ordinary spot trading cannot desync each other. If
-a child has been driven from somewhere else, `client.refreshAccountNonce(id)`
-re-reads it.
+Three things change when a batch executes as the margin **child** rather
+than the parent, and all three are handled for you:
+
+- **Owner** — a child is owned by the PARENT CONTRACT, not the wallet, so
+  the batch is authorised under the parent's contract id. The backend
+  refuses "the wallet's owner id" driving a child.
+- **Nonce** — margin batches are accepted under a **parallel** nonce only,
+  packed as a u256 and minted per child. Sequential nonces are refused
+  outright. Parallel nonces are burned whether or not the batch lands, so
+  the cursor only moves forward; keep one client rather than rebuilding it
+  per trade.
+- **Signature** — a parallel nonce requires the `TypedSecp256k1` variant,
+  whose digest prefixes the packed nonce as a full u256 instead of the
+  sequential u64.
+
+Ordinary spot batches are untouched by all of this. If a child has been
+driven from somewhere else, `client.refreshAccountNonce(id)` re-reads its
+counter.
+
+## Known gap
+
+`closeAccount()` settles `drawn_quote` in a loop before closing, which takes
+a full draw down to a few hundredths — but a **small residue can survive**
+it, and the pool then refuses the close. Neither exit can absorb the last
+fraction once fees have eaten into the posted collateral: `ReturnQuote` is
+bounded by on-account cash, `RepayFromCollateral` by collateral net of
+accrued fees. Adding margin first is the workaround.
 
 ## Units
 

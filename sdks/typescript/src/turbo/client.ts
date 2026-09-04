@@ -22,6 +22,7 @@
  */
 
 import type { ContractCall } from "../encoding.js";
+import { adjustQuantityForFractionalPrice, validateFractionalPrice } from "../encoding.js";
 import { O2Error } from "../errors.js";
 import type {
   Identity,
@@ -59,7 +60,12 @@ import {
   marginLimits,
   marginShortableBase,
 } from "./limits.js";
-import { newMarginAccountNonce } from "./parallelNonce.js";
+import {
+  encodeParallelNonce,
+  NONCE_BITMAP_SIZE,
+  newMarginAccountNonce,
+  OWNER_NONCE_TTL_SECONDS,
+} from "./parallelNonce.js";
 import type {
   TurboReferralActivation,
   TurboReferralCode,
@@ -74,7 +80,14 @@ import type {
   OrderBookCleanup,
   ProlongPeriod,
 } from "./wire.js";
-import { marginSession, normaliseHex, sameHex } from "./wire.js";
+import {
+  marginSession,
+  normaliseHex,
+  PROLONG_PERIODS,
+  periodForSeconds,
+  prolongPeriodIndex,
+  sameHex,
+} from "./wire.js";
 
 /**
  * The margin child's session never expires on its own — the contract
@@ -86,6 +99,14 @@ export const MARGIN_SESSION_EXPIRY = 4_102_444_800;
 /** How long to wait for a registration to be indexed before giving up. */
 const REGISTRATION_INDEX_TIMEOUT_MS = 60_000;
 const REGISTRATION_POLL_MS = 1_000;
+
+/**
+ * How long to let the indexer catch up between settlement rounds.
+ *
+ * The margin state is served from an indexer, so a read immediately after a
+ * repay still shows the pre-repay figure.
+ */
+const SETTLE_INDEX_DELAY_MS = 3_000;
 
 /** The deployment's margin wiring, as `/v1/markets` serves it. */
 export interface TurboWiring extends MarginWiring {
@@ -174,6 +195,62 @@ export interface TurboOpenResult {
   startTxId: string | null;
 }
 
+/** How far to scan for a parent's existing children. */
+const DISCOVERY_DEPTH = 8;
+
+/**
+ * Whether the chain (and the indexer) know about this child yet.
+ *
+ * `/v1/margin/state` is the authority: it refuses an unregistered child
+ * with "unknown margin account" and serves a state — session or not — once
+ * the registration event has been indexed.
+ */
+async function isRegisteredAccount(api: TurboHost["api"], marginAccountId: Hex): Promise<boolean> {
+  try {
+    await api.getMarginState(marginAccountId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Walk indices upward until an unregistered child turns up: those below it
+ * are the owner's, and it is the next one they can open.
+ *
+ * Needed because plenty of deployments serve neither `margin_accounts` nor
+ * `next_margin_account` on `/v1/accounts` — testnet answers
+ * `{trade_account_id, trade_account, session}` and nothing else. A child's
+ * id is a pure function of `(oracle, parent, index)`, so it can be derived
+ * for any index; whether it is REGISTERED is the separate question that
+ * `/v1/margin/state` answers.
+ */
+async function walkMarginAccounts(
+  api: TurboHost["api"],
+  parentContractId: Hex,
+): Promise<{ accounts: NextMarginAccount[]; next: NextMarginAccount | null }> {
+  const accounts: NextMarginAccount[] = [];
+  let previousId: Hex | null = null;
+
+  for (let index = 0; index < DISCOVERY_DEPTH; index++) {
+    const candidate = await api.getNextMarginAccount(parentContractId, index);
+    if (!candidate?.contract_id) break;
+    const id = normaliseHex(candidate.contract_id);
+
+    // A deployment that IGNORES `index` answers with the same id every
+    // time. Walking further would spin on one account forever.
+    if (previousId && id === previousId) break;
+    previousId = id;
+
+    if (await isRegisteredAccount(api, id)) {
+      accounts.push({ contract_id: id, index });
+      continue;
+    }
+    return { accounts, next: { contract_id: id, index } };
+  }
+  return { accounts, next: null };
+}
+
 /**
  * Trade a Turbo (margin) account.
  *
@@ -183,6 +260,19 @@ export class TurboClient {
   private readonly host: TurboHost;
   private wiringCache: TurboWiring | null = null;
   private accountId: Hex | null = null;
+  /**
+   * Where each margin child's parallel-nonce cursor has reached.
+   *
+   * A margin batch is accepted under a PARALLEL nonce only, and a parallel
+   * position is burned whether or not the batch lands — so this only ever
+   * moves forward. A brand-new child's window base is 0, which is why the
+   * cursor starts at (word 0, bit 0).
+   *
+   * In-memory: a fresh process re-walks positions the previous one burned
+   * and the chain refuses them, so a long-lived caller should keep one
+   * client rather than rebuilding it per trade.
+   */
+  private readonly nonceCursors = new Map<Hex, { word: bigint; bit: number }>();
 
   constructor(host: TurboHost) {
     this.host = host;
@@ -201,7 +291,7 @@ export class TurboClient {
   async wiring(): Promise<TurboWiring> {
     if (this.wiringCache) return this.wiringCache;
     const markets = await this.host.fetchMarkets();
-    const raw = (markets as unknown as { margin?: Record<string, string> | null }).margin;
+    const raw = markets.margin;
     if (!raw?.margin_pool_id || !raw?.collateral_asset_id) {
       throw new O2Error(
         "Turbo is not available on this deployment — /v1/markets carries no margin wiring.",
@@ -244,16 +334,35 @@ export class TurboClient {
       next_margin_account?: NextMarginAccount | null;
       trade_account_id?: string;
     };
-    const accounts = info.margin_accounts ?? [];
-    // `/v1/accounts` stops predicting once the owner already has an
-    // account, even when the next index is perfectly openable — which is
-    // exactly the state a trader is in right after closing one. The
-    // dedicated route always answers.
-    let next = info.next_margin_account ?? null;
-    if (!next && info.trade_account_id) {
-      next = await this.host.api.getNextMarginAccount(info.trade_account_id as Hex);
+
+    // THE NEWER SHAPE, when the deployment serves it.
+    if (info.margin_accounts !== undefined || info.next_margin_account !== undefined) {
+      const accounts = info.margin_accounts ?? [];
+      // `/v1/accounts` stops predicting once the owner already has an
+      // account, even when the next index is perfectly openable — which is
+      // exactly the state a trader is in right after closing one.
+      let next = info.next_margin_account ?? null;
+      if (!next && info.trade_account_id) {
+        next = await this.host.api.getNextMarginAccount(info.trade_account_id as Hex);
+      }
+      return { accounts, next };
     }
-    return { accounts, next };
+
+    // DERIVE IT, because plenty of deployments carry neither field.
+    //
+    // Testnet's `/v1/accounts` answers `{trade_account_id, trade_account,
+    // session}` and nothing else, so keying discovery off `margin_accounts`
+    // reported every owner as having no accounts and made
+    // `waitForRegistration` unsatisfiable — a registration that had
+    // genuinely landed on chain looked like it never arrived.
+    //
+    // A child's id is a pure function of `(oracle, parent, index)`, and
+    // `/v1/margin/next-account` will derive it for any index. Whether that
+    // id is REGISTERED is then a separate question, answered by whether
+    // `/v1/margin/state` knows it: an unregistered child is refused with
+    // "unknown margin account".
+    if (!info.trade_account_id) return { accounts: [], next: null };
+    return walkMarginAccounts(this.host.api, info.trade_account_id as Hex);
   }
 
   /**
@@ -277,7 +386,7 @@ export class TurboClient {
     const scope = new Set<Hex>();
     try {
       const markets = await api.getMarkets();
-      const raw = (markets as unknown as { margin?: { margin_pool_id?: string } | null }).margin;
+      const raw = markets.margin;
       if (!raw?.margin_pool_id) return [];
       scope.add(normaliseHex(raw.margin_pool_id));
       // THE REGISTRY, TOO. `RegisterMarginAccount` targets it, so a scope
@@ -292,7 +401,8 @@ export class TurboClient {
     }
 
     let parent: string | undefined;
-    let nextIndex = 0;
+    let apiNext: NextMarginAccount | null = null;
+    let apiServesMarginFields = false;
     try {
       const info = (await api.getAccount({ owner: ownerAddress })) as unknown as {
         margin_accounts?: NextMarginAccount[];
@@ -300,16 +410,14 @@ export class TurboClient {
         trade_account_id?: string;
       };
       parent = info.trade_account_id;
+      apiServesMarginFields =
+        info.margin_accounts !== undefined || info.next_margin_account !== undefined;
       for (const account of info.margin_accounts ?? []) {
         scope.add(normaliseHex(account.contract_id));
       }
       if (info.next_margin_account) {
+        apiNext = info.next_margin_account;
         scope.add(normaliseHex(info.next_margin_account.contract_id));
-        nextIndex = info.next_margin_account.index;
-      } else {
-        // No prediction served: the next free slot is one past whatever
-        // this owner already holds.
-        nextIndex = (info.margin_accounts ?? []).length;
       }
     } catch {
       // Discovery failed; the pool and registry alone are still worth
@@ -317,21 +425,30 @@ export class TurboClient {
     }
 
     if (parent) {
-      // Cover the next few accounts the trader COULD open, so one
-      // signature carries them through a second and a third.
-      //
-      // Asked from `nextIndex` upward, NOT from zero: absolute indices
-      // 0..depth are slots this owner may already occupy, and asking for
-      // those returns ids that are in scope already — the prediction
-      // collapses and the trader needs a fresh signature for their next
-      // account after all.
-      //
-      // A deployment that ignores `index` answers with the same id each
-      // time and the set simply collapses to one, which is the coverage
-      // we would have had anyway.
+      let from = apiNext?.index ?? 0;
+
+      // DERIVE THE EXISTING CHILDREN when `/v1/accounts` does not carry
+      // them. Testnet answers `{trade_account_id, trade_account, session}`
+      // and nothing else, and their absence would silently leave every
+      // account the trader already owns outside the signed scope — which
+      // cannot be repaired without a fresh wallet signature.
+      if (!apiServesMarginFields) {
+        const walked = await walkMarginAccounts(api, parent as Hex).catch(() => ({
+          accounts: [] as NextMarginAccount[],
+          next: null,
+        }));
+        for (const account of walked.accounts) scope.add(normaliseHex(account.contract_id));
+        if (walked.next) scope.add(normaliseHex(walked.next.contract_id));
+        from = walked.next?.index ?? walked.accounts.length;
+      }
+
+      // Then the next few they COULD open, so one signature carries them
+      // through a second and a third. Asked from the next FREE index
+      // upward, never from absolute zero: those slots may already be taken,
+      // and re-adding ids already in scope buys nothing.
       const predictions = await Promise.all(
         Array.from({ length: depth }, (_, offset) =>
-          api.getNextMarginAccount(parent as Hex, nextIndex + offset).catch(() => null),
+          api.getNextMarginAccount(parent as Hex, from + offset).catch(() => null),
         ),
       );
       for (const p of predictions) {
@@ -366,9 +483,75 @@ export class TurboClient {
 
   // ── Reads ───────────────────────────────────────────────────────
 
-  /** The tiers currently on sale. */
-  async tiers(): Promise<MarginTierWire[]> {
-    return this.host.api.getMarginTiers();
+  /**
+   * The tiers currently ON SALE.
+   *
+   * `/v1/margin/tiers` serves retired versions alongside live ones, and on
+   * testnet the first entry is a disabled tier — so `tiers()[0]` would open
+   * nothing and the pool answers "tier N is disabled and no longer sells
+   * new sessions" only after the batch is signed. Filtered here so the
+   * obvious call is the correct one.
+   *
+   * @param options.includeDisabled - Return retired tiers too, for
+   *   displaying the history of what an account was opened onto.
+   */
+  async tiers(options: { includeDisabled?: boolean } = {}): Promise<MarginTierWire[]> {
+    const all = await this.host.api.getMarginTiers();
+    if (options.includeDisabled) return all;
+    // `enabled` is absent on older payloads, where every served tier is
+    // sellable — so only an explicit `false` disqualifies one.
+    return all.filter((tier) => tier.enabled !== false);
+  }
+
+  /**
+   * Which terms a tier will actually sell.
+   *
+   * A PREPAID tier sells exactly one — `turbo.term_seconds`, a flat week on
+   * the deployed tiers — and `open_session` refuses every other period.
+   * That refusal arrives from the pool AFTER the batch is signed, which is
+   * the wrong place to learn it, so {@link TurboClient.open} reads this
+   * instead and defaults to it.
+   *
+   * A legacy tier sells all four.
+   */
+  sellablePeriods(tier: MarginTierWire): ProlongPeriod[] {
+    const term = tier.turbo?.term_seconds;
+    if (term === undefined) return [...PROLONG_PERIODS];
+    const period = periodForSeconds(term);
+    // A term that matches no period is not something to guess about.
+    return period ? [period] : [];
+  }
+
+  /**
+   * The cheapest tier a caller could open right now, by the collateral it
+   * demands. `null` when nothing is on sale.
+   */
+  async cheapestTier(period?: ProlongPeriod): Promise<MarginTierWire | null> {
+    const tiers = (await this.tiers()).filter(
+      (tier) => period === undefined || this.sellablePeriods(tier).includes(period),
+    );
+    if (tiers.length === 0) return null;
+    return tiers.reduce((best, tier) =>
+      this.openingCost(tier, period) < this.openingCost(best, period) ? tier : best,
+    );
+  }
+
+  /**
+   * What opening this tier costs, all in — the collateral it requires plus
+   * the premium the entry pays.
+   *
+   * The entry BUYS ITS FIRST TERM, so it is not `required_collateral`
+   * alone: the pool charges `open_fee + prolong_fee[period]` out of the
+   * same forwarded amount, and forwarding only the collateral opens
+   * nothing.
+   */
+  openingCost(tier: MarginTierWire, period?: ProlongPeriod): bigint {
+    const term = period ?? this.sellablePeriods(tier)[0] ?? "Month";
+    return (
+      big(tier.required_collateral) +
+      big(tier.open_fee) +
+      big(tier.prolong_fee[prolongPeriodIndex(term)])
+    );
   }
 
   /** The live state of the margin account. */
@@ -502,13 +685,43 @@ export class TurboClient {
     tierId: number | string;
     /** Margin PLUS the tier's premium, in the collateral asset's base units. */
     collateral: bigint | string;
-    /** The first term the entry buys. */
-    period: ProlongPeriod;
+    /**
+     * The first term the entry buys.
+     *
+     * Optional: a prepaid tier sells exactly one term and the pool refuses
+     * every other, so the tier's own is used when this is omitted. Passing
+     * one it does not sell throws here rather than after the batch is
+     * signed.
+     */
+    period?: ProlongPeriod;
     /** Called as each stage begins — opening is not instantaneous. */
     onProgress?: (stage: "registering" | "waiting_for_registration" | "starting") => void;
   }): Promise<TurboOpenResult> {
     const session = this.host.ensureSession();
     const wiring = await this.wiring();
+
+    // WHICH TERM THIS TIER ACTUALLY SELLS.
+    //
+    // A prepaid tier sells one — a flat week on the deployed tiers — and
+    // `open_session` refuses anything else. Learning that from the pool
+    // means learning it after the batch is signed and a registration has
+    // already landed, so resolve it here.
+    const tier = (await this.tiers({ includeDisabled: true })).find(
+      (candidate) => String(candidate.tier_id) === String(params.tierId),
+    );
+    const sellable = tier ? this.sellablePeriods(tier) : [...PROLONG_PERIODS];
+    if (tier?.enabled === false) {
+      throw new O2Error(`Tier ${params.tierId} is disabled and no longer sells new sessions.`);
+    }
+    const period = params.period ?? sellable[0];
+    if (!period) {
+      throw new O2Error(`Tier ${params.tierId} publishes a term this SDK cannot map to a period.`);
+    }
+    if (params.period && !sellable.includes(params.period)) {
+      throw new O2Error(
+        `Tier ${params.tierId} sells ${sellable.join(", ") || "no"} term(s), not ${params.period}.`,
+      );
+    }
 
     // RESUME before registering. The two steps are separately signed, so a
     // caller can land step 1 and lose the run before step 2 — and
@@ -541,7 +754,7 @@ export class TurboClient {
     // account's own identity would leave no key able to sign its orders.
     const sessionId: Identity = { Address: session.sessionAddress };
     const actions: MarginAction[] = [
-      startMarginSessionAction(marginAccountId, params.tierId, collateral, params.period),
+      startMarginSessionAction(marginAccountId, params.tierId, collateral, period),
       setMarginAccountSessionAction({
         marginAccountId,
         marginNonce: newMarginAccountNonce(),
@@ -619,12 +832,72 @@ export class TurboClient {
    * exit. The cleanup list is fetched at call time because the chain
    * re-verifies it: a stale list reverts rather than stranding value.
    */
-  async closeAccount(marginAccountId?: Hex): Promise<SessionActionsResponse> {
+  async closeAccount(
+    marginAccountId?: Hex,
+    options: { settleDrawnQuote?: boolean } = {},
+  ): Promise<SessionActionsResponse> {
     const session = this.host.ensureSession();
     const wiring = await this.wiring();
     const id = marginAccountId ?? (await this.marginAccountId());
+
+    // CLEAR THE DRAW FIRST, because the pool refuses a close while any
+    // remains: "still owes N of drawn quote; return or net it away before
+    // closing". Returning it needs cash the account may not hold after a
+    // losing trade, so fall back to netting it against posted collateral —
+    // the only exit that moves no coins.
+    //
+    // Opt out with `settleDrawnQuote: false` to drive the sequence by hand.
+    if (options.settleDrawnQuote !== false) {
+      await this.settleDrawnQuote(id);
+    }
+
     const cleanups: OrderBookCleanup[] = await this.host.api.getMarginCloseCleanups(id);
     return this.submitAsParent([closeMarginSessionAction(id, cleanups)], wiring, session);
+  }
+
+  /**
+   * Drive `drawn_quote` to zero, which a clean close requires.
+   *
+   * LOOPS, because one round does not finish the job: each repay is sized
+   * against a snapshot, and by the time the batch executes the figure has
+   * moved — fees accrue, and the `ReturnQuote` leg itself changes what the
+   * next round can net. A single pass took a 9,999,774,597 draw down to
+   * 68,911,645 and the pool still refused the close.
+   *
+   * Each round returns cash first (cheap, value-neutral) and then nets the
+   * remainder against posted collateral, which is the only exit for a draw
+   * the account no longer holds the cash to return. Stops on zero, on no
+   * progress, or after a bounded number of rounds — never spins.
+   */
+  private async settleDrawnQuote(marginAccountId: Hex, rounds = 6): Promise<bigint> {
+    let previous: bigint | null = null;
+    let stalled = 0;
+
+    for (let round = 0; round < rounds; round++) {
+      const drawn = big(
+        marginSession(await this.state(marginAccountId).catch(() => null))?.drawn_quote,
+      );
+      if (drawn <= 0n) return 0n;
+
+      // NOT PROGRESS-CHECKED ON ONE READ. The margin state is served from
+      // an indexer, so the read right after a repay routinely still shows
+      // the pre-repay figure — treating that as "stalled" abandoned the
+      // whole settlement after a single round and left the original draw
+      // untouched. Two consecutive non-decreases are needed before giving
+      // up, and the close reports the real reason if it comes to that.
+      if (previous !== null && drawn >= previous) {
+        if (++stalled >= 2) return drawn;
+      } else {
+        stalled = 0;
+      }
+      previous = drawn;
+
+      await this.repayDrawn(undefined, { marginAccountId }).catch(() => null);
+      await this.repayDrawn(undefined, { marginAccountId, fromCollateral: true }).catch(() => null);
+      // Let the indexer catch up before the next round sizes against it.
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_INDEX_DELAY_MS));
+    }
+    return big(marginSession(await this.state(marginAccountId).catch(() => null))?.drawn_quote);
   }
 
   // ── Trading ─────────────────────────────────────────────────────
@@ -730,7 +1003,18 @@ export class TurboClient {
     if (drawn <= 0n) return null;
 
     if (options.fromCollateral) {
-      const target = amount === undefined ? drawn : min(BigInt(amount), drawn);
+      // BOUNDED BY THE COLLATERAL ACTUALLY POSTED, not just by the draw.
+      //
+      // The netting drops `collateral` and `drawn_quote` together, so the
+      // pool requires enough of the former to absorb it and reverts
+      // (FAILED_REQUIRE) otherwise — after the batch is signed. Fees have
+      // already been taken out of the posted collateral by this point, so
+      // "repay everything drawn" is routinely more than the account can
+      // net.
+      const posted = big(session?.collateral) - big(session?.fees_accrued);
+      const ceiling = min(drawn, posted > 0n ? posted : 0n);
+      const target = amount === undefined ? ceiling : min(BigInt(amount), ceiling);
+      if (target <= 0n) return null;
       return this.submitAsChild([repayFromCollateralAction(target)], id);
     }
 
@@ -811,6 +1095,31 @@ export class TurboClient {
   // ── Internals ───────────────────────────────────────────────────
 
   /**
+   * Mint the next parallel nonce for a margin child.
+   *
+   * The window is 8 words of 128 bits, so the cursor rolls the bit first
+   * and carries into the word. The expiry is what the backend range-checks;
+   * it is not the account's own deadline.
+   */
+  private mintParallelNonce(marginAccountId: Hex): string {
+    const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
+    const nonce = encodeParallelNonce({
+      nonceSessionId: 0,
+      timestamp: Math.floor(Date.now() / 1000) + OWNER_NONCE_TTL_SECONDS,
+      wordPosition: cursor.word,
+      bitmapPosition: cursor.bit,
+    });
+    const nextBit = cursor.bit + 1;
+    this.nonceCursors.set(
+      marginAccountId,
+      nextBit >= NONCE_BITMAP_SIZE
+        ? { word: cursor.word + 1n, bit: 0 }
+        : { word: cursor.word, bit: nextBit },
+    );
+    return nonce;
+  }
+
+  /**
    * Build and submit one trade batch.
    *
    * Both halves of every leg are built together — the typed action and the
@@ -865,12 +1174,31 @@ export class TurboClient {
     // SWEEP FIRST — see `long`.
     const spotActions: Record<string, unknown>[] = [{ SettleBalance: { to: settleTo } }];
 
+    // FRACTIONAL PRICE FIRST, so the funding is sized on the quantity the
+    // order will actually carry.
+    //
+    // `create_order` requires `price * quantity` to divide by
+    // `10^base_decimals` and reverts `OrderCreationError::FractionalPrice`
+    // otherwise. `normalizeCreateOrderValues` applies this for a quantity
+    // the caller stated, but a notional-sized or clamp-reduced quantity is
+    // computed here and would bypass it. The adjustment only ever rounds
+    // DOWN, so re-applying it after a clamp can never outrun the funding.
+    const fitPrice = (quantity: bigint): bigint => {
+      if (validateFractionalPrice(scaledPrice, quantity, resolved.base.decimals)) return quantity;
+      return adjustQuantityForFractionalPrice(scaledPrice, quantity, resolved.base.decimals);
+    };
+
     // The order quantity is not fixed until the funding is: a clamped
     // funding leg behind a full-size order is the very custody revert the
     // open/close split exists to avoid, and a close that clamps must
     // therefore SHRINK THE ORDER to what it can actually fund. It loops,
     // so the remainder is the next round's problem, not a reverted batch.
-    let orderQuantity = scaledQuantity;
+    let orderQuantity = fitPrice(scaledQuantity);
+    if (orderQuantity <= 0n) {
+      throw new O2Error(
+        `A quantity of ${scaledQuantity} cannot satisfy this market's fractional-price rule at price ${scaledPrice}; try a larger size.`,
+      );
+    }
 
     if (escrowIsQuote) {
       const escrowAmount = quoteCostOf(orderQuantity);
@@ -931,7 +1259,7 @@ export class TurboClient {
             );
           }
           // Sell only what the account will actually hold.
-          orderQuantity = onHand + amount;
+          orderQuantity = fitPrice(onHand + amount);
           if (orderQuantity <= 0n) {
             throw new O2Error(
               "Nothing of this position can be closed right now: the account holds none of the asset and the pool will lend none.",
@@ -1043,6 +1371,10 @@ export class TurboClient {
       ],
       calls,
       tradeAccountId: marginAccountId,
+      // The child's owner is the PARENT contract, not the wallet.
+      ownerId: wiring.parentAccountId,
+      // Margin batches are accepted under a parallel nonce only.
+      parallelNonce: this.mintParallelNonce(marginAccountId),
     });
   }
 
@@ -1097,6 +1429,10 @@ export class TurboClient {
       // Trading runs AS the margin child: balances live there, so a settle
       // to the parent would move the session's money out of the session.
       tradeAccountId: marginAccountId,
+      // And the child is owned by the PARENT contract, so that is the
+      // owner id the batch is authorised under.
+      ownerId: wiring.parentAccountId,
+      parallelNonce: this.mintParallelNonce(marginAccountId),
       collectOrders: options.collectOrders,
     });
   }
@@ -1119,12 +1455,18 @@ export class TurboClient {
     return null;
   }
 
-  /** Poll until the registration has been indexed. */
+  /**
+   * Poll until the registration has been indexed.
+   *
+   * Asks `/v1/margin/state` rather than re-listing the owner's accounts:
+   * the listing is derived and, on deployments whose `/v1/accounts` carries
+   * no margin fields, could never report the new child at all — so a
+   * registration that had genuinely landed looked like it never arrived.
+   */
   private async waitForRegistration(marginAccountId: Hex): Promise<void> {
     const deadline = Date.now() + REGISTRATION_INDEX_TIMEOUT_MS;
     while (Date.now() < deadline) {
-      const { accounts } = await this.accounts();
-      if (accounts.some((a) => sameHex(a.contract_id, marginAccountId))) return;
+      if (await isRegisteredAccount(this.host.api, marginAccountId)) return;
       await new Promise((resolve) => setTimeout(resolve, REGISTRATION_POLL_MS));
     }
     throw new O2Error(
