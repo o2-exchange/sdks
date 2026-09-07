@@ -137,6 +137,16 @@ export class O2Api {
       query?: Record<string, string | number | boolean | undefined>;
       /** Override the host. Used for the analytics surface. */
       baseUrl?: string;
+      /**
+       * Never retry this request at the transport layer.
+       *
+       * Set on every SIGNED MUTATION. Their payloads carry a nonce and a
+       * signature fixed before dispatch, and an accepted-but-lost response
+       * is indistinguishable from a rejected one — so a replay can submit
+       * the same trade twice. The caller must reconcile state and build a
+       * fresh action instead.
+       */
+      noRetry?: boolean;
     } = {},
   ): Promise<T> {
     let url = `${options.baseUrl ?? this.baseUrl}${path}`;
@@ -191,16 +201,24 @@ export class O2Api {
                 )
               : parseApiError(body);
 
-          // RETRY ON THE STATUS, NOT JUST THE BODY CODE.
+          // RATE LIMITS ONLY, AND ONLY WHERE A REPLAY IS SAFE.
           //
-          // The backoff used to fire only when `parseApiError` produced a
-          // `RateLimitExceeded`, which needs the body to carry code 1003.
-          // A gateway that answers 429 with any other shape — a bare
-          // message, plain text, an HTML page — got no backoff at all, and
-          // a read-heavy run would take the limit and fail outright
-          // instead of waiting. 5xx is the same argument.
+          // Recognising the limit by STATUS as well as body code is the
+          // point: the backoff used to fire only when `parseApiError`
+          // produced a `RateLimitExceeded`, which needs code 1003, so a
+          // gateway answering 429 in any other shape got no backoff at
+          // all. A rate limit is refused before the handler runs, so
+          // resending it cannot duplicate anything.
+          //
+          // 5xx is NOT retried, and that distinction is the whole safety
+          // argument. A 502 can arrive after the batch already landed, and
+          // a 500 can carry an on-chain revert — the request's fate is
+          // unknown. Resending a SIGNED payload then risks a duplicate
+          // order, and with the sequential-nonce self-heal it could even
+          // re-sign under the next nonce and place one for real. The
+          // Python SDK draws the same line.
           const retryable =
-            err instanceof RateLimitExceeded || resp.status === 429 || resp.status >= 500;
+            !options.noRetry && (err instanceof RateLimitExceeded || resp.status === 429);
           if (retryable && attempt < this.maxRetries) {
             const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
             await sleep(delay);
@@ -215,6 +233,11 @@ export class O2Api {
         clearTimeout(timeoutId);
         if (error instanceof O2Error) throw error;
         lastError = error as Error;
+        // A signed mutation that failed mid-flight may still have LANDED;
+        // the transport must not decide to send it again. `break`, not a
+        // skipped delay — the loop would otherwise run the next attempt
+        // anyway, just without waiting first.
+        if (options.noRetry) break;
         if (attempt < this.maxRetries) {
           const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
           await sleep(delay);
@@ -549,8 +572,12 @@ export class O2Api {
    * @param request - The session creation request.
    */
   async createSession(ownerId: string, request: SessionRequest): Promise<SessionResponse> {
-    return this.put<SessionResponse>("/v1/session", request, {
-      "O2-Owner-Id": ownerId,
+    return this.request<SessionResponse>("PUT", "/v1/session", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+      // The signed owner nonce makes an accepted-but-lost response
+      // ambiguous. Never replay a session registration.
+      noRetry: true,
     });
   }
 
@@ -570,6 +597,8 @@ export class O2Api {
     const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
       body: request,
       headers: { "O2-Owner-Id": ownerId },
+      // Signed, nonce-bound: never replayed by the transport.
+      noRetry: true,
     });
 
     if (isActionsSuccess(body)) {
@@ -595,8 +624,12 @@ export class O2Api {
    * @param request - The signed withdrawal request.
    */
   async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
-    return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
-      "O2-Owner-Id": ownerId,
+    return this.request<WithdrawResponse>("POST", "/v1/accounts/withdraw", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+      // A withdrawal can be accepted before its response is lost. The
+      // caller reconciles the owner nonce rather than replaying it.
+      noRetry: true,
     });
   }
 
@@ -745,6 +778,8 @@ export class O2Api {
     const body = await this.request<Record<string, unknown>>("POST", "/v1/margin/accounts", {
       body: request,
       headers: { "O2-Owner-Id": ownerId },
+      // Signed, nonce-bound: never replayed by the transport.
+      noRetry: true,
     });
 
     if (isActionsSuccess(body)) {

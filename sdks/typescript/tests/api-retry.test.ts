@@ -59,15 +59,14 @@ describe("HTTP retry", () => {
     vi.unstubAllGlobals();
   });
 
-  it("retries 5xx", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(reply(502, "<html>bad gateway</html>"))
-      .mockResolvedValueOnce(reply(200, JSON.stringify({ ok: true })));
+  it("does NOT retry 5xx — the request's fate is unknown", async () => {
+    // A 502 can arrive after the batch already landed and a 500 can carry
+    // an on-chain revert, so resending is how one trade becomes two.
+    const fetchMock = vi.fn().mockResolvedValue(reply(502, "<html>bad gateway</html>"));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(api().call("/v1/markets")).resolves.toEqual({ ok: true });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(api().call("/v1/markets")).rejects.toThrow(/502/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
   });
 
@@ -116,5 +115,51 @@ describe("HTTP retry", () => {
 describe("RateLimitExceeded", () => {
   it("carries code 1003", () => {
     expect(new RateLimitExceeded().code).toBe(1003);
+  });
+});
+
+describe("signed mutations are never replayed by the transport", () => {
+  /**
+   * Their payloads carry a nonce and a signature fixed before dispatch,
+   * and an accepted-but-lost response looks exactly like a rejected one.
+   * A replay can therefore submit the same trade twice — and with the
+   * sequential-nonce self-heal it could re-sign under the next nonce and
+   * place a genuine duplicate. The Python SDK draws the same line.
+   */
+  const OWNER = "0xowner";
+  const signed: [string, (a: O2Api) => Promise<unknown>][] = [
+    ["submitActions", (a) => a.submitActions(OWNER, {} as never)],
+    ["submitMarginAccountActions", (a) => a.submitMarginAccountActions(OWNER, {} as never)],
+    ["createSession", (a) => a.createSession(OWNER, {} as never)],
+    ["withdraw", (a) => a.withdraw(OWNER, {} as never)],
+  ];
+
+  for (const [name, call] of signed) {
+    it(`${name} is not retried on 429`, async () => {
+      const fetchMock = vi.fn().mockResolvedValue(reply(429, "Too Many Requests"));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(call(api())).rejects.toBeInstanceOf(O2Error);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    });
+
+    it(`${name} is not retried on a network error`, async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error("socket hang up"));
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(call(api())).rejects.toThrow();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      vi.unstubAllGlobals();
+    });
+  }
+
+  it("but ordinary reads still back off on a rate limit", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(reply(429, "Too Many Requests"))
+      .mockResolvedValueOnce(reply(200, JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(api().call("/v1/markets")).resolves.toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 });
