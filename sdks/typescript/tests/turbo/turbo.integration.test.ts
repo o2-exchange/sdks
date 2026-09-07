@@ -215,13 +215,20 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     const tick = 10n ** BigInt(market.quote.decimals - market.quote.max_precision);
     const align = (price: bigint) => (price / tick) * tick;
 
+    // SIZED FROM THE BOOK, like the short leg above. A fixed raw quantity
+    // sits near a typical minimum and drops under it when the price dips,
+    // so the test would fail on book conditions rather than on the SDK.
+    const minOrder = BigInt((market as unknown as { min_order: bigint }).min_order);
+    const baseUnit = 10n ** BigInt(market.base.decimals);
+    const qty = ((minOrder * baseUnit) / bid) * 2n;
+
     // PostOnly so the parent rests rather than filling: the point is the
     // trigger encoding, not a fill.
     const attached = await client.createOrderWithTriggers(
       MARKET,
       "buy",
       align((bid * 90n) / 100n),
-      5_000_000n,
+      qty,
       {
         orderType: "PostOnly",
         takeProfit: {
@@ -242,7 +249,7 @@ describe.skipIf(!RUN)("Turbo integration", () => {
       MARKET,
       "buy",
       align((bid * 89n) / 100n),
-      5_000_000n,
+      qty,
       {
         orderType: "PostOnly",
         takeProfit: { triggerPrice: align((ask * 112n) / 100n), slippageBps: 100 },
@@ -257,7 +264,7 @@ describe.skipIf(!RUN)("Turbo integration", () => {
         side: "sell",
         triggerPrice: align((bid * 85n) / 100n),
         kind: stopLimit(align((bid * 84n) / 100n)),
-        quantity: triggerQuantity(3_000_000n),
+        quantity: triggerQuantity(qty),
       }),
     );
     expect(standalone.errorCode ?? null).toBeNull();

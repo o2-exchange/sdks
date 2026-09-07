@@ -197,6 +197,7 @@ export {
   type TriggerOrderKind,
   type TriggerQuantity,
   triggerFromParent,
+  triggerJudgedPrices,
   triggerKindDiscriminant,
   triggerLeg,
   triggerLockAmount,
@@ -205,6 +206,7 @@ export {
   triggerQuantityDiscriminant,
   type WireSide,
   wireSide,
+  withTriggerQuantity,
 } from "./triggers.js";
 // ── Turbo (margin) ────────────────────────────────────────────────
 export {

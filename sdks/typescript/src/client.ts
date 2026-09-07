@@ -89,7 +89,8 @@ import {
   PARENT_ORDER_PLACEHOLDER,
   priceTick,
   protectionLeg,
-  triggerLockPrice,
+  triggerJudgedPrices,
+  withTriggerQuantity,
 } from "./triggers.js";
 import { TurboClient } from "./turbo/client.js";
 import type { PreparedBatch, PreparedMarketActions, TurboHost } from "./turbo/host.js";
@@ -205,6 +206,25 @@ export interface CreateSessionOptions {
   turbo?: boolean;
   /** Extra contract ids to authorise, beyond the markets and Turbo scope. */
   extraContractIds?: string[];
+}
+
+/**
+ * Round an explicitly-sized trigger leg down to a quantity that satisfies
+ * the fractional-price rule at every price the leg is judged at.
+ *
+ * An inherited leg needs nothing — it carries the parent's quantity, which
+ * the parent's own fit already covered.
+ */
+function fitTriggerLeg(leg: TriggerOrderArgs, baseDecimals: number): TriggerOrderArgs {
+  if ("ParentOrder" in leg.quantity) return leg;
+  const quantity = BigInt(leg.quantity.Quantity.quantity);
+  const fitted = adjustQuantityForPrices(triggerJudgedPrices(leg), quantity, baseDecimals);
+  if (fitted <= 0n) {
+    throw new O2Error(
+      `A trigger quantity of ${quantity} cannot satisfy the fractional-price rule at this leg's prices; try a larger size.`,
+    );
+  }
+  return withTriggerQuantity(leg, fitted);
 }
 
 export class O2Client {
@@ -673,7 +693,7 @@ export class O2Client {
     // Every price the batch is judged at binds the quantity — see
     // `adjustQuantityForPrices`.
     const fittedQuantity = adjustQuantityForPrices(
-      [scaledPrice, ...legs.map((leg) => triggerLockPrice(leg))],
+      [scaledPrice, ...legs.flatMap((leg) => triggerJudgedPrices(leg))],
       scaledQuantity,
       resolved.base.decimals,
     );
@@ -737,7 +757,7 @@ export class O2Client {
     }
     actions.push({
       CreateTriggerOrder: {
-        args: leg,
+        args: fitTriggerLeg(leg, resolved.base.decimals),
         ...(options.parent
           ? {
               parent: {
@@ -791,8 +811,8 @@ export class O2Client {
     }
     actions.push({
       CreateTriggerOrders: {
-        first: lead,
-        second: follow,
+        first: fitTriggerLeg(lead, resolved.base.decimals),
+        second: fitTriggerLeg(follow, resolved.base.decimals),
         ...(options.parent
           ? {
               parent: {

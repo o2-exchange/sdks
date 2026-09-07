@@ -1085,3 +1085,77 @@ describe("regression: PR #76 third review round", () => {
     expect(submitted[0].tradeAccountId).toBe(OTHER);
   });
 });
+
+describe("regression: concurrent nonce seeding", () => {
+  /**
+   * Making the mint async put a yield between "is there a cursor?" and
+   * reading it. Two in-flight batches both found none, both seeded, and
+   * the later write clobbered a cursor the first had already advanced —
+   * so both signed the SAME parallel nonce. One is then refused as
+   * "already used" and retried, which resubmits a trade that may have
+   * landed. On a trading SDK that is the worst class of bug there is.
+   */
+  const nonceOf = (batch: PreparedBatch) => batch.parallelNonce as string;
+
+  it("two concurrent trades never sign the same nonce", async () => {
+    const { host, submitted } = makeHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await Promise.all([
+      turbo.long(MARKET, { quantity: "1" }, { price: "2000" }),
+      turbo.long(MARKET, { quantity: "1" }, { price: "2000" }),
+    ]);
+    expect(submitted).toHaveLength(2);
+    expect(nonceOf(submitted[0])).not.toBe(nonceOf(submitted[1]));
+  });
+
+  it("holds across a burst", async () => {
+    const { host, submitted } = makeHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await Promise.all(
+      Array.from({ length: 8 }, () => turbo.long(MARKET, { quantity: "1" }, { price: "2000" })),
+    );
+    const nonces = submitted.map(nonceOf);
+    expect(new Set(nonces).size).toBe(nonces.length);
+  });
+
+  it("reads the window ONCE for a burst, not once per batch", async () => {
+    const { host, api } = makeHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await Promise.all(
+      Array.from({ length: 5 }, () => turbo.long(MARKET, { quantity: "1" }, { price: "2000" })),
+    );
+    expect(api.getAccountWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays unique when the window read is SLOW — the real shape of the race", async () => {
+    // The default mock resolves in the same microtask, which hides the
+    // race: the two mints end up serialised by luck. A window read with a
+    // real delay is what two concurrent batches actually meet, and it is
+    // the case where both used to seed and mint the same position.
+    const { host, submitted, api } = makeHost();
+    api.getAccountWindow.mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(
+            () =>
+              resolve({
+                nonce_session_id: 0,
+                base: "0",
+                slots: Array.from({ length: 8 }, () => ({ word_position: "0", bitmap: "0" })),
+              }),
+            25,
+          ),
+        ),
+    );
+
+    const turbo = new TurboClient(host).use(CHILD);
+    await Promise.all([
+      turbo.long(MARKET, { quantity: "1" }, { price: "2000" }),
+      turbo.long(MARKET, { quantity: "1" }, { price: "2000" }),
+      turbo.long(MARKET, { quantity: "1" }, { price: "2000" }),
+    ]);
+    const nonces = submitted.map(nonceOf);
+    expect(nonces).toHaveLength(3);
+    expect(new Set(nonces).size).toBe(3);
+  });
+});

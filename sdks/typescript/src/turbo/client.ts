@@ -39,7 +39,7 @@ import {
   PARENT_ORDER_PLACEHOLDER,
   priceTick,
   protectionLeg,
-  triggerLockPrice,
+  triggerJudgedPrices,
 } from "../triggers.js";
 import { capitalizeSide, scaleOrderType } from "../utils.js";
 import type { MarginAction } from "./actions.js";
@@ -299,6 +299,10 @@ export class TurboClient {
   private readonly nonceCursors = new Map<Hex, { word: bigint; bit: number }>();
   /** Which session key each child is known to be armed with. */
   private readonly armedKeys = new Map<Hex, string>();
+  /** In-flight cursor seeds, so concurrent batches share one read. */
+  private readonly nonceSeeds = new Map<Hex, Promise<void>>();
+  /** Whether a child's cursor came from a real window read. */
+  private readonly nonceWindowRead = new Map<Hex, boolean>();
 
   constructor(host: TurboHost) {
     this.host = host;
@@ -1354,19 +1358,40 @@ export class TurboClient {
    * chain says the cursor is out of the window.
    */
   private async seedNonceCursor(marginAccountId: Hex): Promise<void> {
-    // Guarded rather than just `.catch`: a host built against an older api
-    // surface has no such method, and calling it would throw synchronously,
-    // past any promise handler.
-    const window = await Promise.resolve()
-      .then(() => this.host.api.getAccountWindow?.(marginAccountId, 0) ?? null)
-      .catch(() => null);
-    if (!window) {
-      // No window to read: fall back to the start, which is right for a
-      // fresh account and self-corrects through the retry otherwise.
-      this.nonceCursors.set(marginAccountId, { word: 0n, bit: 0 });
-      return;
-    }
-    this.nonceCursors.set(marginAccountId, firstFreePosition(window));
+    // ONE SEED PER CHILD, SHARED. Seeding awaits a network read, and two
+    // concurrent batches that both found no cursor would otherwise both
+    // seed and both write the same position — after which they mint the
+    // SAME nonce, one is refused as "already used", and the retry
+    // resubmits a trade that may already have landed. Sharing the promise
+    // means the second caller waits for the first rather than racing it.
+    const inFlight = this.nonceSeeds.get(marginAccountId);
+    if (inFlight) return inFlight;
+
+    const seed = (async () => {
+      // Guarded rather than just `.catch`: a host built against an older
+      // api surface has no such method, and calling it would throw
+      // synchronously, past any promise handler.
+      const window = await Promise.resolve()
+        .then(() => this.host.api.getAccountWindow?.(marginAccountId, 0) ?? null)
+        .catch(() => null);
+
+      // A cursor that arrived while this read was in flight is AHEAD of
+      // anything the window can tell us, and overwriting it would hand
+      // back positions already minted.
+      if (this.nonceCursors.has(marginAccountId)) return;
+
+      this.nonceCursors.set(
+        marginAccountId,
+        // No window to read: start at the beginning, which is right for a
+        // fresh account. `submitWithNonceRetry` steps the word from there
+        // when the chain says the window has moved past it.
+        window ? firstFreePosition(window) : { word: 0n, bit: 0 },
+      );
+      this.nonceWindowRead.set(marginAccountId, window !== null);
+    })().finally(() => this.nonceSeeds.delete(marginAccountId));
+
+    this.nonceSeeds.set(marginAccountId, seed);
+    return seed;
   }
 
   /** Mint the next parallel nonce, seeding from the window on first use. */
@@ -1374,6 +1399,10 @@ export class TurboClient {
     if (!this.nonceCursors.has(marginAccountId)) {
       await this.seedNonceCursor(marginAccountId);
     }
+    // FROM HERE DOWN, NO AWAIT. Read, mint and advance in one synchronous
+    // run so two callers cannot both read the same position; a yield
+    // anywhere in this stretch is the race the shared seed above exists to
+    // stop, reintroduced.
     const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
     const nonce = encodeParallelNonce({
       nonceSessionId: 0,
@@ -1457,7 +1486,7 @@ export class TurboClient {
   private async submitWithNonceRetry(
     marginAccountId: Hex,
     send: (parallelNonce: string) => Promise<SessionActionsResponse>,
-    attempts = 8,
+    attempts = 12,
   ): Promise<SessionActionsResponse> {
     let last: unknown;
     let rearmed = false;
@@ -1488,8 +1517,19 @@ export class TurboClient {
         // and stepping one word at a time both caps out and cannot
         // recover from an overshoot — the cursor only moves forward.
         if (/sliding window/i.test(message)) {
-          this.nonceCursors.delete(marginAccountId);
-          await this.seedNonceCursor(marginAccountId).catch(() => null);
+          // RE-READ IF WE CAN, STEP IF WE CANNOT. Re-reading is exact, but
+          // it is worthless when the window endpoint is what failed in the
+          // first place — that path plants (0, 0) and would re-plant it
+          // every attempt until the loop ran out, so an active child whose
+          // consumed bits sit well past bit 0 could never submit at all.
+          // Stepping the word is the crude fallback that still converges.
+          if (this.nonceWindowRead.get(marginAccountId)) {
+            this.nonceCursors.delete(marginAccountId);
+            await this.seedNonceCursor(marginAccountId).catch(() => null);
+          } else {
+            const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
+            this.nonceCursors.set(marginAccountId, { word: cursor.word + 1n, bit: 0 });
+          }
           last = error;
           continue;
         }
@@ -1635,7 +1675,7 @@ export class TurboClient {
 
     // EVERY price this batch is judged at binds the quantity, so the fit
     // covers the spot price and each trigger's own.
-    const judgedPrices = [scaledPrice, ...legs.map((leg) => triggerLockPrice(leg))];
+    const judgedPrices = [scaledPrice, ...legs.flatMap((leg) => triggerJudgedPrices(leg))];
     const fitPrice = (quantity: bigint): bigint => {
       if (
         legs.length === 0 &&

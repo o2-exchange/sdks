@@ -340,3 +340,20 @@ export function activeTriggerIds(response: ActiveOrdersResponse): string[] {
   }
   return ids;
 }
+
+/**
+ * Every price a trigger leg will be judged at.
+ *
+ * Both matter: the leg becomes an order at its LOCK price, and the chain
+ * also validates against the TRIGGER price that arms it. A quantity that
+ * divides at one and not the other is refused with `FractionalPrice`.
+ */
+export function triggerJudgedPrices(args: TriggerOrderArgs): bigint[] {
+  return [triggerLockPrice(args), BigInt(args.trigger_price)];
+}
+
+/** Replace an explicitly-sized leg's quantity. */
+export function withTriggerQuantity(args: TriggerOrderArgs, quantity: bigint): TriggerOrderArgs {
+  if ("ParentOrder" in args.quantity) return args;
+  return { ...args, quantity: triggerQuantity(quantity) };
+}
