@@ -173,22 +173,35 @@ export class O2Api {
         // `.json()` on them threw `Unexpected token 'F'` and buried the
         // actual message. Read the body once, then decide.
         const text = await resp.text();
-        let body: Record<string, unknown>;
+        let body: Record<string, unknown> | null = null;
         try {
           body = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
         } catch {
-          if (!resp.ok) {
-            throw new O2Error(
-              `HTTP ${resp.status} from ${path}: ${text.slice(0, 300)}`,
-              resp.status,
-            );
-          }
-          throw new O2Error(`Malformed response from ${path}: ${text.slice(0, 300)}`);
+          body = null;
         }
 
-        if (!resp.ok) {
-          const err = parseApiError(body);
-          if (err instanceof RateLimitExceeded && attempt < this.maxRetries) {
+        if (!resp.ok || body === null) {
+          const err =
+            body === null
+              ? new O2Error(
+                  resp.ok
+                    ? `Malformed response from ${path}: ${text.slice(0, 300)}`
+                    : `HTTP ${resp.status} from ${path}: ${text.slice(0, 300)}`,
+                  resp.ok ? undefined : resp.status,
+                )
+              : parseApiError(body);
+
+          // RETRY ON THE STATUS, NOT JUST THE BODY CODE.
+          //
+          // The backoff used to fire only when `parseApiError` produced a
+          // `RateLimitExceeded`, which needs the body to carry code 1003.
+          // A gateway that answers 429 with any other shape — a bare
+          // message, plain text, an HTML page — got no backoff at all, and
+          // a read-heavy run would take the limit and fail outright
+          // instead of waiting. 5xx is the same argument.
+          const retryable =
+            err instanceof RateLimitExceeded || resp.status === 429 || resp.status >= 500;
+          if (retryable && attempt < this.maxRetries) {
             const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
             await sleep(delay);
             lastError = err;

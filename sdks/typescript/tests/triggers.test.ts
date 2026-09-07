@@ -314,8 +314,12 @@ describe("regression: OCO pair is ordered AFTER fitting", () => {
     // FITTED pair must put the larger surviving lock first.
     const [lead] = orderPairByLock(fitLeg(a), fitLeg(b), 9);
     const leadQty = BigInt((lead.quantity as { Quantity: { quantity: string } }).Quantity.quantity);
-    const aQty = BigInt((fitLeg(a).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
-    const bQty = BigInt((fitLeg(b).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+    const aQty = BigInt(
+      (fitLeg(a).quantity as { Quantity: { quantity: string } }).Quantity.quantity,
+    );
+    const bQty = BigInt(
+      (fitLeg(b).quantity as { Quantity: { quantity: string } }).Quantity.quantity,
+    );
     expect(bQty).toBeLessThan(aQty); // the fit really did diverge them
     expect(leadQty).toBe(aQty); // and the bigger one leads
   });
