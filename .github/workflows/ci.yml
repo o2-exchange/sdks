@@ -227,11 +227,7 @@ jobs:
           cache: npm
           cache-dependency-path: sdks/typescript/package-lock.json
       - run: npm ci
-      # `--package-lock=false` crashes npm's arborist ("Cannot read
-      # properties of null (reading 'edgesOut')") when it runs over a tree
-      # `npm ci` just installed. `--no-package-lock` is the same intent and
-      # is what the packed-consumer smoke test below already uses.
-      - run: npm install --no-save --no-package-lock "ccxt@${{ matrix.ccxt }}"
+      - run: npm install --no-save --package-lock=false "ccxt@${{ matrix.ccxt }}"
       - run: npm run typecheck
       - run: npx vitest run tests/ccxt/ccxt.test.ts tests/ccxt/ccxt-parsers.test.ts tests/ccxt/ccxt-errors.test.ts
       - name: Smoke test packed CCXT consumer
