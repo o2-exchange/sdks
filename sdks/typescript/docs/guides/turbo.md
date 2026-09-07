@@ -223,10 +223,12 @@ than the parent, and all three are handled for you:
   the batch is authorised under the parent's contract id. The backend
   refuses "the wallet's owner id" driving a child.
 - **Nonce** — margin batches are accepted under a **parallel** nonce only,
-  packed as a u256 and minted per child. Sequential nonces are refused
-  outright. Parallel nonces are burned whether or not the batch lands, so
-  the cursor only moves forward; keep one client rather than rebuilding it
-  per trade.
+  packed as a u256. The cursor is seeded from the chain's own window
+  (`GET /v1/accounts/window`) rather than guessed: a position is burned
+  whether or not the batch lands, and guessing fails two different ways —
+  a spent position is "already used", a word the window has slid past is
+  "out of sliding window". The window is re-read whenever the chain says
+  the cursor has fallen outside it.
 - **Signature** — a parallel nonce requires the `TypedSecp256k1` variant,
   whose digest prefixes the packed nonce as a full u256 instead of the
   sequential u64.

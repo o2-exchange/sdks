@@ -98,3 +98,70 @@ export function newMarginAccountNonce(nowSeconds = Math.floor(Date.now() / 1000)
     bitmapPosition: 0,
   });
 }
+
+// ── The indexed window (GET /v1/accounts/window) ─────────────────────
+
+/** One word of the on-chain bitmap, as the indexer reports it. */
+export interface NonceWindowSlot {
+  word_position: string | number;
+  bitmap: string | number;
+}
+
+/** The indexed view of the contract's sliding window for one lane. */
+export interface NonceWindow {
+  nonce_session_id: string | number;
+  base: string | number;
+  slots: NonceWindowSlot[];
+}
+
+/** Raised when the top window word is full and the chain must slide first. */
+export class ParallelNonceWindowFull extends Error {
+  constructor(message = "Top window word fully consumed; wait for the on-chain window to slide.") {
+    super(message);
+    this.name = "ParallelNonceWindowFull";
+  }
+}
+
+/**
+ * The consumed-bit bitmap for one word.
+ *
+ * A slot recycled by a window slide still holds a DIFFERENT word's bitmap,
+ * which counts as empty — the slot's own `word_position` is the source of
+ * truth. A fresh account may also report fewer slots than the window holds.
+ */
+export function effectiveBitmap(window: NonceWindow, word: bigint): bigint {
+  const slots = window.slots ?? [];
+  if (slots.length === 0) return 0n;
+  const index = Number(word % NONCE_SESSION_SLIDING_WINDOW_SIZE);
+  if (index >= slots.length) return 0n;
+  const slot = slots[index];
+  return BigInt(slot.word_position) === word ? BigInt(slot.bitmap) : 0n;
+}
+
+/** Index of the highest set bit, or -1 for zero. */
+function highestSetBit(value: bigint): number {
+  return value === 0n ? -1 : value.toString(2).length - 1;
+}
+
+/**
+ * The `(word, bit)` strictly after the highest consumed position.
+ *
+ * Deliberately NOT the first free hole. A hole can belong to an earlier run
+ * of this lane whose later positions already landed on chain, so a cursor
+ * started inside it would mint nonces the chain has already seen. Starting
+ * past the highest used bit wastes holes but can never collide.
+ */
+export function firstFreePosition(window: NonceWindow): { word: bigint; bit: number } {
+  const base = BigInt(window.base);
+  const top = base + NONCE_SESSION_SLIDING_WINDOW_SIZE - 1n;
+  for (let word = top; ; word--) {
+    const bitmap = effectiveBitmap(window, word);
+    if (bitmap !== 0n) {
+      const highest = highestSetBit(bitmap);
+      if (highest + 1 < NONCE_BITMAP_SIZE) return { word, bit: highest + 1 };
+      if (word < top) return { word: word + 1n, bit: 0 };
+      throw new ParallelNonceWindowFull();
+    }
+    if (word === base) return { word: base, bit: 0 };
+  }
+}

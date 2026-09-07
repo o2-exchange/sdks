@@ -55,6 +55,7 @@ import {
   type WithdrawResponse,
 } from "./models.js";
 import type { ActiveOrdersResponse } from "./triggers.js";
+import type { NonceWindow } from "./turbo/parallelNonce.js";
 import type {
   SignedEnvelope,
   TurboReferralActivation,
@@ -583,6 +584,24 @@ export class O2Api {
   async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
       "O2-Owner-Id": ownerId,
+    });
+  }
+
+  /**
+   * The parallel-nonce sliding window for one (account, lane).
+   *
+   * The authority on which positions are already burned. Without it a
+   * client can only guess, and a guess is wrong in two different ways: a
+   * spent position is refused as "already used", and a word the window has
+   * slid past is refused as "out of sliding window".
+   */
+  async getAccountWindow(
+    tradeAccountId: TradeAccountId | string,
+    nonceSessionId = 0,
+  ): Promise<NonceWindow> {
+    return this.get<NonceWindow>("/v1/accounts/window", {
+      trade_account_id: tradeAccountId,
+      nonce_session_id: String(nonceSessionId),
     });
   }
 

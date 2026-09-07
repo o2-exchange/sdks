@@ -122,6 +122,12 @@ function makeHost(
     getNextMarginAccount: vi.fn().mockResolvedValue(null),
     getMarginTiers: vi.fn().mockResolvedValue([]),
     getMarginCloseCleanups: vi.fn().mockResolvedValue([]),
+    getAccountWindow: vi.fn().mockResolvedValue({
+      nonce_session_id: 0,
+      base: "0",
+      slots: Array.from({ length: 8 }, () => ({ word_position: "0", bitmap: "0" })),
+    }),
+    getActiveOrders: vi.fn().mockResolvedValue({ entries: [] }),
     getDepth: vi.fn().mockResolvedValue({ bids: [], asks: [] }),
   };
 

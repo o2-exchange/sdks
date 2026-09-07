@@ -16,7 +16,9 @@ import {
 } from "../../src/turbo/actions.js";
 import {
   decodeParallelNonce,
+  effectiveBitmap,
   encodeParallelNonce,
+  firstFreePosition,
   newMarginAccountNonce,
 } from "../../src/turbo/parallelNonce.js";
 import {
@@ -379,5 +381,58 @@ describe("regression: /v1/markets margin wiring survives parsing", () => {
     });
     const markets = await api.getMarkets();
     expect(markets.margin).toBeUndefined();
+  });
+});
+
+describe("parallel-nonce window", () => {
+  const win = (base: string, slots: [string, string][]) => ({
+    nonce_session_id: 0,
+    base,
+    slots: slots.map(([word_position, bitmap]) => ({ word_position, bitmap })),
+  });
+  const empty: [string, string][] = Array.from({ length: 8 }, () => ["0", "0"]);
+
+  it("starts at (base, 0) on a window with nothing consumed", () => {
+    expect(firstFreePosition(win("0", empty))).toEqual({ word: 0n, bit: 0 });
+    expect(firstFreePosition(win("5", empty))).toEqual({ word: 5n, bit: 0 });
+  });
+
+  it("starts strictly PAST the highest consumed bit, not in a hole", () => {
+    // Bits 0 and 3 used: the free bit 1 belongs to an earlier run whose
+    // later positions already landed, so starting there mints nonces the
+    // chain has seen. Start at 4.
+    const slots: [string, string][] = [...empty];
+    slots[0] = ["0", String(0b1001)];
+    expect(firstFreePosition(win("0", slots))).toEqual({ word: 0n, bit: 4 });
+  });
+
+  it("rolls into the next word when one is full", () => {
+    const slots: [string, string][] = [...empty];
+    slots[0] = ["0", ((1n << 128n) - 1n).toString()];
+    expect(firstFreePosition(win("0", slots))).toEqual({ word: 1n, bit: 0 });
+  });
+
+  it("throws when the TOP word is full — the chain must slide first", () => {
+    const slots: [string, string][] = [...empty];
+    slots[7] = ["7", ((1n << 128n) - 1n).toString()];
+    expect(() => firstFreePosition(win("0", slots))).toThrow(/slide/i);
+  });
+
+  it("treats a slot recycled by a slide as empty", () => {
+    // The slot still holds word 0's bitmap, but the window has moved on to
+    // base 8 — so for word 8 it counts as nothing consumed.
+    const slots: [string, string][] = [...empty];
+    slots[0] = ["0", String(0b1111)];
+    expect(effectiveBitmap(win("8", slots), 8n)).toBe(0n);
+    expect(firstFreePosition(win("8", slots))).toEqual({ word: 8n, bit: 0 });
+  });
+
+  it("reads a real testnet window shape", () => {
+    // Captured from /v1/accounts/window for a live margin child.
+    const slots: [string, string][] = [...empty];
+    slots[0] = ["0", "20242795522984834065509184962560"];
+    const { word, bit } = firstFreePosition(win("0", slots));
+    expect(word).toBe(0n);
+    expect(bit).toBe(104);
   });
 });

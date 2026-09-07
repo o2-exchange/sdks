@@ -22,10 +22,7 @@
  */
 
 import type { ContractCall } from "../encoding.js";
-import {
-  adjustQuantityForPrices,
-  validateFractionalPrice,
-} from "../encoding.js";
+import { adjustQuantityForPrices, validateFractionalPrice } from "../encoding.js";
 import { O2Error } from "../errors.js";
 import type {
   Identity,
@@ -75,6 +72,7 @@ import {
 } from "./limits.js";
 import {
   encodeParallelNonce,
+  firstFreePosition,
   NONCE_BITMAP_SIZE,
   newMarginAccountNonce,
   OWNER_NONCE_TTL_SECONDS,
@@ -1342,26 +1340,41 @@ export class TurboClient {
    * and carries into the word. The expiry is what the backend range-checks;
    * it is not the account's own deadline.
    */
-  private mintParallelNonce(marginAccountId: Hex): string {
-    // START AT A RANDOM BIT, not at bit 0.
-    //
-    // A parallel position is burned on chain whether or not the batch
-    // lands, and the window is not readable from the API — so a cursor
-    // that always starts at zero replays positions a previous PROCESS
-    // already spent, and the pool answers "nonce already used". That made
-    // a margin account untradeable from any second run of any client,
-    // which is exactly how a real caller uses an SDK.
-    //
-    // The WORD is deliberately NOT randomised. The window SLIDES, so
-    // words are not absolute coordinates and an arbitrary one is refused
-    // with "word position out of sliding window" — which is what
-    // randomising it caused. Start at word 0, always valid for a fresh
-    // account, and let `submitWithNonceRetry` walk forward when the
-    // window has moved on.
-    const cursor = this.nonceCursors.get(marginAccountId) ?? {
-      word: 0n,
-      bit: Math.floor(Math.random() * NONCE_BITMAP_SIZE),
-    };
+  /**
+   * Seed this child's cursor from the chain's OWN window.
+   *
+   * Guessing does not work, and it fails two different ways: a spent
+   * position is refused as "already used", and a word the window has slid
+   * past is refused as "out of sliding window". Walking blindly from word
+   * 0 only finds a window that has slid a handful of words, and never
+   * recovers from an overshoot. `/v1/accounts/window` answers both
+   * questions outright, which is what the Python SDK has always done.
+   *
+   * Read once per child and then tracked locally; re-read whenever the
+   * chain says the cursor is out of the window.
+   */
+  private async seedNonceCursor(marginAccountId: Hex): Promise<void> {
+    // Guarded rather than just `.catch`: a host built against an older api
+    // surface has no such method, and calling it would throw synchronously,
+    // past any promise handler.
+    const window = await Promise.resolve()
+      .then(() => this.host.api.getAccountWindow?.(marginAccountId, 0) ?? null)
+      .catch(() => null);
+    if (!window) {
+      // No window to read: fall back to the start, which is right for a
+      // fresh account and self-corrects through the retry otherwise.
+      this.nonceCursors.set(marginAccountId, { word: 0n, bit: 0 });
+      return;
+    }
+    this.nonceCursors.set(marginAccountId, firstFreePosition(window));
+  }
+
+  /** Mint the next parallel nonce, seeding from the window on first use. */
+  private async mintParallelNonce(marginAccountId: Hex): Promise<string> {
+    if (!this.nonceCursors.has(marginAccountId)) {
+      await this.seedNonceCursor(marginAccountId);
+    }
+    const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
     const nonce = encodeParallelNonce({
       nonceSessionId: 0,
       timestamp: Math.floor(Date.now() / 1000) + OWNER_NONCE_TTL_SECONDS,
@@ -1444,13 +1457,13 @@ export class TurboClient {
   private async submitWithNonceRetry(
     marginAccountId: Hex,
     send: (parallelNonce: string) => Promise<SessionActionsResponse>,
-    attempts = 16,
+    attempts = 8,
   ): Promise<SessionActionsResponse> {
     let last: unknown;
     let rearmed = false;
     for (let attempt = 0; attempt < attempts; attempt++) {
       try {
-        return await send(this.mintParallelNonce(marginAccountId));
+        return await send(await this.mintParallelNonce(marginAccountId));
       } catch (error) {
         const message = String((error as Error)?.message ?? error);
 
@@ -1471,12 +1484,12 @@ export class TurboClient {
         // next bit. "word position out of sliding window" means the
         // window has slid past this word entirely, and no bit inside it
         // will do; move to the next word.
+        // RE-READ, don't step. The window may have slid by any amount,
+        // and stepping one word at a time both caps out and cannot
+        // recover from an overshoot — the cursor only moves forward.
         if (/sliding window/i.test(message)) {
-          const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
-          this.nonceCursors.set(marginAccountId, {
-            word: cursor.word + 1n,
-            bit: Math.floor(Math.random() * NONCE_BITMAP_SIZE),
-          });
+          this.nonceCursors.delete(marginAccountId);
+          await this.seedNonceCursor(marginAccountId).catch(() => null);
           last = error;
           continue;
         }
