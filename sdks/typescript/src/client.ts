@@ -41,6 +41,7 @@ import {
   type ActionJSON,
   actionToCall,
   adjustQuantityForFractionalPrice,
+  adjustQuantityForPrices,
   buildActionsSigningBytes,
   buildParallelActionsSigningBytes,
   buildSessionSigningBytes,
@@ -81,6 +82,15 @@ import type {
   WalletState,
 } from "./models.js";
 import { depthPrecision, tradeAccountId } from "./models.js";
+import type { ProtectionSpec, TriggerOrderArgs } from "./triggers.js";
+import {
+  activeTriggerIds,
+  orderPairByLock,
+  PARENT_ORDER_PLACEHOLDER,
+  priceTick,
+  protectionLeg,
+  triggerLockPrice,
+} from "./triggers.js";
 import { TurboClient } from "./turbo/client.js";
 import type { PreparedBatch, PreparedMarketActions, TurboHost } from "./turbo/host.js";
 import {
@@ -554,6 +564,317 @@ export class O2Client {
     });
 
     return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
+  }
+
+  /**
+   * Place an order with take-profit and/or stop-loss attached, atomically.
+   *
+   * This is the TP/SL a trader means: one call, one signature, and the
+   * protection is bound to the order the same call creates. The legs
+   * inherit the parent's quantity and take the CLOSING side, so a
+   * protected buy carries sell-side protection.
+   *
+   * The spot leg escrows exactly what it would unprotected — the triggers
+   * add nothing, because they are funded by the position itself.
+   *
+   * @param options.takeProfit - Fires when the market moves in your favour.
+   * @param options.stopLoss - Fires when it moves against you.
+   *
+   * @remarks
+   * Only `Limit` is refused as the spot type. A bare market trigger (no
+   * `limitPrice`, no `slippageBps`) is spot-only — a margin account
+   * refuses an unpriced trigger.
+   *
+   * @example
+   * ```ts
+   * await client.createOrderWithTriggers("fETH/fUSDC", "buy", "2500", "0.01", {
+   *   takeProfit: { triggerPrice: "2600", slippageBps: 50 },
+   *   stopLoss: { triggerPrice: "2400", limitPrice: "2390" },
+   * });
+   * ```
+   */
+  async createOrderWithTriggers(
+    market: MarketRef,
+    side: "buy" | "sell",
+    price: Numeric,
+    quantity: Numeric,
+    options: {
+      takeProfit?: ProtectionSpec;
+      stopLoss?: ProtectionSpec;
+      orderType?: OrderType;
+      settleFirst?: boolean;
+      collectOrders?: boolean;
+      session?: SessionState;
+    } = {},
+  ): Promise<SessionActionsResponse> {
+    const session = options.session ?? this.ensureSession();
+    const orderType = options.orderType ?? "Spot";
+    if (typeof orderType === "object" && "Limit" in orderType) {
+      throw new O2Error("A Limit order cannot carry triggers — the chain refuses it.");
+    }
+    if (!options.takeProfit && !options.stopLoss) {
+      throw new O2Error("createOrderWithTriggers needs a takeProfit, a stopLoss, or both.");
+    }
+
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+      resolved,
+      price,
+      quantity,
+      "price",
+      "quantity",
+    );
+
+    const scaleSpec = (spec: ProtectionSpec): ProtectionSpec => ({
+      ...spec,
+      triggerPrice: this.normalizeCreateOrderValues(
+        resolved,
+        spec.triggerPrice,
+        "1",
+        "triggerPrice",
+        "quantity",
+      ).scaledPrice,
+      ...(spec.limitPrice !== undefined
+        ? {
+            limitPrice: this.normalizeCreateOrderValues(
+              resolved,
+              spec.limitPrice,
+              "1",
+              "limitPrice",
+              "quantity",
+            ).scaledPrice,
+          }
+        : {}),
+      ...(spec.quantity !== undefined
+        ? {
+            quantity: this.normalizeCreateOrderValues(
+              resolved,
+              scaledPrice,
+              spec.quantity,
+              "price",
+              "quantity",
+            ).scaledQuantity,
+          }
+        : {}),
+    });
+
+    const legs = [options.takeProfit, options.stopLoss]
+      .filter((spec): spec is ProtectionSpec => spec !== undefined)
+      .map((spec) =>
+        protectionLeg(
+          scaleSpec(spec),
+          side,
+          PARENT_ORDER_PLACEHOLDER,
+          priceTick(resolved.quote.decimals, resolved.quote.max_precision),
+        ),
+      );
+
+    // Every price the batch is judged at binds the quantity — see
+    // `adjustQuantityForPrices`.
+    const fittedQuantity = adjustQuantityForPrices(
+      [scaledPrice, ...legs.map((leg) => triggerLockPrice(leg))],
+      scaledQuantity,
+      resolved.base.decimals,
+    );
+    if (fittedQuantity <= 0n) {
+      throw new O2Error(
+        "No quantity satisfies the fractional-price rule at every price in this batch; try a larger size or fewer triggers.",
+      );
+    }
+
+    const actions: ActionPayload[] = [];
+    if (options.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateOrderWithTriggers: {
+        side: capitalizeSide(side),
+        price: scaledPrice.toString(),
+        quantity: fittedQuantity.toString(),
+        order_type: scaleOrderType(orderType, resolved),
+        trigger_1: legs[0],
+        ...(legs[1] ? { trigger_2: legs[1] } : {}),
+      },
+    } as unknown as ActionPayload);
+
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options.collectOrders ?? true,
+      session,
+    );
+  }
+
+  /**
+   * Place one standalone trigger order.
+   *
+   * Use this for an ENTRY stop — a buy that arms above the market, say —
+   * or to protect a position with an explicit size rather than one
+   * inherited from a resting order.
+   *
+   * @param parent - Bind it to a resting order. The `expectedQuantity` is
+   *   that order's INITIAL quantity, which the backend checks: it is what
+   *   stops a signed payload attaching to a different order than the one
+   *   it was audited against.
+   */
+  async createTriggerOrder(
+    market: MarketRef,
+    leg: TriggerOrderArgs,
+    options: {
+      parent?: { orderId: OrderId; expectedQuantity: Numeric };
+      settleFirst?: boolean;
+      collectOrders?: boolean;
+      session?: SessionState;
+    } = {},
+  ): Promise<SessionActionsResponse> {
+    const session = options.session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+
+    const actions: ActionPayload[] = [];
+    if (options.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateTriggerOrder: {
+        args: leg,
+        ...(options.parent
+          ? {
+              parent: {
+                order_id: options.parent.orderId,
+                expected_quantity: options.parent.expectedQuantity.toString(),
+              },
+            }
+          : {}),
+      },
+    } as unknown as ActionPayload);
+
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options.collectOrders ?? true,
+      session,
+    );
+  }
+
+  /**
+   * Place two trigger orders that auto-link as OCO siblings: one firing
+   * cancels the other.
+   *
+   * The pair is reordered so the leg escrowing MORE goes first — the chain
+   * takes `first`'s lock to cover both, so leading with the cheaper one
+   * under-funds it. The two must have different trigger prices.
+   */
+  async createTriggerOrders(
+    market: MarketRef,
+    first: TriggerOrderArgs,
+    second: TriggerOrderArgs,
+    options: {
+      parent?: { orderId: OrderId; expectedQuantity: Numeric };
+      settleFirst?: boolean;
+      collectOrders?: boolean;
+      session?: SessionState;
+    } = {},
+  ): Promise<SessionActionsResponse> {
+    const session = options.session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    if (first.trigger_price === second.trigger_price) {
+      throw new O2Error(
+        "An OCO pair needs two different trigger prices — the chain refuses a pair that would fire together.",
+      );
+    }
+    const [lead, follow] = orderPairByLock(first, second, resolved.base.decimals);
+
+    const actions: ActionPayload[] = [];
+    if (options.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateTriggerOrders: {
+        first: lead,
+        second: follow,
+        ...(options.parent
+          ? {
+              parent: {
+                order_id: options.parent.orderId,
+                expected_quantity: options.parent.expectedQuantity.toString(),
+              },
+            }
+          : {}),
+      },
+    } as unknown as ActionPayload);
+
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options.collectOrders ?? true,
+      session,
+    );
+  }
+
+  /** Cancel one trigger order. */
+  async cancelTriggerOrder(
+    orderId: OrderId,
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [{ CancelTriggerOrder: { order_id: orderId } } as unknown as ActionPayload],
+        },
+      ],
+      false,
+      activeSession,
+    );
+  }
+
+  /**
+   * Cancel every live trigger order on a market.
+   *
+   * Includes triggers attached to resting spot orders as well as
+   * standalone ones. Chunked, because a batch takes at most five actions.
+   */
+  async cancelAllTriggerOrders(
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse[] | null> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+
+    const active = await this.api.getActiveOrders(
+      resolved.market_id,
+      activeSession.tradeAccountId,
+      "desc",
+      200,
+    );
+    const ids = activeTriggerIds(active);
+    if (ids.length === 0) return null;
+
+    const results: SessionActionsResponse[] = [];
+    for (let i = 0; i < ids.length; i += 5) {
+      results.push(
+        await this.submitBatch(
+          [
+            {
+              market_id: resolved.market_id,
+              actions: ids
+                .slice(i, i + 5)
+                .map(
+                  (id) => ({ CancelTriggerOrder: { order_id: id } }) as unknown as ActionPayload,
+                ),
+            },
+          ],
+          false,
+          activeSession,
+        ),
+      );
+    }
+    return results;
   }
 
   /** Cancel an order. The session nonce is updated in-place. */
@@ -1426,11 +1747,46 @@ export class O2Client {
     // authorised under a different `O2-Owner-Id` than the session's wallet.
     const ownerId = batch.ownerId ?? activeSession.ownerAddress;
 
+    const send = async (payload: SessionActionsRequest): Promise<SessionActionsResponse> =>
+      batch.endpoint === "marginAccounts"
+        ? await this.api.submitMarginAccountActions(ownerId, payload)
+        : await this.api.submitActions(ownerId, payload);
+
     try {
-      const response =
-        batch.endpoint === "marginAccounts"
-          ? await this.api.submitMarginAccountActions(ownerId, request)
-          : await this.api.submitActions(ownerId, request);
+      let response: SessionActionsResponse;
+      try {
+        response = await send(request);
+      } catch (error) {
+        // SELF-HEAL A SEQUENTIAL NONCE THAT FELL BEHIND.
+        //
+        // The account's counter advances on chain even when a batch
+        // reverts, and the indexed view a resync reads can lag behind it —
+        // so a perfectly good next batch is refused with "Nonce in the
+        // request(N) is less than the nonce in the database(M)". The
+        // rejection names M, which is exactly what we need, so take it and
+        // go rather than making the caller retry a whole trade.
+        const message = String((error as Error)?.message ?? error);
+        const behind =
+          /nonce in the request\((\d+)\) is less than the nonce in the database\((\d+)\)/i.exec(
+            message,
+          );
+        if (parallel !== undefined || !behind) throw error;
+        const corrected = BigInt(behind[2]);
+        advance(corrected);
+        // A FRESH payload, re-signed: the nonce is part of the signed
+        // bytes, so replaying the old signature would be rejected just as
+        // hard as the stale nonce was.
+        const bytes = buildActionsSigningBytes(corrected, batch.calls);
+        response = await send({
+          ...request,
+          nonce: corrected.toString(),
+          signature: {
+            Secp256k1: bytesToHex(rawSign(activeSession.sessionPrivateKey, bytes)),
+          },
+        });
+        if (!response.isPreflightError) advance(corrected + 1n);
+        return response;
+      }
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {

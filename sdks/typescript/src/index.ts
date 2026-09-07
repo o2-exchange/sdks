@@ -54,10 +54,10 @@ export {
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
-
 // ── Errors ────────────────────────────────────────────────────────
 export {
   AccountNotFound,
+  ActiveSpotOrderLimitExceeded,
   AlreadySubscribed,
   BlockNotFound,
   EventsNotFound,
@@ -71,6 +71,7 @@ export {
   InvalidSignature,
   InvalidTimeRange,
   InvalidTradeCount,
+  InvalidTriggerOrderArgs,
   MarketAlreadyExists,
   MarketNotFound,
   MarketPaused,
@@ -79,6 +80,8 @@ export {
   OnChainRevertError,
   OrderNotActive,
   OrderNotFound,
+  ParentOrderAlreadyHasFills,
+  ParentQuantityMismatch,
   ParseError,
   RateLimitExceeded,
   SessionExpired,
@@ -86,6 +89,9 @@ export {
   TooManyActions,
   TooManySubscriptions,
   TradeNotFound,
+  TriggerConflictsWithParent,
+  TriggerOrderQuotaExceeded,
+  TriggerPairSameDirection,
   WhitelistNotConfigured,
 } from "./errors.js";
 // ── Models ────────────────────────────────────────────────────────
@@ -168,6 +174,38 @@ export {
 } from "./models.js";
 // ── On-chain revert decoding ──────────────────────────────────────
 export { augmentRevertReason } from "./onchain-revert.js";
+// ── Trigger orders (TP/SL) ────────────────────────────────────────
+export {
+  type ActiveOrderEntry,
+  type ActiveOrdersResponse,
+  type ActiveSpotOrder,
+  type ActiveTriggerOrder,
+  activeTriggerIds,
+  ceilToTick,
+  floorToTick,
+  orderPairByLock,
+  PARENT_ORDER_PLACEHOLDER,
+  type ParentOrderRef,
+  type ProtectionSpec,
+  priceTick,
+  protectionKind,
+  protectionLeg,
+  stopLimit,
+  stopMarket,
+  stopMarketBounded,
+  type TriggerOrderArgs,
+  type TriggerOrderKind,
+  type TriggerQuantity,
+  triggerFromParent,
+  triggerKindDiscriminant,
+  triggerLeg,
+  triggerLockAmount,
+  triggerLockPrice,
+  triggerQuantity,
+  triggerQuantityDiscriminant,
+  type WireSide,
+  wireSide,
+} from "./triggers.js";
 // ── Turbo (margin) ────────────────────────────────────────────────
 export {
   addCollateralAction,

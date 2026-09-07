@@ -22,7 +22,11 @@
  */
 
 import type { ContractCall } from "../encoding.js";
-import { adjustQuantityForFractionalPrice, validateFractionalPrice } from "../encoding.js";
+import {
+  adjustQuantityForFractionalPrice,
+  adjustQuantityForPrices,
+  validateFractionalPrice,
+} from "../encoding.js";
 import { O2Error } from "../errors.js";
 import type {
   Identity,
@@ -34,6 +38,13 @@ import type {
   SessionActionsResponse,
   TradeAccountId,
 } from "../models.js";
+import type { ProtectionSpec } from "../triggers.js";
+import {
+  PARENT_ORDER_PLACEHOLDER,
+  priceTick,
+  protectionLeg,
+  triggerLockPrice,
+} from "../triggers.js";
 import { capitalizeSide, scaleOrderType } from "../utils.js";
 import type { MarginAction } from "./actions.js";
 import {
@@ -182,6 +193,19 @@ export interface TurboOrderOptions {
   orderType?: OrderType;
   /** Return the created orders in the response. Defaults to `true`. */
   collectOrders?: boolean;
+  /**
+   * Attach a take-profit to the position this opens.
+   *
+   * Rides the SAME batch as the order and the funding leg, so the
+   * protection exists the moment the position does.
+   *
+   * Must be priced — give `limitPrice` or `slippageBps`. A margin account
+   * refuses an unbounded market trigger, because an unpriced order cannot
+   * be walked for risk.
+   */
+  takeProfit?: ProtectionSpec;
+  /** Attach a stop-loss. Same rules as {@link TurboOrderOptions.takeProfit}. */
+  stopLoss?: ProtectionSpec;
 }
 
 /** Size a position by base quantity or by collateral notional, not both. */
@@ -958,7 +982,7 @@ export class TurboClient {
    */
   async closeAccount(
     marginAccountId?: Hex,
-    options: { settleDrawnQuote?: boolean } = {},
+    options: { settleDrawnQuote?: boolean; flattenPositions?: boolean } = {},
   ): Promise<SessionActionsResponse> {
     const session = this.host.ensureSession();
     const wiring = await this.wiring();
@@ -972,7 +996,33 @@ export class TurboClient {
     //
     // Opt out with `settleDrawnQuote: false` to drive the sequence by hand.
     if (options.settleDrawnQuote !== false) {
-      // IN-KIND DEBTS FIRST. A closed short still leaves the pool owed the
+      // RESTING ORDERS FIRST OF ALL. A trigger or a limit order left on
+      // the child LOCKS the very base a repay needs to forward, so the
+      // debt cannot be retired while they stand — and `close_session`'s
+      // own cleanup list runs too late to help, because the pool refuses
+      // the close before it gets there.
+      await this.cancelChildOrders(id).catch(() => null);
+
+      // THEN FLATTEN WHAT IS STILL OPEN.
+      //
+      // A clean close demands `drawn_quote == 0`, and on an account whose
+      // draw is still sitting in a position there is no way to get there
+      // without selling it: `ReturnQuote` needs cash the account does not
+      // hold and `RepayFromCollateral` needs collateral the line already
+      // converted. Closing the positions is the only route, so
+      // `closeAccount` takes it rather than reporting a dead end.
+      //
+      // Pass `flattenPositions: false` to drive the sequence by hand.
+      if (options.flattenPositions !== false) {
+        for (const position of await this.positions(id).catch(() => [])) {
+          await this.closePosition(position.market, { reducing: true } as never).catch(() => null);
+        }
+        // Let the fills index before anything is sized against them.
+        await new Promise((resolve) => setTimeout(resolve, SETTLE_INDEX_DELAY_MS));
+        await this.cancelChildOrders(id).catch(() => null);
+      }
+
+      // IN-KIND DEBTS NEXT. A closed short still leaves the pool owed the
       // asset, and the close is refused while any remain — "still carries
       // N in-kind debt(s)". Retiring them can also free quote, so this runs
       // before the drawn-quote settlement rather than after.
@@ -981,7 +1031,71 @@ export class TurboClient {
     }
 
     const cleanups: OrderBookCleanup[] = await this.host.api.getMarginCloseCleanups(id);
-    return this.submitAsParent([closeMarginSessionAction(id, cleanups)], wiring, session);
+    try {
+      return await this.submitAsParent([closeMarginSessionAction(id, cleanups)], wiring, session);
+    } catch (error) {
+      // SAY WHAT TO DO ABOUT IT. An account whose draw is still tied up in
+      // a position it cannot fund buying back has no self-serve exit:
+      // `ReturnQuote` needs cash it does not hold and
+      // `RepayFromCollateral` needs collateral the line already converted.
+      // Adding margin gives the netting something to work with — verified
+      // against a stuck account, which closed cleanly straight afterwards.
+      const message = String((error as Error)?.message ?? error);
+      if (/still owes .* drawn quote|in-kind debt/i.test(message)) {
+        throw new O2Error(
+          `${message} — add margin (turbo.addMargin) so the netting has collateral to work against, then close again.`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Cancel every resting order the child holds, spot and trigger alike.
+   *
+   * Runs as the CHILD, one batch per market, five ids at a time.
+   */
+  private async cancelChildOrders(marginAccountId: Hex): Promise<void> {
+    const markets = await this.host.fetchMarkets();
+    const wiring = await this.wiring();
+
+    for (const market of markets.markets) {
+      const active = await this.host.api
+        .getActiveOrders(
+          market.market_id,
+          marginAccountId as unknown as TradeAccountId,
+          "desc",
+          200,
+        )
+        .catch(() => null);
+      if (!active?.entries?.length) continue;
+
+      const actions: Record<string, unknown>[] = [];
+      for (const entry of active.entries) {
+        if (entry.kind === "trigger") {
+          actions.push({ CancelTriggerOrder: { order_id: entry.order_id } });
+          continue;
+        }
+        actions.push({ CancelOrder: { order_id: entry.order_id } });
+        for (const child of (entry as { triggers?: { order_id: string }[] }).triggers ?? []) {
+          actions.push({ CancelTriggerOrder: { order_id: child.order_id } });
+        }
+      }
+
+      for (let i = 0; i < actions.length; i += 5) {
+        await this.submitMixed(actions.slice(i, i + 5), market, marginAccountId, wiring, {}).catch(
+          () => null,
+        );
+      }
+      // Bring whatever those cancels freed home, so the repay can forward it.
+      await this.submitMixed(
+        [{ SettleBalance: { to: { ContractId: marginAccountId } } }],
+        market,
+        marginAccountId,
+        wiring,
+        {},
+      ).catch(() => null);
+    }
   }
 
   /**
@@ -1523,14 +1637,82 @@ export class TurboClient {
       }
     }
 
-    spotActions.push({
-      CreateOrder: {
-        side: capitalizeSide(side),
-        price: scaledPrice.toString(),
-        quantity: orderQuantity.toString(),
-        order_type: scaleOrderType(options.orderType ?? "Spot", resolved),
-      },
+    // PROTECTION RIDES THE SAME BATCH. A separate call would leave a
+    // window where the position exists and the stop does not.
+    const protection = [options.takeProfit, options.stopLoss].filter(
+      (spec): spec is ProtectionSpec => spec !== undefined,
+    );
+    for (const spec of protection) {
+      if (spec.limitPrice === undefined && spec.slippageBps === undefined) {
+        throw new O2Error(
+          "A Turbo trigger must be priced — pass limitPrice or slippageBps. " +
+            "The pool refuses an unbounded market trigger because it cannot walk an unpriced order for risk.",
+        );
+      }
+    }
+
+    const scaleSpec = (spec: ProtectionSpec): ProtectionSpec => ({
+      ...spec,
+      triggerPrice: this.host.normalizeCreateOrderValues(
+        resolved,
+        spec.triggerPrice,
+        "1",
+        "triggerPrice",
+        "quantity",
+      ).scaledPrice,
+      ...(spec.limitPrice !== undefined
+        ? {
+            limitPrice: this.host.normalizeCreateOrderValues(
+              resolved,
+              spec.limitPrice,
+              "1",
+              "limitPrice",
+              "quantity",
+            ).scaledPrice,
+          }
+        : {}),
     });
+
+    if (protection.length > 0) {
+      const tick = priceTick(resolved.quote.decimals, resolved.quote.max_precision);
+      const legs = protection.map((spec) =>
+        protectionLeg(scaleSpec(spec), side, PARENT_ORDER_PLACEHOLDER, tick),
+      );
+
+      // EVERY PRICE IN THE BATCH BINDS THE QUANTITY. An inherited trigger
+      // leg carries the parent's size but is checked at its OWN price, so
+      // a quantity that divides cleanly against the spot price is still
+      // refused once a stop at another price is attached.
+      orderQuantity = adjustQuantityForPrices(
+        [scaledPrice, ...legs.map((leg) => triggerLockPrice(leg))],
+        orderQuantity,
+        resolved.base.decimals,
+      );
+      if (orderQuantity <= 0n) {
+        throw new O2Error(
+          "No quantity satisfies the fractional-price rule at every price in this batch; try a larger size or fewer triggers.",
+        );
+      }
+      spotActions.push({
+        CreateOrderWithTriggers: {
+          side: capitalizeSide(side),
+          price: scaledPrice.toString(),
+          quantity: orderQuantity.toString(),
+          order_type: scaleOrderType(options.orderType ?? "Spot", resolved),
+          trigger_1: legs[0],
+          ...(legs[1] ? { trigger_2: legs[1] } : {}),
+        },
+      });
+    } else {
+      spotActions.push({
+        CreateOrder: {
+          side: capitalizeSide(side),
+          price: scaledPrice.toString(),
+          quantity: orderQuantity.toString(),
+          order_type: scaleOrderType(options.orderType ?? "Spot", resolved),
+        },
+      });
+    }
 
     // The batch runs IN ORDER: sweep, fund, order. The funding legs must
     // sit between the sweep and the order, so the order finds the coins.
@@ -1665,7 +1847,15 @@ export class TurboClient {
     const scoped: MarginWiring = { ...wiring, marginAccountId };
     const calls: ContractCall[] = actions.map((action) => {
       const key = Object.keys(action)[0] as string;
-      if (key === "SettleBalance" || key === "CreateOrder" || key === "CancelOrder") {
+      if (
+        key === "SettleBalance" ||
+        key === "CreateOrder" ||
+        key === "CancelOrder" ||
+        key === "CreateOrderWithTriggers" ||
+        key === "CreateTriggerOrder" ||
+        key === "CreateTriggerOrders" ||
+        key === "CancelTriggerOrder"
+      ) {
         return this.host.spotActionToCall(action, market);
       }
       return marginActionToCall(action as unknown as MarginAction, scoped);

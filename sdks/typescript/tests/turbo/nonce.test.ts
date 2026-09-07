@@ -134,3 +134,75 @@ describe("per-account nonces", () => {
     expect(client.nonces().get(CHILD)).toBe(60n);
   });
 });
+
+describe("regression: a lagging sequential nonce self-heals", () => {
+  /**
+   * The account's counter advances on chain even when a batch reverts,
+   * and the indexed view a resync reads can lag behind it — so the next
+   * perfectly good batch is refused for being one behind. The rejection
+   * names the number it wanted, which is enough to go on.
+   */
+  let client: TestClient;
+  let session: SessionState;
+  let submitActions: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    client = new TestClient({ network: Network.TESTNET });
+    submitActions = vi.fn();
+    client.setApi({
+      submitActions,
+      submitMarginAccountActions: submitActions,
+      getAccount: vi.fn().mockResolvedValue({ trade_account: { nonce: 7n } }),
+    });
+    session = {
+      ownerAddress: "0xowner",
+      tradeAccountId: PARENT as never,
+      sessionPrivateKey: new Uint8Array(32).fill(3),
+      sessionAddress: "0xsession",
+      contractIds: [],
+      expiry: 2_000_000_000,
+      nonce: 50n,
+    };
+    client.setSession(session);
+  });
+
+  const batch = {
+    marketActions: [{ market_id: "m", actions: [{ SettleBalance: {} }] }],
+    calls: [CALL],
+    tradeAccountId: PARENT,
+  };
+
+  it("retries at the nonce the rejection names", async () => {
+    submitActions
+      .mockRejectedValueOnce(
+        new Error("Nonce in the request(50) is less than the nonce in the database(51)."),
+      )
+      .mockResolvedValueOnce({ txId: "0xtx", isPreflightError: false });
+
+    await client.submit(batch);
+    expect(submitActions.mock.calls[0][1].nonce).toBe("50");
+    expect(submitActions.mock.calls[1][1].nonce).toBe("51");
+    // And the counter carries on from the corrected value.
+    expect(session.nonce).toBe(52n);
+  });
+
+  it("re-signs for the corrected nonce rather than replaying the signature", async () => {
+    submitActions
+      .mockRejectedValueOnce(
+        new Error("Nonce in the request(50) is less than the nonce in the database(51)."),
+      )
+      .mockResolvedValueOnce({ txId: "0xtx", isPreflightError: false });
+    await client.submit(batch);
+    // The nonce is part of the signed bytes, so a replayed signature
+    // would be rejected just as hard as the stale nonce was.
+    expect(submitActions.mock.calls[1][1].signature.Secp256k1).not.toBe(
+      submitActions.mock.calls[0][1].signature.Secp256k1,
+    );
+  });
+
+  it("does not retry anything that is not a nonce-behind rejection", async () => {
+    submitActions.mockRejectedValue(new Error("insufficient balance"));
+    await expect(client.submit(batch)).rejects.toThrow("insufficient balance");
+    expect(submitActions).toHaveBeenCalledTimes(1);
+  });
+});

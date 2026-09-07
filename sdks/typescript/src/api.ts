@@ -54,6 +54,7 @@ import {
   type WithdrawRequest,
   type WithdrawResponse,
 } from "./models.js";
+import type { ActiveOrdersResponse } from "./triggers.js";
 import type {
   SignedEnvelope,
   TurboReferralActivation,
@@ -166,7 +167,23 @@ export class O2Api {
         });
         clearTimeout(timeoutId);
 
-        const body = (await resp.json()) as Record<string, unknown>;
+        // NOT ALWAYS JSON. A gateway rejection, a 413, a 5xx from the
+        // edge — several answers arrive as plain text, and calling
+        // `.json()` on them threw `Unexpected token 'F'` and buried the
+        // actual message. Read the body once, then decide.
+        const text = await resp.text();
+        let body: Record<string, unknown>;
+        try {
+          body = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
+        } catch {
+          if (!resp.ok) {
+            throw new O2Error(
+              `HTTP ${resp.status} from ${path}: ${text.slice(0, 300)}`,
+              resp.status,
+            );
+          }
+          throw new O2Error(`Malformed response from ${path}: ${text.slice(0, 300)}`);
+        }
 
         if (!resp.ok) {
           const err = parseApiError(body);
@@ -566,6 +583,28 @@ export class O2Api {
   async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
     return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
       "O2-Owner-Id": ownerId,
+    });
+  }
+
+  /**
+   * A trader's currently-active orders on one market: spot orders with
+   * their child triggers nested, interleaved with standalone triggers.
+   *
+   * The ONLY way to discover standalone trigger orders that predate the
+   * websocket connection — `subscribe_orders` carries them on changes
+   * only, so a client that just connected cannot see them at all.
+   */
+  async getActiveOrders(
+    marketId: MarketId,
+    contract: TradeAccountId,
+    direction: "asc" | "desc" = "desc",
+    count = 50,
+  ): Promise<ActiveOrdersResponse> {
+    return this.get<ActiveOrdersResponse>("/v1/orders/active", {
+      market_id: marketId,
+      contract,
+      direction,
+      count,
     });
   }
 

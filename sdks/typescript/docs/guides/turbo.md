@@ -235,14 +235,43 @@ Ordinary spot batches are untouched by all of this. If a child has been
 driven from somewhere else, `client.refreshAccountNonce(id)` re-reads its
 counter.
 
+## Take-profit and stop-loss
+
+Protection rides the SAME signed batch as the position it protects, so
+there is no window where the position exists and the stop does not:
+
+```ts
+await client.turbo.long("fETH/fUSDC", { notional: "2000" }, {
+  takeProfit: { triggerPrice: "2600", slippageBps: 100 },
+  stopLoss:   { triggerPrice: "2400", limitPrice: "2390" },
+});
+```
+
+Legs inherit the position's size and take the closing side automatically.
+Both must be **priced** — give `limitPrice` or `slippageBps`: a margin
+account refuses an unbounded market trigger, because an unpriced order
+cannot be walked for risk. Spot has no such restriction.
+
+Editing TP/SL on an unfilled resting order is not supported for margin
+accounts (it is not in the frontend either); cancel and replace instead.
+
 ## Known gap
 
-`closeAccount()` settles `drawn_quote` in a loop before closing, which takes
-a full draw down to a few hundredths — but a **small residue can survive**
-it, and the pool then refuses the close. Neither exit can absorb the last
-fraction once fees have eaten into the posted collateral: `ReturnQuote` is
-bounded by on-account cash, `RepayFromCollateral` by collateral net of
-accrued fees. Adding margin first is the workaround.
+`closeAccount()` now cancels resting orders, flattens open positions,
+retires in-kind debts and settles `drawn_quote` before closing, and that
+sequence closes an ordinary account cleanly.
+
+What it cannot do is conjure funds. An account whose draw is tied up in a
+position it cannot afford to buy back has no self-serve exit —
+`ReturnQuote` needs cash it does not hold, and `RepayFromCollateral` needs
+collateral the line already converted. **Add margin first**, then close:
+
+```ts
+await client.turbo.addMargin(30_000_000_000n);
+await client.turbo.closeAccount();
+```
+
+The rejection says so explicitly rather than leaving you to work it out.
 
 ## Units
 
