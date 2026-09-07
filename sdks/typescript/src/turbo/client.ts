@@ -23,7 +23,6 @@
 
 import type { ContractCall } from "../encoding.js";
 import {
-  adjustQuantityForFractionalPrice,
   adjustQuantityForPrices,
   validateFractionalPrice,
 } from "../encoding.js";
@@ -77,7 +76,6 @@ import {
 import {
   encodeParallelNonce,
   NONCE_BITMAP_SIZE,
-  NONCE_SESSION_SLIDING_WINDOW_SIZE,
   newMarginAccountNonce,
   OWNER_NONCE_TTL_SECONDS,
 } from "./parallelNonce.js";
@@ -1015,7 +1013,7 @@ export class TurboClient {
       // Pass `flattenPositions: false` to drive the sequence by hand.
       if (options.flattenPositions !== false) {
         for (const position of await this.positions(id).catch(() => [])) {
-          await this.closePosition(position.market, { reducing: true } as never).catch(() => null);
+          await this.closePosition(position.market, { marginAccountId: id }).catch(() => null);
         }
         // Let the fills index before anything is sized against them.
         await new Promise((resolve) => setTimeout(resolve, SETTLE_INDEX_DELAY_MS));
@@ -1161,7 +1159,7 @@ export class TurboClient {
   async long(
     market: string | Market,
     size: TurboSize,
-    options: TurboOrderOptions = {},
+    options: TurboOrderOptions & { marginAccountId?: Hex } = {},
   ): Promise<SessionActionsResponse> {
     return this.trade("buy", market, size, options);
   }
@@ -1182,7 +1180,7 @@ export class TurboClient {
   async short(
     market: string | Market,
     size: TurboSize,
-    options: TurboOrderOptions = {},
+    options: TurboOrderOptions & { marginAccountId?: Hex } = {},
   ): Promise<SessionActionsResponse> {
     return this.trade("sell", market, size, options);
   }
@@ -1206,11 +1204,11 @@ export class TurboClient {
    */
   async closePosition(
     market: string | Market,
-    options: TurboOrderOptions & { quantity?: Numeric } = {},
+    options: TurboOrderOptions & { quantity?: Numeric; marginAccountId?: Hex } = {},
   ): Promise<SessionActionsResponse> {
     const markets = await this.host.fetchMarkets();
     const resolved = typeof market === "string" ? this.host.resolveMarket(markets, market) : market;
-    const positions = await this.positions();
+    const positions = await this.positions(options.marginAccountId);
     const position = positions.find((p) => p.market.market_id === resolved.market_id);
     if (!position) {
       throw new O2Error(`No open Turbo position on ${resolved.market_id}`);
@@ -1345,20 +1343,23 @@ export class TurboClient {
    * it is not the account's own deadline.
    */
   private mintParallelNonce(marginAccountId: Hex): string {
-    // START SOMEWHERE RANDOM, not at (word 0, bit 0).
+    // START AT A RANDOM BIT, not at bit 0.
     //
     // A parallel position is burned on chain whether or not the batch
     // lands, and the window is not readable from the API — so a cursor
     // that always starts at zero replays positions a previous PROCESS
-    // already spent, and the pool answers "Parallel nonce is not usable:
-    // nonce already used". That made a margin account untradeable from
-    // any second run of any client, which is exactly how a real caller
-    // uses an SDK.
+    // already spent, and the pool answers "nonce already used". That made
+    // a margin account untradeable from any second run of any client,
+    // which is exactly how a real caller uses an SDK.
     //
-    // The window is 8 words x 128 bits, so a random start collides rarely
-    // and `submitWithNonceRetry` walks past whatever it does hit.
+    // The WORD is deliberately NOT randomised. The window SLIDES, so
+    // words are not absolute coordinates and an arbitrary one is refused
+    // with "word position out of sliding window" — which is what
+    // randomising it caused. Start at word 0, always valid for a fresh
+    // account, and let `submitWithNonceRetry` walk forward when the
+    // window has moved on.
     const cursor = this.nonceCursors.get(marginAccountId) ?? {
-      word: BigInt(Math.floor(Math.random() * Number(NONCE_SESSION_SLIDING_WINDOW_SIZE))),
+      word: 0n,
       bit: Math.floor(Math.random() * NONCE_BITMAP_SIZE),
     };
     const nonce = encodeParallelNonce({
@@ -1371,7 +1372,7 @@ export class TurboClient {
     this.nonceCursors.set(
       marginAccountId,
       nextBit >= NONCE_BITMAP_SIZE
-        ? { word: (cursor.word + 1n) % NONCE_SESSION_SLIDING_WINDOW_SIZE, bit: 0 }
+        ? { word: cursor.word + 1n, bit: 0 }
         : { word: cursor.word, bit: nextBit },
     );
     return nonce;
@@ -1443,7 +1444,7 @@ export class TurboClient {
   private async submitWithNonceRetry(
     marginAccountId: Hex,
     send: (parallelNonce: string) => Promise<SessionActionsResponse>,
-    attempts = 8,
+    attempts = 16,
   ): Promise<SessionActionsResponse> {
     let last: unknown;
     let rearmed = false;
@@ -1462,6 +1463,20 @@ export class TurboClient {
         if (/InvalidUserSig/i.test(message) && !rearmed) {
           rearmed = true;
           await this.rearm(marginAccountId).catch(() => null);
+          last = error;
+          continue;
+        }
+        // A SPENT POSITION AND A STALE WORD NEED DIFFERENT ANSWERS.
+        // "nonce already used" means this position is gone — take the
+        // next bit. "word position out of sliding window" means the
+        // window has slid past this word entirely, and no bit inside it
+        // will do; move to the next word.
+        if (/sliding window/i.test(message)) {
+          const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
+          this.nonceCursors.set(marginAccountId, {
+            word: cursor.word + 1n,
+            bit: Math.floor(Math.random() * NONCE_BITMAP_SIZE),
+          });
           last = error;
           continue;
         }
@@ -1484,10 +1499,13 @@ export class TurboClient {
     side: "buy" | "sell",
     market: string | Market,
     size: TurboSize,
-    options: TurboOrderOptions & { reducing?: boolean } = {},
+    options: TurboOrderOptions & { reducing?: boolean; marginAccountId?: Hex } = {},
   ): Promise<SessionActionsResponse> {
     const wiring = await this.wiring();
-    const marginAccountId = await this.marginAccountId();
+    // NAMED ACCOUNT WINS. `closeAccount` may be tearing down an account
+    // that is not this client's default, and trading the default one
+    // instead would close a position the caller never asked about.
+    const marginAccountId = options.marginAccountId ?? (await this.marginAccountId());
     const markets = await this.host.fetchMarkets();
     const resolved = typeof market === "string" ? this.host.resolveMarket(markets, market) : market;
 
@@ -1536,9 +1554,83 @@ export class TurboClient {
     // the caller stated, but a notional-sized or clamp-reduced quantity is
     // computed here and would bypass it. The adjustment only ever rounds
     // DOWN, so re-applying it after a clamp can never outrun the funding.
+    // PROTECTION IS RESOLVED BEFORE THE FUNDING IS SIZED.
+    //
+    // An inherited trigger leg carries the parent's quantity but is judged
+    // at its OWN price, so attaching one can shrink the order — and the
+    // funding legs are sized from that quantity. Resolving the legs first
+    // means the Draw or Borrow is sized against the number the order will
+    // actually carry. Sizing them first and shrinking afterwards left a
+    // protected short holding in-kind debt it never sold, and a protected
+    // long holding extra drawn quote; both block a clean `closeAccount`.
+    const protection = [options.takeProfit, options.stopLoss].filter(
+      (spec): spec is ProtectionSpec => spec !== undefined,
+    );
+    for (const spec of protection) {
+      if (spec.limitPrice === undefined && spec.slippageBps === undefined) {
+        throw new O2Error(
+          "A Turbo trigger must be priced — pass limitPrice or slippageBps. " +
+            "The pool refuses an unbounded market trigger because it cannot walk an unpriced order for risk.",
+        );
+      }
+    }
+
+    const scaleSpec = (spec: ProtectionSpec): ProtectionSpec => ({
+      ...spec,
+      triggerPrice: this.host.normalizeCreateOrderValues(
+        resolved,
+        spec.triggerPrice,
+        "1",
+        "triggerPrice",
+        "quantity",
+      ).scaledPrice,
+      ...(spec.limitPrice !== undefined
+        ? {
+            limitPrice: this.host.normalizeCreateOrderValues(
+              resolved,
+              spec.limitPrice,
+              "1",
+              "limitPrice",
+              "quantity",
+            ).scaledPrice,
+          }
+        : {}),
+      // SCALED LIKE EVERY OTHER QUANTITY. A caller passing "0.5" meant
+      // half a unit, not half a base unit; sending the raw string is
+      // either rejected outright or sized a billion times wrong.
+      ...(spec.quantity !== undefined
+        ? {
+            quantity: this.host.normalizeCreateOrderValues(
+              resolved,
+              scaledPrice,
+              spec.quantity,
+              "price",
+              "quantity",
+            ).scaledQuantity,
+          }
+        : {}),
+    });
+
+    const legs = protection.map((spec) =>
+      protectionLeg(
+        scaleSpec(spec),
+        side,
+        PARENT_ORDER_PLACEHOLDER,
+        priceTick(resolved.quote.decimals, resolved.quote.max_precision),
+      ),
+    );
+
+    // EVERY price this batch is judged at binds the quantity, so the fit
+    // covers the spot price and each trigger's own.
+    const judgedPrices = [scaledPrice, ...legs.map((leg) => triggerLockPrice(leg))];
     const fitPrice = (quantity: bigint): bigint => {
-      if (validateFractionalPrice(scaledPrice, quantity, resolved.base.decimals)) return quantity;
-      return adjustQuantityForFractionalPrice(scaledPrice, quantity, resolved.base.decimals);
+      if (
+        legs.length === 0 &&
+        validateFractionalPrice(scaledPrice, quantity, resolved.base.decimals)
+      ) {
+        return quantity;
+      }
+      return adjustQuantityForPrices(judgedPrices, quantity, resolved.base.decimals);
     };
 
     // The order quantity is not fixed until the funding is: a clamped
@@ -1637,62 +1729,9 @@ export class TurboClient {
       }
     }
 
-    // PROTECTION RIDES THE SAME BATCH. A separate call would leave a
-    // window where the position exists and the stop does not.
-    const protection = [options.takeProfit, options.stopLoss].filter(
-      (spec): spec is ProtectionSpec => spec !== undefined,
-    );
-    for (const spec of protection) {
-      if (spec.limitPrice === undefined && spec.slippageBps === undefined) {
-        throw new O2Error(
-          "A Turbo trigger must be priced — pass limitPrice or slippageBps. " +
-            "The pool refuses an unbounded market trigger because it cannot walk an unpriced order for risk.",
-        );
-      }
-    }
-
-    const scaleSpec = (spec: ProtectionSpec): ProtectionSpec => ({
-      ...spec,
-      triggerPrice: this.host.normalizeCreateOrderValues(
-        resolved,
-        spec.triggerPrice,
-        "1",
-        "triggerPrice",
-        "quantity",
-      ).scaledPrice,
-      ...(spec.limitPrice !== undefined
-        ? {
-            limitPrice: this.host.normalizeCreateOrderValues(
-              resolved,
-              spec.limitPrice,
-              "1",
-              "limitPrice",
-              "quantity",
-            ).scaledPrice,
-          }
-        : {}),
-    });
-
-    if (protection.length > 0) {
-      const tick = priceTick(resolved.quote.decimals, resolved.quote.max_precision);
-      const legs = protection.map((spec) =>
-        protectionLeg(scaleSpec(spec), side, PARENT_ORDER_PLACEHOLDER, tick),
-      );
-
-      // EVERY PRICE IN THE BATCH BINDS THE QUANTITY. An inherited trigger
-      // leg carries the parent's size but is checked at its OWN price, so
-      // a quantity that divides cleanly against the spot price is still
-      // refused once a stop at another price is attached.
-      orderQuantity = adjustQuantityForPrices(
-        [scaledPrice, ...legs.map((leg) => triggerLockPrice(leg))],
-        orderQuantity,
-        resolved.base.decimals,
-      );
-      if (orderQuantity <= 0n) {
-        throw new O2Error(
-          "No quantity satisfies the fractional-price rule at every price in this batch; try a larger size or fewer triggers.",
-        );
-      }
+    // The legs were resolved before the funding was sized — see above —
+    // so the order simply carries them.
+    if (legs.length > 0) {
       spotActions.push({
         CreateOrderWithTriggers: {
           side: capitalizeSide(side),

@@ -982,3 +982,100 @@ describe("regression: a rotated session key orphans the child", () => {
     expect(api.getAccount.mock.calls.length).toBe(after);
   });
 });
+
+describe("regression: PR #76 third review round", () => {
+  /**
+   * Prices chosen so the TRIGGER binds the quantity and the spot price
+   * does not: 2000.0 divides 10^9 exactly (quantum 1) while a 2590.0 limit
+   * leg forces multiples of 100. A quantity of 1_000_000_001 therefore
+   * survives a spot-only fit and is reduced by the all-price fit — which
+   * is exactly the gap the funding legs used to be sized across.
+   */
+  const SPOT_PRICE = "2000";
+  const RAGGED_QTY = 1_000_000_001n;
+  const FITTED_QTY = 1_000_000_000n;
+  const priced = {
+    takeProfit: { triggerPrice: "2600", limitPrice: "2590" },
+  };
+
+  it("sizes the funding leg against the quantity the ORDER ends up carrying", async () => {
+    // An inherited trigger leg is judged at its OWN price, so attaching
+    // one can shrink the order. Sizing the Draw first and shrinking
+    // afterwards over-funded it — extra drawn quote on a long, unsold
+    // in-kind debt on a short, and neither lets `closeAccount` finish.
+    const { host, submitted } = makeHost();
+    await new TurboClient(host)
+      .use(CHILD)
+      .long(MARKET, { quantity: RAGGED_QTY }, { price: SPOT_PRICE, ...priced });
+
+    const actions = submitted[0].marketActions[0].actions;
+    const draw = actions.find((a) => "Draw" in a) as { Draw: { amount: string } };
+    const order = actions.at(-1) as { CreateOrderWithTriggers: { quantity: string } };
+    expect(order.CreateOrderWithTriggers.quantity).toBe(FITTED_QTY.toString());
+    // The draw must cover the escrow of the FINAL quantity, not the one
+    // the fit discarded.
+    expect(BigInt(draw.Draw.amount)).toBe((2_000_000_000n * FITTED_QTY) / 10n ** 9n);
+  });
+
+  it("borrows only what the shrunken sell will forward", async () => {
+    const { host, submitted } = makeHost();
+    await new TurboClient(host)
+      .use(CHILD)
+      .short(MARKET, { quantity: RAGGED_QTY }, { price: SPOT_PRICE, ...priced });
+    const actions = submitted[0].marketActions[0].actions;
+    const borrow = actions.find((a) => "Borrow" in a) as { Borrow: { amount: string } };
+    const order = actions.at(-1) as { CreateOrderWithTriggers: { quantity: string } };
+    expect(order.CreateOrderWithTriggers.quantity).toBe(FITTED_QTY.toString());
+    // Anything borrowed above what is sold stays behind as in-kind debt.
+    expect(borrow.Borrow.amount).toBe(order.CreateOrderWithTriggers.quantity);
+  });
+
+  it("scales a protection quantity given as a human decimal", async () => {
+    const { host, submitted } = makeHost();
+    await new TurboClient(host).use(CHILD).long(
+      MARKET,
+      { quantity: "1" },
+      {
+        price: "2000",
+        takeProfit: { triggerPrice: "2600", limitPrice: "2590", quantity: "0.5" },
+      },
+    );
+    const order = submitted[0].marketActions[0].actions.at(-1) as {
+      CreateOrderWithTriggers: { trigger_1: { quantity: { Quantity: { quantity: string } } } };
+    };
+    // "0.5" of a 9-decimal base is 5e8, not the string "0.5".
+    expect(order.CreateOrderWithTriggers.trigger_1.quantity.Quantity.quantity).toBe(
+      (5n * 10n ** 8n).toString(),
+    );
+  });
+
+  it("closePosition trades the account it was NAMED, not the default", async () => {
+    const OTHER = "0xa00000000000000000000000000000000000000000000000000000000000009f" as Hex;
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: (10n ** 9n).toString(),
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({ wire });
+    // Default is CHILD; ask for OTHER explicitly.
+    await new TurboClient(host)
+      .use(CHILD)
+      .closePosition(MARKET, { price: "2000", marginAccountId: OTHER });
+    expect(submitted[0].tradeAccountId).toBe(OTHER);
+  });
+});
