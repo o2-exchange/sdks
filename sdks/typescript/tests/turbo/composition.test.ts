@@ -66,7 +66,7 @@ function state(overrides: Partial<MarginStateWire> = {}): MarginStateWire {
       open_fee: "0",
       prolong_fee: ["0", "0", "0", "0"],
       prolong_seconds: ["21600", "86400", "604800", "2592000"],
-      auto_prolong_periods: [],
+      auto_prolong_periods: ["Week", "Month"],
       profit_share_bps: 0,
       price_band_bps: 0,
       max_credit_line_bps: 20_000,
@@ -108,6 +108,9 @@ function makeHost(
       trade_account_id: PARENT,
       margin_accounts: [{ contract_id: CHILD, index: 0 }],
       next_margin_account: null,
+      // The child is armed with the session key this host signs with, so
+      // `ensureArmed` is a no-op. The stale case has its own tests.
+      session: { session_id: { Address: "0xsession" }, contract_ids: [], expiry: "4102444800" },
     }),
     getMarginState: vi.fn().mockResolvedValue(opts.wire ?? state()),
     getMarginPool: vi.fn().mockResolvedValue({
@@ -179,8 +182,15 @@ function makeHost(
     },
   };
 
+  hostSubmissions.set(host, submitted);
   return { host, submitted, api };
 }
+
+/** The submitted-batch array a host was built with. */
+const hostSubmissions = new WeakMap<TurboHost, PreparedBatch[]>();
+const makeHostRef = (host: TurboHost) => ({
+  submitted: hostSubmissions.get(host) as PreparedBatch[],
+});
 
 const kindsOf = (batch: PreparedBatch) =>
   batch.marketActions[0].actions.map((a) => Object.keys(a)[0]);
@@ -793,5 +803,182 @@ describe("regression: every emitted quantity satisfies the fractional-price rule
     await expect(
       new TurboClient(host).use(CHILD).long(MARKET, { quantity: 1n }, { price: PRICE }),
     ).rejects.toThrow(/fractional-price rule/);
+  });
+});
+
+describe("regression: extend and auto-extend consult the tier", () => {
+  /**
+   * A PREPAID tier publishes `prolong_seconds` of zero for every period —
+   * it sells one fixed term and rolls over instead — and the pool reverts
+   * `prolong_session` on it. Live testnet answered with an undecodable
+   * `require` log, which tells a caller nothing.
+   */
+  const prepaidTier = (base: NonNullable<MarginStateWire["tier"]>) => ({
+    ...base,
+    prolong_seconds: ["0", "0", "0", "0"],
+    auto_prolong_periods: [],
+    turbo: {
+      max_loss_bps: ["150", "200", "250", "300"] as [string, string, string, string],
+      rollover_profit_bps: "900",
+      max_rollovers: "3",
+      term_seconds: "604800",
+    },
+  });
+
+  it("refuses to extend a tier that sells no extensions", async () => {
+    const wire = state();
+    wire.tier = prepaidTier(wire.tier as NonNullable<MarginStateWire["tier"]>) as never;
+    const { host, submitted } = makeHost({ wire });
+    await expect(new TurboClient(host).use(CHILD).extend("Week")).rejects.toThrow(
+      /does not sell extensions/,
+    );
+    // Refused BEFORE signing — nothing was submitted.
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("refuses auto-extend when the tier offers none", async () => {
+    const wire = state();
+    wire.tier = prepaidTier(wire.tier as NonNullable<MarginStateWire["tier"]>) as never;
+    const { host, submitted } = makeHost({ wire });
+    await expect(new TurboClient(host).use(CHILD).setAutoExtend("Week")).rejects.toThrow(
+      /does not offer auto-extension/,
+    );
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("refuses a period the tier does not auto-extend at, naming the ones it does", async () => {
+    const { host } = makeHost(); // offers Week, Month
+    await expect(new TurboClient(host).use(CHILD).setAutoExtend("Day")).rejects.toThrow(
+      /auto-extends at Week, Month — not Day/,
+    );
+  });
+
+  it("always allows DISARMING, whatever the tier offers", async () => {
+    const wire = state();
+    wire.tier = prepaidTier(wire.tier as NonNullable<MarginStateWire["tier"]>) as never;
+    const { host, submitted } = makeHost({ wire });
+    await new TurboClient(host).use(CHILD).setAutoExtend(null);
+    expect(kindsOf(submitted[0])).toEqual(["SetAutoProlong"]);
+  });
+});
+
+describe("regression: repayInKind sweeps before it repays", () => {
+  /**
+   * Buying a short back leaves the base SETTLED on the book, not on the
+   * account. Sizing the repay off `on_account` alone repaid nothing, fell
+   * through to collateral netting, and the pool refused that too when the
+   * collateral was worth less than the debt — so `closeAccount` was stuck
+   * on "still carries 1 in-kind debt(s)" with the coins sitting right there.
+   */
+  const withDebt = () =>
+    state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "3999600",
+          debt: "4000000",
+        },
+      ],
+    });
+
+  it("settles the book in the same batch as the repay", async () => {
+    const { host, submitted } = makeHost({ wire: withDebt() });
+    await new TurboClient(host).use(CHILD).repayInKind({ marginAccountId: CHILD });
+    expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "Repay"]);
+    const repay = submitted[0].marketActions[0].actions[1] as {
+      Repay: { asset_id: string; amount: string };
+    };
+    // Repays the SETTLED coins, which `on_account` alone could not see.
+    expect(repay.Repay.amount).toBe("3999600");
+    expect(repay.Repay.asset_id).toBe(ETH);
+  });
+
+  it("converts the remainder out of collateral", async () => {
+    const { host, submitted } = makeHost({ wire: withDebt() });
+    await new TurboClient(host).use(CHILD).repayInKind({ marginAccountId: CHILD });
+    const last = submitted.at(-1) as PreparedBatch;
+    expect(kindsOf(last)).toEqual(["RepayBaseFromCollateral"]);
+    const conv = last.marketActions[0].actions[0] as {
+      RepayBaseFromCollateral: { amount: string };
+    };
+    expect(conv.RepayBaseFromCollateral.amount).toBe("400");
+  });
+
+  it("never tries to repay the collateral asset in kind", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "5000",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({ wire });
+    await new TurboClient(host).use(CHILD).repayInKind({ marginAccountId: CHILD });
+    // The collateral is DRAWN, not borrowed — its obligation is
+    // `drawn_quote` and settles through repayDrawn.
+    expect(submitted).toHaveLength(0);
+  });
+});
+
+describe("regression: a rotated session key orphans the child", () => {
+  /**
+   * A margin child validates against whatever key was armed when it was
+   * opened. Rotating the PARENT's session — any `createSession` call —
+   * leaves it pointed at a key nobody signs with, and the account goes
+   * untradeable until it is re-armed.
+   *
+   * Checked PROACTIVELY rather than on an error string: a stale
+   * `set_session` surfaces as `InvalidUserSig`, but a `settle_balance` on
+   * the same stale session comes back as a bare `Revert(FAILED_REQUIRE)`
+   * with nothing to match on.
+   */
+  it("re-arms before trading when the armed key is stale", async () => {
+    const { host, api } = makeHost();
+    api.getAccount.mockResolvedValue({
+      trade_account_id: PARENT,
+      margin_accounts: [{ contract_id: CHILD, index: 0 }],
+      next_margin_account: null,
+      session: { session_id: { Address: "0xSOMEOLDKEY" }, contract_ids: [], expiry: "1" },
+    });
+    const { submitted } = makeHostRef(host);
+    await new TurboClient(host).use(CHILD).long(MARKET, { quantity: "1" }, { price: "2000" });
+
+    // The re-arm goes first, as the PARENT, and only then the trade.
+    expect(kindsOf(submitted[0])).toEqual(["SetMarginAccountSession"]);
+    expect(submitted[0].tradeAccountId).toBe(PARENT);
+    expect(kindsOf(submitted[1])).toEqual(["SettleBalance", "Draw", "CreateOrder"]);
+    expect(submitted[1].tradeAccountId).toBe(CHILD);
+  });
+
+  it("does NOT re-arm when the child already holds the live key", async () => {
+    const { host, submitted } = makeHost();
+    await new TurboClient(host).use(CHILD).long(MARKET, { quantity: "1" }, { price: "2000" });
+    expect(submitted).toHaveLength(1);
+    expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "Draw", "CreateOrder"]);
+  });
+
+  it("checks once per child, not once per batch", async () => {
+    const { host, api } = makeHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await turbo.long(MARKET, { quantity: "1" }, { price: "2000" });
+    const after = api.getAccount.mock.calls.length;
+    await turbo.long(MARKET, { quantity: "1" }, { price: "2000" });
+    expect(api.getAccount.mock.calls.length).toBe(after);
   });
 });

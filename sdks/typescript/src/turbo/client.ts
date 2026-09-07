@@ -32,6 +32,7 @@ import type {
   Numeric,
   OrderType,
   SessionActionsResponse,
+  TradeAccountId,
 } from "../models.js";
 import { capitalizeSide, scaleOrderType } from "../utils.js";
 import type { MarginAction } from "./actions.js";
@@ -42,6 +43,8 @@ import {
   drawAction,
   prolongSessionAction,
   registerMarginAccountAction,
+  repayAction,
+  repayBaseFromCollateralAction,
   repayFromCollateralAction,
   returnQuoteAction,
   setAutoProlongAction,
@@ -63,6 +66,7 @@ import {
 import {
   encodeParallelNonce,
   NONCE_BITMAP_SIZE,
+  NONCE_SESSION_SLIDING_WINDOW_SIZE,
   newMarginAccountNonce,
   OWNER_NONCE_TTL_SECONDS,
 } from "./parallelNonce.js";
@@ -273,6 +277,8 @@ export class TurboClient {
    * client rather than rebuilding it per trade.
    */
   private readonly nonceCursors = new Map<Hex, { word: bigint; bit: number }>();
+  /** Which session key each child is known to be armed with. */
+  private readonly armedKeys = new Map<Hex, string>();
 
   constructor(host: TurboHost) {
     this.host = host;
@@ -765,6 +771,7 @@ export class TurboClient {
     const start = await this.submitAsParent(actions, wiring, session);
 
     this.accountId = marginAccountId;
+    this.armedKeys.set(marginAccountId, session.sessionAddress);
     return {
       marginAccountId,
       index: target.index,
@@ -785,27 +792,144 @@ export class TurboClient {
     return this.submitAsParent([addMarginCollateralAction(id, amount)], wiring, session);
   }
 
-  /** Buy more session life. */
+  /**
+   * Buy more session life.
+   *
+   * Not every tier sells it. A PREPAID tier publishes `prolong_seconds` of
+   * zero for every period — it sells one fixed term and rolls over rather
+   * than extending — and `prolong_session` reverts on it. That revert
+   * arrives as an undecodable `require` from the pool, so the tier is
+   * consulted here and the refusal explains itself instead.
+   */
   async extend(
     period: ProlongPeriod,
     times: number = 1,
     marginAccountId?: Hex,
   ): Promise<SessionActionsResponse> {
-    return this.submitAsChild(
-      [prolongSessionAction(period, times)],
-      marginAccountId ?? (await this.marginAccountId()),
-    );
+    const id = marginAccountId ?? (await this.marginAccountId());
+    const tier = (await this.state(id)).tier;
+    if (tier) {
+      const seconds = big(tier.prolong_seconds?.[prolongPeriodIndex(period)]);
+      if (seconds <= 0n) {
+        throw new O2Error(
+          `Tier ${tier.tier_id} does not sell extensions (${period} is worth 0 seconds on it). ` +
+            "Prepaid tiers run a fixed term and roll over instead of extending.",
+        );
+      }
+    }
+    return this.submitAsChild([prolongSessionAction(period, times)], id);
   }
 
-  /** Arm or disarm auto-extension. */
+  /**
+   * Arm or disarm auto-extension.
+   *
+   * The tier publishes which periods it will auto-renew at
+   * (`auto_prolong_periods`); an empty list means auto-extension is not
+   * offered at all and the pool reverts. Disarming (`null`) is always
+   * allowed — it only clears whatever was set.
+   */
   async setAutoExtend(
     period: ProlongPeriod | null,
     marginAccountId?: Hex,
   ): Promise<SessionActionsResponse> {
-    return this.submitAsChild(
-      [setAutoProlongAction(period)],
-      marginAccountId ?? (await this.marginAccountId()),
-    );
+    const id = marginAccountId ?? (await this.marginAccountId());
+    if (period !== null) {
+      const tier = (await this.state(id)).tier;
+      const offered = tier?.auto_prolong_periods ?? [];
+      if (tier && !offered.includes(period)) {
+        throw new O2Error(
+          offered.length === 0
+            ? `Tier ${tier.tier_id} does not offer auto-extension.`
+            : `Tier ${tier.tier_id} auto-extends at ${offered.join(", ")} — not ${period}.`,
+        );
+      }
+    }
+    return this.submitAsChild([setAutoProlongAction(period)], id);
+  }
+
+  /**
+   * Hand borrowed assets back to the pool in kind.
+   *
+   * A short leaves an IN-KIND DEBT that closing the position does not by
+   * itself retire: buying the base back puts the coins on the account, but
+   * the pool is still owed them. `closeAccount` refuses while any remain
+   * ("still carries N in-kind debt(s)"), so this is the step between a
+   * closed short and a closed account.
+   *
+   * Repays what the account holds, then converts any remainder straight out
+   * of posted collateral — the only exit for a short that moved against the
+   * trader, who cannot hand back an asset they no longer have.
+   *
+   * @returns the assets that could not be fully retired.
+   */
+  async repayInKind(
+    options: { marginAccountId?: Hex; fromCollateral?: boolean; strict?: boolean } = {},
+  ): Promise<Hex[]> {
+    const id = options.marginAccountId ?? (await this.marginAccountId());
+    const wiring = await this.wiring();
+    const markets = await this.host.fetchMarkets();
+    const wire = await this.state(id);
+    const stillOwed: Hex[] = [];
+
+    for (const row of wire.balances) {
+      const owed = big(row.debt);
+      if (owed <= 0n) continue;
+      const assetId = normaliseHex(row.asset_id);
+      // The collateral is drawn, not borrowed; its obligation is
+      // `drawn_quote` and settles through `repayDrawn`.
+      if (sameHex(assetId, wiring.collateralAssetId)) continue;
+
+      // SWEEP BEFORE REPAYING. Buying a short back leaves the base SETTLED
+      // on the book, not on the account — `on_account` reads 0 while
+      // `settled` holds the coins. Sizing the repay off `on_account` alone
+      // therefore repaid NOTHING and fell through to collateral netting,
+      // which the pool refuses when the collateral is worth less than the
+      // debt. `Repay` forwards coins, so they have to be home first.
+      const market = markets.markets.find((m) => sameHex(m.base.asset, assetId));
+      const held = big(row.on_account) + (market ? big(row.settled) : 0n);
+      const payable = min(owed, held);
+      let remaining = owed;
+
+      if (payable > 0n) {
+        try {
+          if (market && big(row.settled) > 0n) {
+            await this.submitMixed(
+              [
+                { SettleBalance: { to: { ContractId: id } } },
+                { Repay: { asset_id: assetId, amount: payable.toString() } },
+              ],
+              market,
+              id,
+              wiring,
+              {},
+            );
+          } else {
+            await this.submitAsChild([repayAction(assetId, payable)], id);
+          }
+          remaining = owed - payable;
+        } catch (error) {
+          if (options.strict) throw error;
+          stillOwed.push(assetId);
+          continue;
+        }
+      }
+
+      if (remaining > 0n && options.fromCollateral !== false) {
+        // Priced at the ask and charged a fee — not value-neutral for the
+        // pool, which is left holding an asset to reacquire. It is still
+        // the only exit for a debt the account cannot cover in kind, and
+        // after the sweep above the remainder is usually dust.
+        try {
+          await this.submitAsChild([repayBaseFromCollateralAction(assetId, remaining)], id);
+          remaining = 0n;
+        } catch (error) {
+          if (options.strict) throw error;
+          /* otherwise reported through the return value */
+        }
+      }
+      if (remaining > 0n) stillOwed.push(assetId);
+    }
+    return stillOwed;
   }
 
   /** Claim an asset out of the margin account, back to the parent. */
@@ -848,6 +972,11 @@ export class TurboClient {
     //
     // Opt out with `settleDrawnQuote: false` to drive the sequence by hand.
     if (options.settleDrawnQuote !== false) {
+      // IN-KIND DEBTS FIRST. A closed short still leaves the pool owed the
+      // asset, and the close is refused while any remain — "still carries
+      // N in-kind debt(s)". Retiring them can also free quote, so this runs
+      // before the drawn-quote settlement rather than after.
+      await this.repayInKind({ marginAccountId: id }).catch(() => []);
       await this.settleDrawnQuote(id);
     }
 
@@ -1102,7 +1231,22 @@ export class TurboClient {
    * it is not the account's own deadline.
    */
   private mintParallelNonce(marginAccountId: Hex): string {
-    const cursor = this.nonceCursors.get(marginAccountId) ?? { word: 0n, bit: 0 };
+    // START SOMEWHERE RANDOM, not at (word 0, bit 0).
+    //
+    // A parallel position is burned on chain whether or not the batch
+    // lands, and the window is not readable from the API — so a cursor
+    // that always starts at zero replays positions a previous PROCESS
+    // already spent, and the pool answers "Parallel nonce is not usable:
+    // nonce already used". That made a margin account untradeable from
+    // any second run of any client, which is exactly how a real caller
+    // uses an SDK.
+    //
+    // The window is 8 words x 128 bits, so a random start collides rarely
+    // and `submitWithNonceRetry` walks past whatever it does hit.
+    const cursor = this.nonceCursors.get(marginAccountId) ?? {
+      word: BigInt(Math.floor(Math.random() * Number(NONCE_SESSION_SLIDING_WINDOW_SIZE))),
+      bit: Math.floor(Math.random() * NONCE_BITMAP_SIZE),
+    };
     const nonce = encodeParallelNonce({
       nonceSessionId: 0,
       timestamp: Math.floor(Date.now() / 1000) + OWNER_NONCE_TTL_SECONDS,
@@ -1113,10 +1257,105 @@ export class TurboClient {
     this.nonceCursors.set(
       marginAccountId,
       nextBit >= NONCE_BITMAP_SIZE
-        ? { word: cursor.word + 1n, bit: 0 }
+        ? { word: (cursor.word + 1n) % NONCE_SESSION_SLIDING_WINDOW_SIZE, bit: 0 }
         : { word: cursor.word, bit: nextBit },
     );
     return nonce;
+  }
+
+  /**
+   * Make sure this child validates against the key we are about to sign
+   * with, re-arming it if not.
+   *
+   * PROACTIVE, not reactive. A child pointed at a rotated-away key does
+   * not fail in one recognisable way: `set_session` mismatches surface as
+   * `InvalidUserSig`, but a `settle_balance` on the same stale session
+   * comes back as a bare `Revert(FAILED_REQUIRE)` with nothing to match
+   * on. Reading the armed key costs one request per child per client and
+   * removes the guesswork entirely.
+   */
+  private async ensureArmed(marginAccountId: Hex): Promise<void> {
+    const session = this.host.ensureSession();
+    if (this.armedKeys.get(marginAccountId) === session.sessionAddress) return;
+
+    const info = await this.host.api
+      .getAccount({ tradeAccountId: marginAccountId as unknown as TradeAccountId })
+      .catch(() => null);
+    const armed = (info?.session?.session_id as { Address?: string } | undefined)?.Address;
+    if (!armed || !sameHex(armed, session.sessionAddress)) {
+      await this.rearm(marginAccountId);
+    }
+    this.armedKeys.set(marginAccountId, session.sessionAddress);
+  }
+
+  /**
+   * Re-point a margin child at the session key that is live NOW.
+   *
+   * A child holds whatever key was armed when it was last told — by
+   * `open()`, or by a previous re-arm. Rotating the PARENT's session
+   * (any `createSession` call) does not touch it, so the child keeps
+   * validating against a key nobody signs with any more and every batch
+   * comes back `InvalidUserSig`. The account is not broken; it is pointed
+   * at yesterday's key.
+   *
+   * Session-signed, so it costs no wallet prompt. Runs as the PARENT,
+   * which is the only identity the child's `only_parent()` guard accepts.
+   */
+  async rearm(marginAccountId?: Hex): Promise<SessionActionsResponse> {
+    const session = this.host.ensureSession();
+    const wiring = await this.wiring();
+    const id = marginAccountId ?? (await this.marginAccountId());
+    return this.submitAsParent(
+      [
+        setMarginAccountSessionAction({
+          marginAccountId: id,
+          marginNonce: newMarginAccountNonce(),
+          sessionId: { Address: session.sessionAddress },
+          expiry: MARGIN_SESSION_EXPIRY,
+        }),
+      ],
+      wiring,
+      session,
+    );
+  }
+
+  /**
+   * Submit a child batch, walking past nonce positions already burned.
+   *
+   * The window cannot be read back, so a collision is discovered only by
+   * being told — and being told costs one round trip, not a failed trade.
+   * Only a nonce complaint is retried; anything else is a real answer.
+   */
+  private async submitWithNonceRetry(
+    marginAccountId: Hex,
+    send: (parallelNonce: string) => Promise<SessionActionsResponse>,
+    attempts = 8,
+  ): Promise<SessionActionsResponse> {
+    let last: unknown;
+    let rearmed = false;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      try {
+        return await send(this.mintParallelNonce(marginAccountId));
+      } catch (error) {
+        const message = String((error as Error)?.message ?? error);
+
+        // THE CHILD IS POINTED AT AN OLD KEY. Rotating the parent's
+        // session leaves the child validating against whatever was armed
+        // when it was opened, so a perfectly good batch is unsignable no
+        // matter how it is rebuilt. Re-arming is itself session-signed —
+        // no wallet prompt — so the retry costs a round trip rather than
+        // an interaction. Once only: a second failure is a real answer.
+        if (/InvalidUserSig/i.test(message) && !rearmed) {
+          rearmed = true;
+          await this.rearm(marginAccountId).catch(() => null);
+          last = error;
+          continue;
+        }
+        if (!/nonce/i.test(message)) throw error;
+        last = error;
+      }
+    }
+    throw last;
   }
 
   /**
@@ -1365,19 +1604,25 @@ export class TurboClient {
     const carrier = markets.markets[0];
     if (!carrier) throw new O2Error("No markets available to carry the batch");
 
+    await this.ensureArmed(marginAccountId);
     const scoped: MarginWiring = { ...wiring, marginAccountId };
     const calls = actions.map((a) => marginActionToCall(a, scoped));
-    return this.host.submitPrepared({
-      marketActions: [
-        { market_id: carrier.market_id, actions: actions as unknown as Record<string, unknown>[] },
-      ],
-      calls,
-      tradeAccountId: marginAccountId,
-      // The child's owner is the PARENT contract, not the wallet.
-      ownerId: wiring.parentAccountId,
-      // Margin batches are accepted under a parallel nonce only.
-      parallelNonce: this.mintParallelNonce(marginAccountId),
-    });
+    return this.submitWithNonceRetry(marginAccountId, (parallelNonce) =>
+      this.host.submitPrepared({
+        marketActions: [
+          {
+            market_id: carrier.market_id,
+            actions: actions as unknown as Record<string, unknown>[],
+          },
+        ],
+        calls,
+        tradeAccountId: marginAccountId,
+        // The child's owner is the PARENT contract, not the wallet.
+        ownerId: wiring.parentAccountId,
+        // Margin batches are accepted under a parallel nonce only.
+        parallelNonce,
+      }),
+    );
   }
 
   /**
@@ -1416,6 +1661,7 @@ export class TurboClient {
     wiring: TurboWiring,
     options: { collectOrders?: boolean },
   ): Promise<SessionActionsResponse> {
+    await this.ensureArmed(marginAccountId);
     const scoped: MarginWiring = { ...wiring, marginAccountId };
     const calls: ContractCall[] = actions.map((action) => {
       const key = Object.keys(action)[0] as string;
@@ -1425,18 +1671,21 @@ export class TurboClient {
       return marginActionToCall(action as unknown as MarginAction, scoped);
     });
 
-    return this.host.submitPrepared({
-      marketActions: [{ market_id: market.market_id, actions }],
-      calls,
-      // Trading runs AS the margin child: balances live there, so a settle
-      // to the parent would move the session's money out of the session.
-      tradeAccountId: marginAccountId,
-      // And the child is owned by the PARENT contract, so that is the
-      // owner id the batch is authorised under.
-      ownerId: wiring.parentAccountId,
-      parallelNonce: this.mintParallelNonce(marginAccountId),
-      collectOrders: options.collectOrders,
-    });
+    return this.submitWithNonceRetry(marginAccountId, (parallelNonce) =>
+      this.host.submitPrepared({
+        marketActions: [{ market_id: market.market_id, actions }],
+        calls,
+        // Trading runs AS the margin child: balances live there, so a
+        // settle to the parent would move the session's money out of the
+        // session.
+        tradeAccountId: marginAccountId,
+        // And the child is owned by the PARENT contract, so that is the
+        // owner id the batch is authorised under.
+        ownerId: wiring.parentAccountId,
+        parallelNonce,
+        collectOrders: options.collectOrders,
+      }),
+    );
   }
 
   /**

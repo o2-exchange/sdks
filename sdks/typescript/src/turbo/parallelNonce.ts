@@ -27,6 +27,9 @@ const SESSION_ID_SHIFT = 168n;
 /** Bits in one bitmap word. */
 export const NONCE_BITMAP_SIZE = 128;
 
+/** Words the on-chain sliding window covers. */
+export const NONCE_SESSION_SLIDING_WINDOW_SIZE = 8n;
+
 /** Must match the deployed trade account's `MAX_NONCE_SESSION_ID`. */
 export const MAX_NONCE_SESSION_ID = 4;
 
