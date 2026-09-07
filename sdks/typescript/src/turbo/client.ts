@@ -40,6 +40,7 @@ import {
   priceTick,
   protectionLeg,
   triggerJudgedPrices,
+  walkPrice,
 } from "../triggers.js";
 import { capitalizeSide, scaleOrderType } from "../utils.js";
 import type { MarginAction } from "./actions.js";
@@ -185,7 +186,15 @@ export interface TurboOrderOptions {
    * escrow exactly. Omit it and the best bid/ask is fetched and used.
    */
   price?: Numeric;
-  /** Defaults to `"Spot"`. */
+  /**
+   * Defaults to `"Spot"`.
+   *
+   * `"Market"` is REFUSED on a margin account: the pool funds an order at
+   * its worst-case execution price and an unbounded market has none, so
+   * preflight answers `UnpricedOrder`. Use a bounded market instead —
+   * {@link boundedMarketFromSlippage} builds one from a reference price
+   * and a slippage tolerance.
+   */
   orderType?: OrderType;
   /** Return the created orders in the response. Defaults to `true`. */
   collectOrders?: boolean;
@@ -1584,8 +1593,19 @@ export class TurboClient {
     // buy) needs a Draw; forwarding BASE (a sell) needs a Borrow, because
     // on a credit line you do not own the asset you are selling.
     const escrowIsQuote = side === "buy";
+
+    // FUND AT THE WORST CASE, NOT THE REFERENCE.
+    //
+    // The pool values a bounded-market buy at `max_price` and a bounded
+    // sell at `min_price` (`walk_price`), so sizing the Draw off the
+    // reference price underfunds it against preflight and the order fails
+    // every time. An unbounded `Market` has no worst case at all, which is
+    // why margin refuses it — caught here so the refusal arrives before a
+    // signature rather than after one.
+    const orderType = options.orderType ?? "Spot";
+    const fundingPrice = walkPrice(side, scaledPrice, scaleOrderType(orderType, resolved));
     const quoteCostOf = (quantity: bigint): bigint =>
-      (scaledPrice * quantity) / 10n ** BigInt(resolved.base.decimals);
+      (fundingPrice * quantity) / 10n ** BigInt(resolved.base.decimals);
 
     // ADDING exposure must be fully funded; a REDUCING trade may clamp.
     // A clamped leg behind a full-size opening order is a custody revert
@@ -1646,20 +1666,6 @@ export class TurboClient {
               "limitPrice",
               "quantity",
             ).scaledPrice,
-          }
-        : {}),
-      // SCALED LIKE EVERY OTHER QUANTITY. A caller passing "0.5" meant
-      // half a unit, not half a base unit; sending the raw string is
-      // either rejected outright or sized a billion times wrong.
-      ...(spec.quantity !== undefined
-        ? {
-            quantity: this.host.normalizeCreateOrderValues(
-              resolved,
-              scaledPrice,
-              spec.quantity,
-              "price",
-              "quantity",
-            ).scaledQuantity,
           }
         : {}),
     });
@@ -1748,6 +1754,27 @@ export class TurboClient {
       // (a custody revert the caller can retry after settling), and the
       // safer trade against a silent debt on every close.
       const onHand = row ? big(row.on_account) + big(row.settled) : 0n;
+
+      // LOCKED BASE IS ALREADY COMMITTED TO A RESTING SELL.
+      //
+      // `positions()` counts `locked` as held, so a long sitting behind an
+      // unfilled sell reads as a full position — but this path cannot
+      // forward those coins, so it would BORROW the difference and sell
+      // again. Two sells against one long flips the account short, and
+      // `reducing` does not stop it: the clamp only bites when the pool is
+      // short of inventory, and with a healthy pool the whole borrow goes
+      // through. `closeAccount` cancels the child's orders before
+      // flattening for exactly this reason; a reducing trade has to do the
+      // same rather than trade around them.
+      const lockedBase = row ? big(row.locked) : 0n;
+      if (options.reducing && lockedBase > 0n && orderQuantity > onHand) {
+        throw new O2Error(
+          `Cannot close: ${lockedBase} of ${resolved.base.symbol} is locked in resting orders on this market. ` +
+            "Cancel them first (client.cancelAllOrders / cancelAllTriggerOrders) — closing around them would " +
+            "borrow the locked amount and sell it twice, flipping the position short.",
+        );
+      }
+
       const needed = max(0n, orderQuantity - onHand);
       if (needed > 0n) {
         const borrowable = marginBorrowableBase(wire, limits, assetId, pool.inventory);
@@ -1790,7 +1817,7 @@ export class TurboClient {
           side: capitalizeSide(side),
           price: scaledPrice.toString(),
           quantity: orderQuantity.toString(),
-          order_type: scaleOrderType(options.orderType ?? "Spot", resolved),
+          order_type: scaleOrderType(orderType, resolved),
           trigger_1: legs[0],
           ...(legs[1] ? { trigger_2: legs[1] } : {}),
         },
@@ -1801,7 +1828,7 @@ export class TurboClient {
           side: capitalizeSide(side),
           price: scaledPrice.toString(),
           quantity: orderQuantity.toString(),
-          order_type: scaleOrderType(options.orderType ?? "Spot", resolved),
+          order_type: scaleOrderType(orderType, resolved),
         },
       });
     }

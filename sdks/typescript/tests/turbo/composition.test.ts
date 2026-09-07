@@ -8,6 +8,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import { boundedMarket } from "../../src/triggers.js";
 import { TurboClient } from "../../src/turbo/client.js";
 import type { PreparedBatch, TurboHost } from "../../src/turbo/host.js";
 import type { Hex, MarginStateWire } from "../../src/turbo/wire.js";
@@ -1036,23 +1037,39 @@ describe("regression: PR #76 third review round", () => {
     expect(borrow.Borrow.amount).toBe(order.CreateOrderWithTriggers.quantity);
   });
 
-  it("scales a protection quantity given as a human decimal", async () => {
+  it("REFUSES an explicit quantity on attached protection", async () => {
+    // `create_order_with_triggers` accepts `TriggerQuantity::ParentOrder`
+    // and nothing else — an explicit quantity is refused on chain with
+    // `QuantityMustBeParentOrder`. Substituting the parent's size instead
+    // would be worse than refusing: the caller asked to protect half a
+    // position and would silently get all of it.
     const { host, submitted } = makeHost();
-    await new TurboClient(host).use(CHILD).long(
-      MARKET,
-      { quantity: "1" },
-      {
-        price: "2000",
-        takeProfit: { triggerPrice: "2600", limitPrice: "2590", quantity: "0.5" },
-      },
-    );
+    await expect(
+      new TurboClient(host).use(CHILD).long(
+        MARKET,
+        { quantity: "1" },
+        {
+          price: "2000",
+          takeProfit: { triggerPrice: "2600", limitPrice: "2590", quantity: "0.5" },
+        },
+      ),
+    ).rejects.toThrow(/inherits the order's quantity/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("attaches protection as ParentOrder, which is what the contract takes", async () => {
+    const { host, submitted } = makeHost();
+    await new TurboClient(host)
+      .use(CHILD)
+      .long(
+        MARKET,
+        { quantity: "1" },
+        { price: "2000", takeProfit: { triggerPrice: "2600", limitPrice: "2590" } },
+      );
     const order = submitted[0].marketActions[0].actions.at(-1) as {
-      CreateOrderWithTriggers: { trigger_1: { quantity: { Quantity: { quantity: string } } } };
+      CreateOrderWithTriggers: { trigger_1: { quantity: Record<string, unknown> } };
     };
-    // "0.5" of a 9-decimal base is 5e8, not the string "0.5".
-    expect(order.CreateOrderWithTriggers.trigger_1.quantity.Quantity.quantity).toBe(
-      (5n * 10n ** 8n).toString(),
-    );
+    expect(Object.keys(order.CreateOrderWithTriggers.trigger_1.quantity)).toEqual(["ParentOrder"]);
   });
 
   it("closePosition trades the account it was NAMED, not the default", async () => {
@@ -1157,5 +1174,118 @@ describe("regression: concurrent nonce seeding", () => {
     const nonces = submitted.map(nonceOf);
     expect(nonces).toHaveLength(3);
     expect(new Set(nonces).size).toBe(3);
+  });
+});
+
+describe("regression: Pranesh's review — market orders and locked base", () => {
+  it("refuses an unbounded Market order on a margin account", async () => {
+    // The pool funds an order at its worst-case execution price and an
+    // unbounded market has none, so preflight answers `UnpricedOrder`.
+    // Refused here so the answer arrives before a signature.
+    const { host, submitted } = makeHost();
+    await expect(
+      new TurboClient(host)
+        .use(CHILD)
+        .long(MARKET, { quantity: "1" }, { price: "2000", orderType: "Market" }),
+    ).rejects.toThrow(/unbounded Market/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("funds a bounded BUY at max_price, not the reference price", async () => {
+    // `walk_price`: a bounded buy can execute as high as `max_price`, so
+    // funding it at the reference underfunds it against preflight and the
+    // order fails every time.
+    const drawFor = async (orderType?: ReturnType<typeof boundedMarket>) => {
+      const { host, submitted } = makeHost();
+      await new TurboClient(host)
+        .use(CHILD)
+        .long(MARKET, { quantity: "0.01" }, { price: "2000", ...(orderType ? { orderType } : {}) });
+      const draw = submitted[0].marketActions[0].actions.find((a) => "Draw" in a) as {
+        Draw: { amount: string };
+      };
+      return BigInt(draw.Draw.amount);
+    };
+
+    const spot = await drawFor();
+    const bounded = await drawFor(boundedMarket("2100", "1900"));
+    // 0.01 units at 2000 vs at the 2100 bound.
+    expect(spot).toBe(20_000_000n);
+    expect(bounded).toBe(21_000_000n);
+    expect(bounded).toBeGreaterThan(spot);
+  });
+
+  it("funds a bounded SELL against min_price", async () => {
+    const { host, submitted } = makeHost();
+    await new TurboClient(host)
+      .use(CHILD)
+      .short(
+        MARKET,
+        { quantity: "1" },
+        { price: "2000", orderType: boundedMarket("2100", "1900") },
+      );
+    // A sell escrows base, so the price only shapes the borrowable check;
+    // what matters is that it did not throw and borrowed the full size.
+    const borrow = submitted[0].marketActions[0].actions.find((a) => "Borrow" in a) as {
+      Borrow: { amount: string };
+    };
+    expect(borrow.Borrow.amount).toBe((10n ** 9n).toString());
+  });
+
+  it("refuses to close around base LOCKED in a resting order", async () => {
+    // `positions()` counts `locked` as held, but this path cannot forward
+    // it — so it would borrow the difference and sell a second time,
+    // flipping the position short. `reducing` does not save it: the clamp
+    // only bites when the pool is short of inventory.
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "0",
+          received: "0",
+          locked: (10n ** 9n).toString(), // the whole long sits in a resting sell
+          settled: "0",
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({ wire });
+    await expect(
+      new TurboClient(host).use(CHILD).closePosition(MARKET, { price: "2000" }),
+    ).rejects.toThrow(/locked in resting orders/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("still closes normally when nothing is locked", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: (10n ** 9n).toString(),
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+      ],
+    });
+    const { host, submitted } = makeHost({ wire });
+    await new TurboClient(host).use(CHILD).closePosition(MARKET, { price: "2000" });
+    expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "CreateOrder"]);
   });
 });

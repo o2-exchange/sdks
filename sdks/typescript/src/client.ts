@@ -666,17 +666,6 @@ export class O2Client {
             ).scaledPrice,
           }
         : {}),
-      ...(spec.quantity !== undefined
-        ? {
-            quantity: this.normalizeCreateOrderValues(
-              resolved,
-              scaledPrice,
-              spec.quantity,
-              "price",
-              "quantity",
-            ).scaledQuantity,
-          }
-        : {}),
     });
 
     const legs = [options.takeProfit, options.stopLoss]

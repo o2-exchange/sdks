@@ -264,61 +264,85 @@ export class TooManyActions extends O2Error {
   }
 }
 
+/** The account cannot cover the order (code 7005). */
+export class InsufficientBalance extends O2Error {
+  constructor(message = "Insufficient balance") {
+    super(message, 7005);
+    this.name = "InsufficientBalance";
+  }
+}
+
 // ── Trigger orders (TP/SL) ──────────────────────────────────────────
 
-/** The parent order has already partly filled (code 7005). */
+/** The parent order has already partly filled (code 7006). */
 export class ParentOrderAlreadyHasFills extends O2Error {
   constructor(message = "The parent order already has fills") {
-    super(message, 7005);
+    super(message, 7006);
     this.name = "ParentOrderAlreadyHasFills";
   }
 }
 
-/** Both legs of an OCO pair point the same way (code 7006). */
+/** Both legs of an OCO pair point the same way (code 7007). */
 export class TriggerPairSameDirection extends O2Error {
   constructor(message = "An OCO pair must straddle the parent price") {
-    super(message, 7006);
+    super(message, 7007);
     this.name = "TriggerPairSameDirection";
   }
 }
 
-/** The parent's quantity is not what the payload was signed against (code 7007). */
+/** The parent's quantity is not what the payload was signed against (code 7008). */
 export class ParentQuantityMismatch extends O2Error {
   constructor(message = "Parent order quantity does not match the signed expectation") {
-    super(message, 7007);
+    super(message, 7008);
     this.name = "ParentQuantityMismatch";
   }
 }
 
-/** The trigger arguments are not valid (code 7008). */
+/** The trigger arguments are not valid (code 7009). */
 export class InvalidTriggerOrderArgs extends O2Error {
   constructor(message = "Invalid trigger order arguments") {
-    super(message, 7008);
+    super(message, 7009);
     this.name = "InvalidTriggerOrderArgs";
   }
 }
 
-/** The trigger contradicts the order it protects (code 7009). */
+/** The trigger contradicts the order it protects (code 7010). */
 export class TriggerConflictsWithParent extends O2Error {
   constructor(message = "Trigger conflicts with its parent order") {
-    super(message, 7009);
+    super(message, 7010);
     this.name = "TriggerConflictsWithParent";
   }
 }
 
-/** Too many trigger orders on this market (code 7010). */
+/** Too many trigger orders on this market (code 7011). */
 export class TriggerOrderQuotaExceeded extends O2Error {
   constructor(message = "Trigger order quota exceeded for this market") {
-    super(message, 7010);
+    super(message, 7011);
     this.name = "TriggerOrderQuotaExceeded";
   }
 }
 
-/** Too many active spot orders on this market (code 7011). */
+/** Too many active spot orders on this market (code 7012). */
 export class ActiveSpotOrderLimitExceeded extends O2Error {
   constructor(message = "Active spot order limit exceeded for this market") {
-    super(message, 7011);
+    super(message, 7012);
     this.name = "ActiveSpotOrderLimitExceeded";
+  }
+}
+
+/** The trigger names a different parent than the payload was signed against (code 7013). */
+export class ParentOrderIdMismatch extends O2Error {
+  constructor(message = "Parent order id does not match the signed payload") {
+    super(message, 7013);
+    this.name = "ParentOrderIdMismatch";
+  }
+}
+
+/** The action's target is outside the session's signed scope (code 7014). */
+export class MarginAccountNotInSessionScope extends O2Error {
+  constructor(message = "Margin account is not in the session's contract scope") {
+    super(message, 7014);
+    this.name = "MarginAccountNotInSessionScope";
   }
 }
 
@@ -403,14 +427,17 @@ const ERROR_MAP: Record<number, new (message: string) => O2Error> = {
   7002: InvalidPagination,
   7003: NoActionsProvided,
   7004: TooManyActions,
+  7005: InsufficientBalance,
   // Trigger-order rejections (TP/SL).
-  7005: ParentOrderAlreadyHasFills,
-  7006: TriggerPairSameDirection,
-  7007: ParentQuantityMismatch,
-  7008: InvalidTriggerOrderArgs,
-  7009: TriggerConflictsWithParent,
-  7010: TriggerOrderQuotaExceeded,
-  7011: ActiveSpotOrderLimitExceeded,
+  7006: ParentOrderAlreadyHasFills,
+  7007: TriggerPairSameDirection,
+  7008: ParentQuantityMismatch,
+  7009: InvalidTriggerOrderArgs,
+  7010: TriggerConflictsWithParent,
+  7011: TriggerOrderQuotaExceeded,
+  7012: ActiveSpotOrderLimitExceeded,
+  7013: ParentOrderIdMismatch,
+  7014: MarginAccountNotInSessionScope,
   8000: BlockNotFound,
   8001: EventsNotFound,
 };

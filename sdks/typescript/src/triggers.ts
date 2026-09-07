@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { Numeric, Side } from "./models.js";
+import type { Numeric, OrderType, Side } from "./models.js";
 
 /** What a trigger becomes once it fires. */
 export type TriggerOrderKind =
@@ -224,7 +224,15 @@ export interface ProtectionSpec {
   limitPrice?: Numeric;
   /** Execute as a market order bounded this far from the trigger, in bps. */
   slippageBps?: number;
-  /** Size explicitly instead of inheriting from the order it protects. */
+  /**
+   * Size explicitly instead of inheriting from the order it protects.
+   *
+   * STANDALONE LEGS ONLY. `create_order_with_triggers` accepts
+   * `TriggerQuantity::ParentOrder` and nothing else — an attached leg
+   * carrying an explicit quantity is refused on chain with
+   * `QuantityMustBeParentOrder`. {@link protectionLeg} therefore rejects
+   * it rather than signing a batch the contract will not take.
+   */
   quantity?: Numeric;
 }
 
@@ -286,16 +294,85 @@ export function protectionLeg(
   parentOrderId: string = PARENT_ORDER_PLACEHOLDER,
   tick = 1n,
 ): TriggerOrderArgs {
+  // AN ATTACHED LEG INHERITS ITS SIZE, ALWAYS.
+  //
+  // `create_order_with_triggers` takes `TriggerQuantity::ParentOrder` and
+  // nothing else; an explicit quantity is refused on chain with
+  // `QuantityMustBeParentOrder`. Silently substituting the parent's size
+  // would be worse than refusing — the caller asked for half a position
+  // and would get a whole one — so say so instead. Standalone triggers
+  // keep explicit sizing; build those with `triggerLeg` directly.
+  if (spec.quantity !== undefined) {
+    throw new Error(
+      "Attached take-profit/stop-loss inherits the order's quantity — `quantity` is not accepted here " +
+        "(the chain refuses it with QuantityMustBeParentOrder). " +
+        "Use createTriggerOrder for a standalone, explicitly-sized leg.",
+    );
+  }
   const closing: WireSide = wireSide(parentSide) === "Buy" ? "Sell" : "Buy";
   return triggerLeg({
     side: closing,
     triggerPrice: floorToTick(BigInt(spec.triggerPrice.toString()), tick),
     kind: protectionKind(spec, tick),
-    quantity:
-      spec.quantity !== undefined
-        ? triggerQuantity(spec.quantity)
-        : triggerFromParent(parentOrderId),
+    quantity: triggerFromParent(parentOrderId),
   });
+}
+
+/**
+ * The price a margin account is funded at for one order type.
+ *
+ * Ports the backend's `walk_price`: the pool funds the WORST case it
+ * could execute at, which for a bounded market is the bound on the side
+ * being taken — not the reference price. Funding a bounded buy at the
+ * reference underfunds it against preflight and the order fails every
+ * time.
+ *
+ * An unbounded `Market` has no worst case, which is why margin refuses it
+ * outright (`MarginRejection::UnpricedOrder`).
+ */
+export function walkPrice(side: Side | WireSide, price: bigint, orderType: OrderType): bigint {
+  if (typeof orderType === "object" && "BoundedMarket" in orderType) {
+    const { max_price, min_price } = orderType.BoundedMarket;
+    return wireSide(side) === "Buy" ? BigInt(max_price.toString()) : BigInt(min_price.toString());
+  }
+  if (orderType === "Market") {
+    throw new Error(
+      "A margin account cannot price an unbounded Market order — pass a BoundedMarket " +
+        "(see boundedMarket()) so the pool has a worst-case price to fund against.",
+    );
+  }
+  return price;
+}
+
+/**
+ * A bounded market order: takes liquidity, but with an explicit worst
+ * price so the pool can fund it.
+ *
+ * The margin path requires this instead of `"Market"`.
+ */
+export function boundedMarket(maxPrice: Numeric, minPrice: Numeric): OrderType {
+  // PASSED THROUGH AS GIVEN, not stringified. `Numeric` is dual-mode
+  // everywhere else in the SDK — a decimal string is scaled, a bigint is
+  // already raw — and `.toString()` here turned a raw bigint into a
+  // decimal string that the scaler then multiplied a second time.
+  return { BoundedMarket: { max_price: maxPrice, min_price: minPrice } };
+}
+
+/**
+ * A bounded market order derived from a reference price and a slippage
+ * tolerance in bps, snapped to the market's tick.
+ *
+ * Rounded INWARD — the max floors and the min ceils — so an aligned bound
+ * is never wider than the tolerance asked for.
+ */
+export function boundedMarketFromSlippage(
+  referencePrice: Numeric,
+  slippageBps: number,
+  tick = 1n,
+): OrderType {
+  const price = BigInt(referencePrice.toString());
+  const band = (price * BigInt(Math.round(slippageBps))) / 10_000n;
+  return boundedMarket(floorToTick(price + band, tick), ceilToTick(price - band, tick));
 }
 
 // ── Active orders ───────────────────────────────────────────────────

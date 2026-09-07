@@ -99,10 +99,25 @@ await client.turbo.long("fETH/fUSDC", { quantity: "0.5" }, { price: "2000" });
 await client.turbo.short("fETH/fUSDC", { quantity: "0.5" });
 ```
 
-Omit `price` and the book's own top on the side you are taking is used. A
-price is needed even for a market order, because the **escrow** the order
-forwards is priced from it and the funding leg must cover that escrow
-exactly.
+Omit `price` and the book's own top on the side you are taking is used.
+
+**`orderType: "Market"` is refused on a margin account.** The pool funds an
+order at its worst-case execution price, and an unbounded market has none —
+preflight answers `UnpricedOrder`. Use a bounded market instead, which the
+SDK will build for you from a slippage tolerance:
+
+```ts
+import { boundedMarketFromSlippage } from "@o2exchange/sdk";
+
+await client.turbo.long("fETH/fUSDC", { notional: "500" }, {
+  price: bestAsk,
+  orderType: boundedMarketFromSlippage(bestAsk, 100, tick), // 1%
+});
+```
+
+The funding leg is sized at the **bound**, not the reference price — a
+bounded buy can execute as high as `max_price`, and funding it any lower
+is refused by preflight every time.
 
 ### Opens refuse; closes clamp
 
@@ -249,7 +264,16 @@ await client.turbo.long("fETH/fUSDC", { notional: "2000" }, {
 });
 ```
 
-Legs inherit the position's size and take the closing side automatically.
+Legs inherit the position's size and take the closing side automatically —
+and that is not optional: `create_order_with_triggers` accepts
+`TriggerQuantity::ParentOrder` and nothing else, so passing `quantity` on
+attached protection is rejected before signing. Use `createTriggerOrder`
+for a standalone, explicitly-sized leg.
+
+Note that attached protection **locks the base**. `closePosition` refuses
+to trade around a locked position rather than borrowing the locked amount
+and selling it a second time, so cancel the protection first
+(`cancelAllTriggerOrders`) when you want out early.
 Both must be **priced** — give `limitPrice` or `slippageBps`: a margin
 account refuses an unbounded market trigger, because an unpriced order
 cannot be walked for risk. Spot has no such restriction.

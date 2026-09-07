@@ -181,6 +181,8 @@ export {
   type ActiveSpotOrder,
   type ActiveTriggerOrder,
   activeTriggerIds,
+  boundedMarket,
+  boundedMarketFromSlippage,
   ceilToTick,
   floorToTick,
   orderPairByLock,
@@ -205,6 +207,7 @@ export {
   triggerQuantity,
   triggerQuantityDiscriminant,
   type WireSide,
+  walkPrice,
   wireSide,
   withTriggerQuantity,
 } from "./triggers.js";

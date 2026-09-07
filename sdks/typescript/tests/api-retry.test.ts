@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { O2Api } from "../src/api.js";
 import { TESTNET } from "../src/config.js";
-import { O2Error, RateLimitExceeded } from "../src/errors.js";
+import { O2Error, parseApiError, RateLimitExceeded } from "../src/errors.js";
 
 class TestApi extends O2Api {
   call(path: string) {
@@ -162,4 +162,39 @@ describe("signed mutations are never replayed by the transport", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     vi.unstubAllGlobals();
   });
+});
+
+describe("error code mapping matches the backend enum", () => {
+  /**
+   * Table-driven and transcribed from `packages/api/src/error_codes.rs`.
+   * The trigger codes were previously shifted down by one, so a 7005
+   * `InsufficientBalance` surfaced as `ParentOrderAlreadyHasFills` — a
+   * consumer branching on the error type would take an unrelated recovery
+   * path for a plain "you cannot afford this".
+   */
+  const table: [number, string][] = [
+    [7000, "InvalidAmount"],
+    [7001, "InvalidTimeRange"],
+    [7002, "InvalidPagination"],
+    [7003, "NoActionsProvided"],
+    [7004, "TooManyActions"],
+    [7005, "InsufficientBalance"],
+    [7006, "ParentOrderAlreadyHasFills"],
+    [7007, "TriggerPairSameDirection"],
+    [7008, "ParentQuantityMismatch"],
+    [7009, "InvalidTriggerOrderArgs"],
+    [7010, "TriggerConflictsWithParent"],
+    [7011, "TriggerOrderQuotaExceeded"],
+    [7012, "ActiveSpotOrderLimitExceeded"],
+    [7013, "ParentOrderIdMismatch"],
+    [7014, "MarginAccountNotInSessionScope"],
+  ];
+
+  for (const [code, name] of table) {
+    it(`${code} -> ${name}`, () => {
+      const err = parseApiError({ code, message: "x" });
+      expect(err.name).toBe(name);
+      expect(err.code).toBe(code);
+    });
+  }
 });
