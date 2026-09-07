@@ -290,7 +290,6 @@ describe("regression: OCO pair is ordered AFTER fitting", () => {
    * pair — a rejection after signing.
    */
   it("leads with the leg that locks more once both are fitted", () => {
-    const tick = 1n;
     // Both sells, equal raw quantity. `a` prices at 1e9 (quantum 1, so it
     // survives the fit); `b` prices at 999_999_999 — coprime with 10^9,
     // so its quantum is 10^9 and the fit rounds it down hard.
@@ -306,19 +305,17 @@ describe("regression: OCO pair is ordered AFTER fitting", () => {
       kind: stopLimit(999_999_999n),
       quantity: triggerQuantity(1_500_000_000n),
     });
-    void tick;
-
-    const fit = (leg: typeof a) => {
+    const fitLeg = (leg: typeof a) => {
       const q = BigInt((leg.quantity as { Quantity: { quantity: string } }).Quantity.quantity);
       return withTriggerQuantity(leg, adjustQuantityForPrices(triggerJudgedPrices(leg), q, 9));
     };
 
     // Ordering the RAW pair puts them either way round; ordering the
     // FITTED pair must put the larger surviving lock first.
-    const [lead] = orderPairByLock(fit(a), fit(b), 9);
+    const [lead] = orderPairByLock(fitLeg(a), fitLeg(b), 9);
     const leadQty = BigInt((lead.quantity as { Quantity: { quantity: string } }).Quantity.quantity);
-    const aQty = BigInt((fit(a).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
-    const bQty = BigInt((fit(b).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+    const aQty = BigInt((fitLeg(a).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+    const bQty = BigInt((fitLeg(b).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
     expect(bQty).toBeLessThan(aQty); // the fit really did diverge them
     expect(leadQty).toBe(aQty); // and the bigger one leads
   });
