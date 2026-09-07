@@ -803,7 +803,16 @@ export class O2Client {
         "An OCO pair needs two different trigger prices — the chain refuses a pair that would fire together.",
       );
     }
-    const [lead, follow] = orderPairByLock(first, second, resolved.base.decimals);
+    // FIT FIRST, THEN ORDER. Fitting rounds each leg down against its own
+    // prices, so two legs that started equal can end up with different
+    // locks — and the chain escrows only `first`'s lock to cover BOTH. A
+    // pair ordered before the fit can therefore lead with the leg that is
+    // now the cheaper one and under-fund itself.
+    const [lead, follow] = orderPairByLock(
+      fitTriggerLeg(first, resolved.base.decimals),
+      fitTriggerLeg(second, resolved.base.decimals),
+      resolved.base.decimals,
+    );
 
     const actions: ActionPayload[] = [];
     if (options.settleFirst ?? true) {
@@ -811,8 +820,8 @@ export class O2Client {
     }
     actions.push({
       CreateTriggerOrders: {
-        first: fitTriggerLeg(lead, resolved.base.decimals),
-        second: fitTriggerLeg(follow, resolved.base.decimals),
+        first: lead,
+        second: follow,
         ...(options.parent
           ? {
               parent: {

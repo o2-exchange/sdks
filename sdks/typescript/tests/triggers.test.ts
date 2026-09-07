@@ -14,7 +14,12 @@
 
 import { describe, expect, it } from "vitest";
 import type { ActionJSON, MarketInfo } from "../src/encoding.js";
-import { actionToCall, bytesToHex, encodeTriggerArgs } from "../src/encoding.js";
+import {
+  actionToCall,
+  adjustQuantityForPrices,
+  bytesToHex,
+  encodeTriggerArgs,
+} from "../src/encoding.js";
 import {
   orderPairByLock,
   PARENT_ORDER_PLACEHOLDER,
@@ -22,10 +27,12 @@ import {
   stopMarket,
   stopMarketBounded,
   triggerFromParent,
+  triggerJudgedPrices,
   triggerLeg,
   triggerLockAmount,
   triggerLockPrice,
   triggerQuantity,
+  withTriggerQuantity,
 } from "../src/triggers.js";
 
 const PARENT = `0x${"aa".repeat(32)}`;
@@ -272,5 +279,47 @@ describe("escrow", () => {
     });
     expect(orderPairByLock(small, large, 9)[0]).toBe(large);
     expect(orderPairByLock(large, small, 9)[0]).toBe(large);
+  });
+});
+
+describe("regression: OCO pair is ordered AFTER fitting", () => {
+  /**
+   * The chain escrows only `first`'s lock to cover both legs. Fitting
+   * rounds each leg down against its OWN prices, so ordering before the
+   * fit can leave the lead cheaper than its sibling and under-fund the
+   * pair — a rejection after signing.
+   */
+  it("leads with the leg that locks more once both are fitted", () => {
+    const tick = 1n;
+    // Both sells, equal raw quantity. `a` prices at 1e9 (quantum 1, so it
+    // survives the fit); `b` prices at 999_999_999 — coprime with 10^9,
+    // so its quantum is 10^9 and the fit rounds it down hard.
+    const a = triggerLeg({
+      side: "sell",
+      triggerPrice: 1_000_000_000n,
+      kind: stopLimit(1_000_000_000n),
+      quantity: triggerQuantity(1_500_000_000n),
+    });
+    const b = triggerLeg({
+      side: "sell",
+      triggerPrice: 999_999_999n,
+      kind: stopLimit(999_999_999n),
+      quantity: triggerQuantity(1_500_000_000n),
+    });
+    void tick;
+
+    const fit = (leg: typeof a) => {
+      const q = BigInt((leg.quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+      return withTriggerQuantity(leg, adjustQuantityForPrices(triggerJudgedPrices(leg), q, 9));
+    };
+
+    // Ordering the RAW pair puts them either way round; ordering the
+    // FITTED pair must put the larger surviving lock first.
+    const [lead] = orderPairByLock(fit(a), fit(b), 9);
+    const leadQty = BigInt((lead.quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+    const aQty = BigInt((fit(a).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+    const bQty = BigInt((fit(b).quantity as { Quantity: { quantity: string } }).Quantity.quantity);
+    expect(bQty).toBeLessThan(aQty); // the fit really did diverge them
+    expect(leadQty).toBe(aQty); // and the bigger one leads
   });
 });
