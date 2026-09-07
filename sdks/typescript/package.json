@@ -1,7 +1,7 @@
 {
   "name": "@o2exchange/sdk",
   "version": "0.3.0",
-  "description": "TypeScript SDK for the O2 Exchange \u2014 a fully on-chain order book DEX on the Fuel Network",
+  "description": "TypeScript SDK for the O2 Exchange — a fully on-chain order book DEX on the Fuel Network",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
