@@ -1720,8 +1720,12 @@ export class TurboClient {
           // the two together.
           const own = escrowAmount - needed;
           const affordable = own + amount;
+          // Divided by the FUNDING price, which is what the escrow was
+          // sized at — dividing by the reference here would hand back a
+          // quantity the clamped Draw cannot cover on a bounded order,
+          // which is the custody revert this whole branch exists to avoid.
           orderQuantity = fitPrice(
-            (affordable * 10n ** BigInt(resolved.base.decimals)) / scaledPrice,
+            (affordable * 10n ** BigInt(resolved.base.decimals)) / fundingPrice,
           );
           if (orderQuantity <= 0n) {
             throw new O2Error(

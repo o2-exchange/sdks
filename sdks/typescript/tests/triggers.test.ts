@@ -21,6 +21,8 @@ import {
   encodeTriggerArgs,
 } from "../src/encoding.js";
 import {
+  boundedMarket,
+  boundedMarketFromSlippage,
   orderPairByLock,
   PARENT_ORDER_PLACEHOLDER,
   stopLimit,
@@ -322,5 +324,53 @@ describe("regression: OCO pair is ordered AFTER fitting", () => {
     );
     expect(bQty).toBeLessThan(aQty); // the fit really did diverge them
     expect(leadQty).toBe(aQty); // and the bigger one leads
+  });
+});
+
+describe("regression: boundedMarketFromSlippage works in RAW units", () => {
+  /**
+   * The helper has no market to scale against — `tick` is already raw —
+   * so it works in raw units throughout. Accepting `Numeric` was a trap:
+   * a human "2000" became `2000n`, `scaleOrderType` then passed it
+   * through untouched, and the bounds came out 10^quote_decimals too
+   * small — silently underfunding every bounded order.
+   */
+  const bounds = (t: ReturnType<typeof boundedMarketFromSlippage>) =>
+    (t as { BoundedMarket: { max_price: bigint; min_price: bigint } }).BoundedMarket;
+
+  it("returns raw bounds a raw price implies", () => {
+    const b = bounds(boundedMarketFromSlippage(2_000_000_000_000n, 100));
+    expect(b.max_price).toBe(2_020_000_000_000n);
+    expect(b.min_price).toBe(1_980_000_000_000n);
+  });
+
+  it("rounds INWARD onto the tick, so a bound is never wider than asked", () => {
+    const tick = 10_000_000n;
+    const b = bounds(boundedMarketFromSlippage(2_000_000_000_000n, 33, tick));
+    expect(b.max_price % tick).toBe(0n);
+    expect(b.min_price % tick).toBe(0n);
+    // 0.33% of 2e12 is 6.6e9; the max floors below +6.6e9 and the min
+    // ceils above -6.6e9.
+    expect(b.max_price).toBeLessThanOrEqual(2_006_600_000_000n);
+    expect(b.min_price).toBeGreaterThanOrEqual(1_993_400_000_000n);
+  });
+
+  it("refuses a human decimal string instead of silently mis-scaling it", () => {
+    expect(() => boundedMarketFromSlippage("2000" as unknown as bigint, 100)).toThrow(
+      /RAW price as a bigint/,
+    );
+    expect(() => boundedMarketFromSlippage("2000.5" as unknown as bigint, 100)).toThrow(
+      /RAW price as a bigint/,
+    );
+  });
+
+  it("boundedMarket itself stays dual-mode", () => {
+    // A raw bigint passes through; a human string is left for the scaler.
+    const raw = bounds(boundedMarket(2_100_000_000_000n, 1_900_000_000_000n));
+    expect(raw.max_price).toBe(2_100_000_000_000n);
+    const human = boundedMarket("2100", "1900") as {
+      BoundedMarket: { max_price: string; min_price: string };
+    };
+    expect(human.BoundedMarket.max_price).toBe("2100");
   });
 });

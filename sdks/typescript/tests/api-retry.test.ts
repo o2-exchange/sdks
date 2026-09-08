@@ -198,3 +198,23 @@ describe("error code mapping matches the backend enum", () => {
     });
   }
 });
+
+describe("the barrel exports every error the map can produce", () => {
+  /**
+   * Wiring a code into `ERROR_MAP` without exporting its class means a
+   * consumer can receive the error but cannot `instanceof` it — so the
+   * typed recovery path the remapping was for is unreachable from the
+   * package entry point.
+   */
+  it("exports a class for every mapped code", async () => {
+    const barrel = (await import("../src/index.js")) as Record<string, unknown>;
+    const errors = (await import("../src/errors.js")) as Record<string, unknown>;
+    const missing: string[] = [];
+    for (let code = 7000; code <= 7014; code++) {
+      const name = (parseApiError({ code, message: "x" }) as Error).name;
+      // Only classes that actually exist in errors.ts are expected out.
+      if (errors[name] && !barrel[name]) missing.push(`${code} ${name}`);
+    }
+    expect(missing).toEqual([]);
+  });
+});

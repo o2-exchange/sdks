@@ -366,13 +366,31 @@ export function boundedMarket(maxPrice: Numeric, minPrice: Numeric): OrderType {
  * is never wider than the tolerance asked for.
  */
 export function boundedMarketFromSlippage(
-  referencePrice: Numeric,
+  referencePrice: bigint,
   slippageBps: number,
   tick = 1n,
 ): OrderType {
-  const price = BigInt(referencePrice.toString());
-  const band = (price * BigInt(Math.round(slippageBps))) / 10_000n;
-  return boundedMarket(floorToTick(price + band, tick), ceilToTick(price - band, tick));
+  // RAW PRICES ONLY, and the signature says so rather than accepting
+  // `Numeric` and guessing.
+  //
+  // This helper has no market to scale against — `tick` is already a raw
+  // figure — so it works in raw units throughout and returns raw bounds,
+  // which `scaleOrderType` then passes through untouched. Taking a
+  // `Numeric` was a trap: a human `"2000"` became `2000n`, skipped
+  // scaling, and produced bounds 10^quote_decimals too small, while
+  // `"2000.5"` threw from `BigInt` outright. Feed it a raw price — a book
+  // price from `getDepth` already is one.
+  if (typeof referencePrice !== "bigint") {
+    throw new TypeError(
+      "boundedMarketFromSlippage needs a RAW price as a bigint (e.g. a price from getDepth). " +
+        "For human decimals, scale first or build the bounds with boundedMarket().",
+    );
+  }
+  const band = (referencePrice * BigInt(Math.round(slippageBps))) / 10_000n;
+  return boundedMarket(
+    floorToTick(referencePrice + band, tick),
+    ceilToTick(referencePrice - band, tick),
+  );
 }
 
 // ── Active orders ───────────────────────────────────────────────────

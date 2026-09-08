@@ -1289,3 +1289,59 @@ describe("regression: Pranesh's review — market orders and locked base", () =>
     expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "CreateOrder"]);
   });
 });
+
+describe("regression: a clamped bounded close divides by the FUNDING price", () => {
+  /**
+   * The escrow is sized at the bounded `max_price`, so shrinking the
+   * order by dividing affordable quote by the REFERENCE price hands back
+   * a quantity the clamped Draw cannot cover — the exact custody revert
+   * the open/close split exists to prevent, reintroduced on bounded
+   * orders only.
+   */
+  it("never signs an order the clamped draw cannot fund", async () => {
+    const wire = state({
+      balances: [
+        {
+          asset_id: COLLATERAL,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: "0",
+        },
+        {
+          asset_id: ETH,
+          on_account: "0",
+          received: "0",
+          locked: "0",
+          settled: "0",
+          debt: (10n ** 9n).toString(), // short 1 ETH -> closing is a BUY
+        },
+      ],
+    });
+    // A float too small to fund the whole buy-back forces the clamp.
+    const { host, submitted } = makeHost({
+      wire,
+      inventory: [{ asset_id: COLLATERAL, amount: "5000000" }],
+    });
+    await new TurboClient(host).use(CHILD).closePosition(MARKET, {
+      price: "2000",
+      orderType: boundedMarket("2100", "1900"),
+    });
+
+    const actions = submitted[0].marketActions[0].actions;
+    const draw = BigInt(
+      (actions.find((a) => "Draw" in a) as { Draw: { amount: string } }).Draw.amount,
+    );
+    const order = actions.at(-1) as {
+      CreateOrderWithTriggers?: never;
+      CreateOrder: { quantity: string };
+    };
+    const quantity = BigInt(order.CreateOrder.quantity);
+
+    // The escrow the chain will take, priced at the bound the pool funds
+    // against, must not exceed what was actually drawn.
+    const escrowAtBound = (2_100_000_000n * quantity) / 10n ** 9n;
+    expect(escrowAtBound).toBeLessThanOrEqual(draw);
+  });
+});

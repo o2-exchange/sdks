@@ -109,11 +109,21 @@ SDK will build for you from a slippage tolerance:
 ```ts
 import { boundedMarketFromSlippage } from "@o2exchange/sdk";
 
+const depth = await client.api.getDepth(marketId, 10, 1);
+const bestAsk = BigInt(depth.asks[0].price);          // already RAW
+const tick = 10n ** BigInt(market.quote.decimals - market.quote.max_precision);
+
 await client.turbo.long("fETH/fUSDC", { notional: "500" }, {
   price: bestAsk,
   orderType: boundedMarketFromSlippage(bestAsk, 100, tick), // 1%
 });
 ```
+
+`boundedMarketFromSlippage` works in **raw** units — it has no market to
+scale against, and `tick` is raw too — so give it a raw price like the one
+`getDepth` returns. It refuses a human decimal string rather than
+mis-scaling it silently. `boundedMarket(max, min)` stays dual-mode: a
+decimal string is scaled for you, a bigint passes through.
 
 The funding leg is sized at the **bound**, not the reference price — a
 bounded buy can execute as high as `max_price`, and funding it any lower
