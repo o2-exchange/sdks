@@ -9,6 +9,7 @@
  */
 
 import type { Signer } from "./crypto.js";
+import type { MarginWiringWire } from "./turbo/wire.js";
 
 // ── Branded Hex ID Types ─────────────────────────────────────────────
 
@@ -222,7 +223,12 @@ export interface Secp256k1Signature {
  * Signature type used throughout the SDK.
  * Currently always {@link Secp256k1Signature}.
  */
-export type Signature = Secp256k1Signature;
+export interface TypedSecp256k1Signature {
+  /** Hex-encoded 64-byte signature over the TYPED (parallel-nonce) digest. */
+  TypedSecp256k1: string;
+}
+
+export type Signature = Secp256k1Signature | TypedSecp256k1Signature;
 
 // ── Market ──────────────────────────────────────────────────────────
 
@@ -305,6 +311,13 @@ export interface MarketsResponse {
   base_asset_id: AssetId;
   /** All available markets. */
   markets: Market[];
+  /**
+   * The deployment's margin ("Turbo") wiring, when it has any.
+   *
+   * `undefined` means Turbo is not wired on this network — a fact about
+   * the deployment, not an error.
+   */
+  margin?: MarginWiringWire;
 }
 
 /**
@@ -961,8 +974,21 @@ export interface SessionActionsRequest {
   actions: MarketActions[];
   /** Session key signature over the action signing bytes. */
   signature: Signature;
-  /** Current nonce (as string). Must match the on-chain nonce. */
-  nonce: string;
+  /**
+   * Current sequential nonce (as string). Must match the on-chain nonce.
+   *
+   * Mutually exclusive with {@link SessionActionsRequest.parallel_nonce} —
+   * the backend refuses a request carrying both.
+   */
+  nonce?: string;
+  /**
+   * Packed parallel nonce (decimal u256 string).
+   *
+   * Required for margin-account batches, which the backend accepts under
+   * no other nonce kind, and only valid alongside a `TypedSecp256k1`
+   * signature.
+   */
+  parallel_nonce?: string;
   /** The trade account contract ID. */
   trade_account_id: TradeAccountId;
   /** The session key identity. */

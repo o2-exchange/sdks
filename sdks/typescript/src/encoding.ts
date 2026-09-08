@@ -12,6 +12,13 @@
  * - Action signing bytes (session/actions)
  */
 
+import type { ParentOrderRef, TriggerOrderArgs } from "./triggers.js";
+import {
+  triggerKindDiscriminant,
+  triggerLockAmount,
+  triggerQuantityDiscriminant,
+} from "./triggers.js";
+
 // ── Primitives ──────────────────────────────────────────────────────
 
 /** Encode a number or bigint as 8 bytes big-endian (u64). */
@@ -264,11 +271,49 @@ export interface RegisterRefererAction {
   RegisterReferer: { to: { Address?: string; ContractId?: string } };
 }
 
+/** Create one trigger leg, optionally bound to a resting parent order. */
+export interface CreateTriggerOrderAction {
+  CreateTriggerOrder: {
+    args: TriggerOrderArgs;
+    parent?: ParentOrderRef | null;
+  };
+}
+
+/** Create two legs that auto-link as OCO siblings. */
+export interface CreateTriggerOrdersAction {
+  CreateTriggerOrders: {
+    first: TriggerOrderArgs;
+    second: TriggerOrderArgs;
+    parent?: ParentOrderRef | null;
+  };
+}
+
+/** Create a spot order with one or two triggers attached, atomically. */
+export interface CreateOrderWithTriggersAction {
+  CreateOrderWithTriggers: {
+    side: "buy" | "sell" | "Buy" | "Sell";
+    price: string;
+    quantity: string;
+    order_type: OrderTypeJSON;
+    trigger_1: TriggerOrderArgs;
+    trigger_2?: TriggerOrderArgs | null;
+  };
+}
+
+/** Cancel one trigger order by id. */
+export interface CancelTriggerOrderAction {
+  CancelTriggerOrder: { order_id: string };
+}
+
 export type ActionJSON =
   | CreateOrderAction
   | CancelOrderAction
   | SettleBalanceAction
-  | RegisterRefererAction;
+  | RegisterRefererAction
+  | CreateTriggerOrderAction
+  | CreateTriggerOrdersAction
+  | CreateOrderWithTriggersAction
+  | CancelTriggerOrderAction;
 
 const ZERO_ASSET = new Uint8Array(32);
 
@@ -378,6 +423,72 @@ export function actionToCall(
       assetId: ZERO_ASSET,
       gas: GAS_MAX,
       callData: encodeIdentity(disc, addr),
+    };
+  }
+
+  if ("CreateTriggerOrder" in action) {
+    const { args, parent } = action.CreateTriggerOrder;
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("create_trigger_order"),
+      ...triggerCallCoins(args, market),
+      gas: GAS_MAX,
+      // The parent id travels INSIDE `args.quantity`; this trailing
+      // argument carries only the expected quantity, and is `None` for a
+      // standalone leg.
+      callData: concat([encodeTriggerArgs(args), encodeOptionalU64(parent?.expected_quantity)]),
+    };
+  }
+
+  if ("CreateTriggerOrders" in action) {
+    const { first, second, parent } = action.CreateTriggerOrders;
+    // The chain escrows FIRST's lock to cover BOTH legs, which is why the
+    // pair has to be ordered by lock size before it gets here.
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("create_trigger_orders"),
+      ...triggerCallCoins(first, market),
+      gas: GAS_MAX,
+      callData: concat([
+        encodeTriggerArgs(first),
+        encodeTriggerArgs(second),
+        encodeOptionalU64(parent?.expected_quantity),
+      ]),
+    };
+  }
+
+  if ("CreateOrderWithTriggers" in action) {
+    const data = action.CreateOrderWithTriggers;
+    const price = BigInt(data.price);
+    const quantity = BigInt(data.quantity);
+    const otVariant = parseOrderTypeJSON(data.order_type);
+    const isBuy = data.side.toLowerCase() === "buy";
+    // The spot leg escrows exactly what a plain CreateOrder would; the
+    // trigger legs inherit from it and add nothing.
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("create_order_with_triggers"),
+      amount: isBuy ? (price * quantity) / BigInt(10 ** market.base.decimals) : quantity,
+      assetId: hexToBytes(isBuy ? market.quote.asset : market.base.asset),
+      gas: GAS_MAX,
+      callData: concat([
+        encodeOrderArgs(price, quantity, otVariant),
+        encodeTriggerArgs(data.trigger_1),
+        encodeOptionalTriggerArgs(data.trigger_2),
+      ]),
+    };
+  }
+
+  if ("CancelTriggerOrder" in action) {
+    // The contract has ONE `cancel_order` entry point and dispatches on
+    // the id's own `is_trigger` flag, so this shares the spot selector.
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("cancel_order"),
+      amount: 0n,
+      assetId: ZERO_ASSET,
+      gas: GAS_MAX,
+      callData: hexToBytes(action.CancelTriggerOrder.order_id),
     };
   }
 
@@ -568,3 +679,127 @@ export function bytesToHex(bytes: Uint8Array): string {
 }
 
 export { hexToBytes };
+
+/**
+ * Build action signing bytes for a PARALLEL nonce.
+ *
+ * Identical to {@link buildActionsSigningBytes} except the prefix is the
+ * packed nonce as a full u256 (32 bytes) rather than the sequential u64
+ * counter, matching the backend's `parallel_session_digest` over
+ * `(parallel_nonce, calls)`.
+ *
+ * Margin-account batches accept no other nonce kind.
+ */
+export function buildParallelActionsSigningBytes(
+  parallelNonce: bigint | string,
+  calls: ContractCall[],
+): Uint8Array {
+  let n = typeof parallelNonce === "bigint" ? parallelNonce : BigInt(parallelNonce);
+  if (n < 0n) throw new Error("parallel nonce cannot be negative");
+  const packed = new Uint8Array(32);
+  for (let i = 31; i >= 0 && n > 0n; i--) {
+    packed[i] = Number(n & 0xffn);
+    n >>= 8n;
+  }
+  if (n > 0n) throw new Error("parallel nonce does not fit in u256");
+
+  const parts: Uint8Array[] = [packed, u64BE(calls.length)];
+  for (const call of calls) {
+    parts.push(call.contractId);
+    parts.push(u64BE(call.functionSelector.length));
+    parts.push(call.functionSelector);
+    parts.push(u64BE(call.amount));
+    parts.push(call.assetId);
+    parts.push(u64BE(call.gas));
+    parts.push(encodeOptionCallData(call.callData));
+  }
+  return concat(parts);
+}
+
+// ── Trigger orders ──────────────────────────────────────────────────
+
+/**
+ * Encode `TriggerOrderArgs` as the CONTRACT takes it.
+ *
+ * Field order is `quantity, order_type, trigger_price` — the REVERSE of
+ * the JSON shape, which declares `order_type` first. And `side` is not
+ * encoded at all: the contract reads it off the forwarded asset, so it
+ * belongs to the call params rather than the call data. Both were verified
+ * against the deployed order-book ABI rather than inferred from the docs.
+ */
+export function encodeTriggerArgs(args: TriggerOrderArgs): Uint8Array {
+  const parts: Uint8Array[] = [u64BE(triggerQuantityDiscriminant(args.quantity))];
+  if ("ParentOrder" in args.quantity) {
+    parts.push(hexToBytes(args.quantity.ParentOrder.parent_order_id));
+  } else {
+    parts.push(u64BE(BigInt(args.quantity.Quantity.quantity)));
+  }
+
+  parts.push(u64BE(triggerKindDiscriminant(args.order_type)));
+  if (args.order_type !== "Market") {
+    if ("MarketBounded" in args.order_type) {
+      // max BEFORE min, as the contract's tuple has it.
+      parts.push(u64BE(BigInt(args.order_type.MarketBounded.max_price)));
+      parts.push(u64BE(BigInt(args.order_type.MarketBounded.min_price)));
+    } else {
+      parts.push(u64BE(BigInt(args.order_type.Spot.price)));
+    }
+  }
+
+  parts.push(u64BE(BigInt(args.trigger_price)));
+  return concat(parts);
+}
+
+/** Encode `Option<TriggerOrderArgs>`. */
+export function encodeOptionalTriggerArgs(args: TriggerOrderArgs | null | undefined): Uint8Array {
+  if (!args) return u64BE(0);
+  return concat([u64BE(1), encodeTriggerArgs(args)]);
+}
+
+/** Encode `Option<u64>`. */
+export function encodeOptionalU64(value: string | bigint | null | undefined): Uint8Array {
+  if (value === null || value === undefined) return u64BE(0);
+  return concat([u64BE(1), u64BE(BigInt(value))]);
+}
+
+/**
+ * The coins a trigger leg forwards, and in which asset.
+ *
+ * A buy escrows quote, a sell escrows base, and an inherited leg escrows
+ * nothing. The backend rebuilds this same figure into the call it verifies
+ * the signature against, so a different amount is a different signature.
+ */
+export function triggerCallCoins(
+  args: TriggerOrderArgs,
+  market: MarketInfo,
+): { amount: bigint; assetId: Uint8Array } {
+  const { amount } = triggerLockAmount(args, market.base.decimals);
+  const isBuy = args.side.toLowerCase() === "buy";
+  return { amount, assetId: hexToBytes(isBuy ? market.quote.asset : market.base.asset) };
+}
+
+/**
+ * The largest quantity <= `quantity` that satisfies FractionalPrice
+ * against EVERY price it will be judged at.
+ *
+ * A trigger leg that inherits its parent's quantity is checked at its OWN
+ * price, so a size that divides cleanly against the spot price can still
+ * be refused once a stop-loss at a different price is attached. The
+ * binding constraint is the least common multiple of the per-price
+ * quanta.
+ */
+export function adjustQuantityForPrices(
+  prices: bigint[],
+  quantity: bigint,
+  baseDecimals: number,
+): bigint {
+  const factor = 10n ** BigInt(baseDecimals);
+  let quantum = 1n;
+  for (const price of prices) {
+    if (price <= 0n) continue;
+    const step = factor / gcd(price, factor);
+    quantum = (quantum / gcd(quantum, step)) * step;
+    if (quantum >= factor) return quantity - (quantity % factor);
+  }
+  return quantity - (quantity % quantum);
+}

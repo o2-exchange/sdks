@@ -41,7 +41,9 @@ import {
   type ActionJSON,
   actionToCall,
   adjustQuantityForFractionalPrice,
+  adjustQuantityForPrices,
   buildActionsSigningBytes,
+  buildParallelActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
   type ContractCall,
@@ -58,6 +60,7 @@ import type {
   BalanceResponse,
   BalanceUpdate,
   Bar,
+  ContractId,
   DepthSnapshot,
   DepthUpdate,
   FaucetResponse,
@@ -71,6 +74,7 @@ import type {
   OrderId,
   OrderType,
   OrderUpdate,
+  SessionActionsRequest,
   SessionActionsResponse,
   SessionState,
   TradeAccountId,
@@ -78,6 +82,18 @@ import type {
   WalletState,
 } from "./models.js";
 import { depthPrecision, tradeAccountId } from "./models.js";
+import type { ProtectionSpec, TriggerOrderArgs } from "./triggers.js";
+import {
+  activeTriggerIds,
+  orderPairByLock,
+  PARENT_ORDER_PLACEHOLDER,
+  priceTick,
+  protectionLeg,
+  triggerJudgedPrices,
+  withTriggerQuantity,
+} from "./triggers.js";
+import { TurboClient } from "./turbo/client.js";
+import type { PreparedBatch, PreparedMarketActions, TurboHost } from "./turbo/host.js";
 import {
   capitalizeSide,
   ensureNumeric,
@@ -90,7 +106,7 @@ import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
 
 /** Convert a wire-format Market to the MarketInfo used by encoding helpers. */
-function toMarketInfo(market: Market): MarketInfo {
+export function toMarketInfo(market: Market): MarketInfo {
   return {
     contractId: market.contract_id,
     marketId: market.market_id,
@@ -174,9 +190,52 @@ function validateDepthPrecision(precision: number | string): void {
   }
 }
 
+/** Options for {@link O2Client.createSession}. */
+export interface CreateSessionOptions {
+  /** Session expiry in days. Defaults to 30. */
+  expiryDays?: number;
+  /**
+   * Also scope the session to this deployment's margin contracts, so the
+   * session can open and trade a Turbo account.
+   *
+   * Adds the pool, every margin child this owner already has, and the next
+   * few they could open. Costs two or three extra requests at session
+   * creation and saves a wallet signature later — the scope is signed, so
+   * it cannot be added afterwards.
+   */
+  turbo?: boolean;
+  /** Extra contract ids to authorise, beyond the markets and Turbo scope. */
+  extraContractIds?: string[];
+}
+
+/**
+ * Round an explicitly-sized trigger leg down to a quantity that satisfies
+ * the fractional-price rule at every price the leg is judged at.
+ *
+ * An inherited leg needs nothing — it carries the parent's quantity, which
+ * the parent's own fit already covered.
+ */
+function fitTriggerLeg(leg: TriggerOrderArgs, baseDecimals: number): TriggerOrderArgs {
+  if ("ParentOrder" in leg.quantity) return leg;
+  const quantity = BigInt(leg.quantity.Quantity.quantity);
+  const fitted = adjustQuantityForPrices(triggerJudgedPrices(leg), quantity, baseDecimals);
+  if (fitted <= 0n) {
+    throw new O2Error(
+      `A trigger quantity of ${quantity} cannot satisfy the fractional-price rule at this leg's prices; try a larger size.`,
+    );
+  }
+  return withTriggerQuantity(leg, fitted);
+}
+
 export class O2Client {
   /** The underlying low-level REST API client. */
   readonly api: O2Api;
+  private _turbo: TurboClient | null = null;
+  /**
+   * Locally tracked nonces for accounts OTHER than the session's own —
+   * margin children, which have their own on-chain counters.
+   */
+  protected readonly accountNonces = new Map<string, bigint>();
   protected wsClient: O2WebSocket | null = null;
   /** Network endpoint and contract configuration used by this client. */
   public readonly config: NetworkConfig;
@@ -368,8 +427,11 @@ export class O2Client {
   async createSession(
     wallet: Signer,
     markets: MarketRef[],
-    expiryDays = 30,
+    options: number | CreateSessionOptions = 30,
   ): Promise<SessionState> {
+    const opts: CreateSessionOptions =
+      typeof options === "number" ? { expiryDays: options } : options;
+    const expiryDays = opts.expiryDays ?? 30;
     // Resolve trade account
     const accountInfo = await this.api.getAccount({ owner: wallet.b256Address });
     const tradeAccountId = accountInfo.trade_account_id;
@@ -384,6 +446,32 @@ export class O2Client {
       return m;
     });
     const contractIds = resolvedMarkets.map((m) => m.contract_id);
+
+    // THE SESSION'S SCOPE IS THE WHOLE GAME for Turbo. The trade account
+    // runs `is_contract_allowed` per call, so a margin action whose target
+    // is outside `contract_ids` is refused with
+    // `MarginAccountNotInSessionScope` — and the scope cannot be widened
+    // after the fact, because it is part of what the wallet signed. So the
+    // pool, every existing child AND the next few unopened ones are all
+    // gathered here, at creation time. A child's id is a pure function of
+    // `(oracle, parent, index)`, which is what makes scoping an account
+    // the trader has not opened yet possible at all.
+    //
+    // Best effort: margin may not be wired on this deployment, and that
+    // must not stop an ordinary session being created.
+    if (opts.turbo) {
+      const scope = await TurboClient.sessionScope(this.api, wallet.b256Address);
+      for (const id of scope) {
+        if (!contractIds.some((existing) => existing.toLowerCase() === id.toLowerCase())) {
+          contractIds.push(id as ContractId);
+        }
+      }
+    }
+    for (const id of opts.extraContractIds ?? []) {
+      if (!contractIds.some((existing) => existing.toLowerCase() === id.toLowerCase())) {
+        contractIds.push(id as ContractId);
+      }
+    }
 
     // Parse chain_id
     const chainId = BigInt(
@@ -496,6 +584,315 @@ export class O2Client {
     });
 
     return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
+  }
+
+  /**
+   * Place an order with take-profit and/or stop-loss attached, atomically.
+   *
+   * This is the TP/SL a trader means: one call, one signature, and the
+   * protection is bound to the order the same call creates. The legs
+   * inherit the parent's quantity and take the CLOSING side, so a
+   * protected buy carries sell-side protection.
+   *
+   * The spot leg escrows exactly what it would unprotected — the triggers
+   * add nothing, because they are funded by the position itself.
+   *
+   * @param options.takeProfit - Fires when the market moves in your favour.
+   * @param options.stopLoss - Fires when it moves against you.
+   *
+   * @remarks
+   * Only `Limit` is refused as the spot type. A bare market trigger (no
+   * `limitPrice`, no `slippageBps`) is spot-only — a margin account
+   * refuses an unpriced trigger.
+   *
+   * @example
+   * ```ts
+   * await client.createOrderWithTriggers("fETH/fUSDC", "buy", "2500", "0.01", {
+   *   takeProfit: { triggerPrice: "2600", slippageBps: 50 },
+   *   stopLoss: { triggerPrice: "2400", limitPrice: "2390" },
+   * });
+   * ```
+   */
+  async createOrderWithTriggers(
+    market: MarketRef,
+    side: "buy" | "sell",
+    price: Numeric,
+    quantity: Numeric,
+    options: {
+      takeProfit?: ProtectionSpec;
+      stopLoss?: ProtectionSpec;
+      orderType?: OrderType;
+      settleFirst?: boolean;
+      collectOrders?: boolean;
+      session?: SessionState;
+    } = {},
+  ): Promise<SessionActionsResponse> {
+    const session = options.session ?? this.ensureSession();
+    const orderType = options.orderType ?? "Spot";
+    if (typeof orderType === "object" && "Limit" in orderType) {
+      throw new O2Error("A Limit order cannot carry triggers — the chain refuses it.");
+    }
+    if (!options.takeProfit && !options.stopLoss) {
+      throw new O2Error("createOrderWithTriggers needs a takeProfit, a stopLoss, or both.");
+    }
+
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+      resolved,
+      price,
+      quantity,
+      "price",
+      "quantity",
+    );
+
+    const scaleSpec = (spec: ProtectionSpec): ProtectionSpec => ({
+      ...spec,
+      triggerPrice: this.normalizeCreateOrderValues(
+        resolved,
+        spec.triggerPrice,
+        "1",
+        "triggerPrice",
+        "quantity",
+      ).scaledPrice,
+      ...(spec.limitPrice !== undefined
+        ? {
+            limitPrice: this.normalizeCreateOrderValues(
+              resolved,
+              spec.limitPrice,
+              "1",
+              "limitPrice",
+              "quantity",
+            ).scaledPrice,
+          }
+        : {}),
+    });
+
+    const legs = [options.takeProfit, options.stopLoss]
+      .filter((spec): spec is ProtectionSpec => spec !== undefined)
+      .map((spec) =>
+        protectionLeg(
+          scaleSpec(spec),
+          side,
+          PARENT_ORDER_PLACEHOLDER,
+          priceTick(resolved.quote.decimals, resolved.quote.max_precision),
+        ),
+      );
+
+    // Every price the batch is judged at binds the quantity — see
+    // `adjustQuantityForPrices`.
+    const fittedQuantity = adjustQuantityForPrices(
+      [scaledPrice, ...legs.flatMap((leg) => triggerJudgedPrices(leg))],
+      scaledQuantity,
+      resolved.base.decimals,
+    );
+    if (fittedQuantity <= 0n) {
+      throw new O2Error(
+        "No quantity satisfies the fractional-price rule at every price in this batch; try a larger size or fewer triggers.",
+      );
+    }
+
+    const actions: ActionPayload[] = [];
+    if (options.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateOrderWithTriggers: {
+        side: capitalizeSide(side),
+        price: scaledPrice.toString(),
+        quantity: fittedQuantity.toString(),
+        order_type: scaleOrderType(orderType, resolved),
+        trigger_1: legs[0],
+        ...(legs[1] ? { trigger_2: legs[1] } : {}),
+      },
+    } as unknown as ActionPayload);
+
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options.collectOrders ?? true,
+      session,
+    );
+  }
+
+  /**
+   * Place one standalone trigger order.
+   *
+   * Use this for an ENTRY stop — a buy that arms above the market, say —
+   * or to protect a position with an explicit size rather than one
+   * inherited from a resting order.
+   *
+   * @param parent - Bind it to a resting order. The `expectedQuantity` is
+   *   that order's INITIAL quantity, which the backend checks: it is what
+   *   stops a signed payload attaching to a different order than the one
+   *   it was audited against.
+   */
+  async createTriggerOrder(
+    market: MarketRef,
+    leg: TriggerOrderArgs,
+    options: {
+      parent?: { orderId: OrderId; expectedQuantity: Numeric };
+      settleFirst?: boolean;
+      collectOrders?: boolean;
+      session?: SessionState;
+    } = {},
+  ): Promise<SessionActionsResponse> {
+    const session = options.session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+
+    const actions: ActionPayload[] = [];
+    if (options.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateTriggerOrder: {
+        args: fitTriggerLeg(leg, resolved.base.decimals),
+        ...(options.parent
+          ? {
+              parent: {
+                order_id: options.parent.orderId,
+                expected_quantity: options.parent.expectedQuantity.toString(),
+              },
+            }
+          : {}),
+      },
+    } as unknown as ActionPayload);
+
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options.collectOrders ?? true,
+      session,
+    );
+  }
+
+  /**
+   * Place two trigger orders that auto-link as OCO siblings: one firing
+   * cancels the other.
+   *
+   * The pair is reordered so the leg escrowing MORE goes first — the chain
+   * takes `first`'s lock to cover both, so leading with the cheaper one
+   * under-funds it. The two must have different trigger prices.
+   */
+  async createTriggerOrders(
+    market: MarketRef,
+    first: TriggerOrderArgs,
+    second: TriggerOrderArgs,
+    options: {
+      parent?: { orderId: OrderId; expectedQuantity: Numeric };
+      settleFirst?: boolean;
+      collectOrders?: boolean;
+      session?: SessionState;
+    } = {},
+  ): Promise<SessionActionsResponse> {
+    const session = options.session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    if (first.trigger_price === second.trigger_price) {
+      throw new O2Error(
+        "An OCO pair needs two different trigger prices — the chain refuses a pair that would fire together.",
+      );
+    }
+    // FIT FIRST, THEN ORDER. Fitting rounds each leg down against its own
+    // prices, so two legs that started equal can end up with different
+    // locks — and the chain escrows only `first`'s lock to cover BOTH. A
+    // pair ordered before the fit can therefore lead with the leg that is
+    // now the cheaper one and under-fund itself.
+    const [lead, follow] = orderPairByLock(
+      fitTriggerLeg(first, resolved.base.decimals),
+      fitTriggerLeg(second, resolved.base.decimals),
+      resolved.base.decimals,
+    );
+
+    const actions: ActionPayload[] = [];
+    if (options.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateTriggerOrders: {
+        first: lead,
+        second: follow,
+        ...(options.parent
+          ? {
+              parent: {
+                order_id: options.parent.orderId,
+                expected_quantity: options.parent.expectedQuantity.toString(),
+              },
+            }
+          : {}),
+      },
+    } as unknown as ActionPayload);
+
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options.collectOrders ?? true,
+      session,
+    );
+  }
+
+  /** Cancel one trigger order. */
+  async cancelTriggerOrder(
+    orderId: OrderId,
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [{ CancelTriggerOrder: { order_id: orderId } } as unknown as ActionPayload],
+        },
+      ],
+      false,
+      activeSession,
+    );
+  }
+
+  /**
+   * Cancel every live trigger order on a market.
+   *
+   * Includes triggers attached to resting spot orders as well as
+   * standalone ones. Chunked, because a batch takes at most five actions.
+   */
+  async cancelAllTriggerOrders(
+    market: MarketRef,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse[] | null> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+
+    const active = await this.api.getActiveOrders(
+      resolved.market_id,
+      activeSession.tradeAccountId,
+      "desc",
+      200,
+    );
+    const ids = activeTriggerIds(active);
+    if (ids.length === 0) return null;
+
+    const results: SessionActionsResponse[] = [];
+    for (let i = 0; i < ids.length; i += 5) {
+      results.push(
+        await this.submitBatch(
+          [
+            {
+              market_id: resolved.market_id,
+              actions: ids
+                .slice(i, i + 5)
+                .map(
+                  (id) => ({ CancelTriggerOrder: { order_id: id } }) as unknown as ActionPayload,
+                ),
+            },
+          ],
+          false,
+          activeSession,
+        ),
+      );
+    }
+    return results;
   }
 
   /** Cancel an order. The session nonce is updated in-place. */
@@ -1201,6 +1598,55 @@ export class O2Client {
    * Internal batch submission. Handles encoding, signing, nonce management.
    * The selected session nonce is updated in-place after each call.
    */
+  // ── Turbo (margin) ──────────────────────────────────────────────
+
+  /**
+   * The Turbo (margin) surface: open an account, go long or short against
+   * the credit line, close, and manage referrals.
+   *
+   * Lazily constructed and then cached, so the wiring it resolves on first
+   * use is not re-fetched.
+   *
+   * The session must be scoped to the margin contracts BEFORE any of this
+   * works — pass `{ turbo: true }` to {@link O2Client.createSession}. The
+   * scope is part of what the wallet signed and cannot be widened
+   * afterwards, so a session created without it can do nothing with a
+   * Turbo account and the only repair is a new session.
+   *
+   * @example
+   * ```ts
+   * await client.createSession(wallet, ["fETH/fUSDC"], { turbo: true });
+   *
+   * const tiers = await client.turbo.tiers();
+   * await client.turbo.open({ tierId: tiers[0].tier_id, collateral: 500_000000n, period: "Month" });
+   *
+   * await client.turbo.long("fETH/fUSDC", { notional: "2000" });
+   * await client.turbo.short("fETH/fUSDC", { quantity: "0.5" });
+   * await client.turbo.closePosition("fETH/fUSDC");
+   * ```
+   */
+  get turbo(): TurboClient {
+    if (!this._turbo) {
+      const host: TurboHost = {
+        api: this.api,
+        ensureSession: () => this.ensureSession(),
+        fetchMarkets: () => this.fetchMarkets(),
+        resolveMarket: (data, pair) => this.resolveMarket(data, pair),
+        normalizeCreateOrderValues: (market, price, quantity, pf, qf) =>
+          this.normalizeCreateOrderValues(market, price, quantity, pf, qf),
+        spotActionToCall: (action, market) =>
+          actionToCall(
+            action as unknown as ActionJSON,
+            toMarketInfo(market),
+            this.marketsCache?.accounts_registry_id,
+          ),
+        submitPrepared: (batch: PreparedBatch) => this.submitPrepared(batch),
+      };
+      this._turbo = new TurboClient(host);
+    }
+    return this._turbo;
+  }
+
   protected async submitBatch(
     marketActions: MarketActions[],
     collectOrders = false,
@@ -1224,40 +1670,194 @@ export class O2Client {
       }
     }
 
-    // Build signing bytes and sign
-    const signingBytes = buildActionsSigningBytes(activeSession.nonce, calls);
+    return this.submitPrepared({
+      marketActions: marketActions as unknown as PreparedMarketActions[],
+      calls,
+      tradeAccountId: activeSession.tradeAccountId,
+      collectOrders,
+      session: activeSession,
+    });
+  }
+
+  /**
+   * Sign and submit a batch whose contract calls the caller has already
+   * derived.
+   *
+   * Split out of {@link O2Client.submitBatch} for the Turbo path, whose
+   * calls do NOT derive from market metadata: a margin action targets the
+   * pool, the margin child or the registry, and which account signs depends
+   * on the action rather than on the session.
+   *
+   * @internal
+   */
+  protected async submitPrepared(batch: {
+    marketActions: PreparedMarketActions[];
+    calls: ContractCall[];
+    tradeAccountId: string;
+    collectOrders?: boolean;
+    ownerId?: string;
+    /**
+     * Sign with a PARALLEL nonce instead of the account's sequential
+     * counter. Margin-account batches accept no other kind.
+     */
+    parallelNonce?: string;
+    endpoint?: "session" | "marginAccounts";
+    session?: SessionState;
+  }): Promise<SessionActionsResponse> {
+    const activeSession = batch.session ?? this.ensureSession();
+    if (activeSession.expiry > 0 && Math.floor(Date.now() / 1000) >= activeSession.expiry) {
+      throw new SessionExpired();
+    }
+
+    // THE NONCE BELONGS TO THE ACCOUNT THE BATCH EXECUTES AS, not to the
+    // session.
+    //
+    // A sequential nonce coordinates with that account's own on-chain
+    // counter, and a Turbo batch executes as the margin CHILD — which has
+    // a counter entirely separate from its parent's. Signing a child batch
+    // with the parent's nonce submits the wrong number; worse, advancing
+    // the parent's local counter afterwards desyncs every later parent
+    // action, so one Turbo trade would break ordinary trading.
+    //
+    // The session's own account keeps using `session.nonce` byte for byte,
+    // so nothing about spot trading changes.
+    const usesSessionAccount = batch.tradeAccountId === activeSession.tradeAccountId;
+    const parallel = batch.parallelNonce;
+
+    // A parallel nonce is minted by the caller and burned whether or not
+    // the batch lands, so there is no counter here to advance or resync.
+    const nonce =
+      parallel !== undefined
+        ? 0n
+        : usesSessionAccount
+          ? activeSession.nonce
+          : await this.nonceFor(batch.tradeAccountId as TradeAccountId);
+
+    const advance = (to: bigint): void => {
+      if (parallel !== undefined) return;
+      if (usesSessionAccount) activeSession.nonce = to;
+      else this.accountNonces.set(batch.tradeAccountId, to);
+    };
+
+    // Build signing bytes and sign. The parallel digest prefixes the packed
+    // nonce as a full u256 rather than the sequential u64, and the backend
+    // refuses a parallel nonce that does not arrive with the TYPED
+    // signature variant.
+    const signingBytes =
+      parallel !== undefined
+        ? buildParallelActionsSigningBytes(parallel, batch.calls)
+        : buildActionsSigningBytes(nonce, batch.calls);
     const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
+    const request: SessionActionsRequest = {
+      actions: batch.marketActions as unknown as MarketActions[],
+      signature:
+        parallel !== undefined
+          ? { TypedSecp256k1: bytesToHex(signature) }
+          : { Secp256k1: bytesToHex(signature) },
+      ...(parallel !== undefined ? { parallel_nonce: parallel } : { nonce: nonce.toString() }),
+      trade_account_id: batch.tradeAccountId as TradeAccountId,
+      session_id: { Address: activeSession.sessionAddress },
+      collect_orders: batch.collectOrders ?? false,
+    };
+
+    // A margin CHILD's owner is the PARENT CONTRACT, so its batches are
+    // authorised under a different `O2-Owner-Id` than the session's wallet.
+    const ownerId = batch.ownerId ?? activeSession.ownerAddress;
+
+    const send = async (payload: SessionActionsRequest): Promise<SessionActionsResponse> =>
+      batch.endpoint === "marginAccounts"
+        ? await this.api.submitMarginAccountActions(ownerId, payload)
+        : await this.api.submitActions(ownerId, payload);
+
     try {
-      const response = await this.api.submitActions(activeSession.ownerAddress, {
-        actions: marketActions,
-        signature: { Secp256k1: bytesToHex(signature) },
-        nonce: activeSession.nonce.toString(),
-        trade_account_id: activeSession.tradeAccountId,
-        session_id: { Address: activeSession.sessionAddress },
-        collect_orders: collectOrders,
-      });
+      let response: SessionActionsResponse;
+      try {
+        response = await send(request);
+      } catch (error) {
+        // SELF-HEAL A SEQUENTIAL NONCE THAT FELL BEHIND.
+        //
+        // The account's counter advances on chain even when a batch
+        // reverts, and the indexed view a resync reads can lag behind it —
+        // so a perfectly good next batch is refused with "Nonce in the
+        // request(N) is less than the nonce in the database(M)". The
+        // rejection names M, which is exactly what we need, so take it and
+        // go rather than making the caller retry a whole trade.
+        const message = String((error as Error)?.message ?? error);
+        const behind =
+          /nonce in the request\((\d+)\) is less than the nonce in the database\((\d+)\)/i.exec(
+            message,
+          );
+        if (parallel !== undefined || !behind) throw error;
+        const corrected = BigInt(behind[2]);
+        advance(corrected);
+        // A FRESH payload, re-signed: the nonce is part of the signed
+        // bytes, so replaying the old signature would be rejected just as
+        // hard as the stale nonce was.
+        const bytes = buildActionsSigningBytes(corrected, batch.calls);
+        response = await send({
+          ...request,
+          nonce: corrected.toString(),
+          signature: {
+            Secp256k1: bytesToHex(rawSign(activeSession.sessionPrivateKey, bytes)),
+          },
+        });
+        if (!response.isPreflightError) advance(corrected + 1n);
+        return response;
+      }
 
       // Increment nonce on success (preflight errors never reach the chain)
       if (!response.isPreflightError) {
-        activeSession.nonce += 1n;
+        advance(nonce + 1n);
       }
       return response;
     } catch (error) {
       // Nonce increments on-chain even on revert
-      activeSession.nonce += 1n;
-      // Re-fetch nonce on error for resync
+      advance(nonce + 1n);
+      // Re-fetch nonce on error for resync — from the account that actually
+      // executed, which is the only one whose counter moved. A parallel
+      // nonce has no counter, so `advance` is a no-op above and this read
+      // is skipped entirely.
+      if (parallel !== undefined) throw error;
       try {
         const info = await this.api.getAccount({
-          tradeAccountId: activeSession.tradeAccountId,
+          tradeAccountId: batch.tradeAccountId as TradeAccountId,
         });
         if (info.trade_account) {
-          activeSession.nonce = info.trade_account.nonce;
+          advance(info.trade_account.nonce);
         }
       } catch (_e: unknown) {
         // If re-fetch fails, keep incremented nonce
       }
       throw error;
     }
+  }
+
+  /**
+   * The next nonce for an account that is not the session's own.
+   *
+   * Fetched once and then tracked locally, the same way the session tracks
+   * its own — a margin child's counter advances on its own submissions and
+   * nothing else touches it.
+   */
+  protected async nonceFor(tradeAccountId: TradeAccountId): Promise<bigint> {
+    const cached = this.accountNonces.get(tradeAccountId as unknown as string);
+    if (cached !== undefined) return cached;
+    const fetched = await this.getNonce(tradeAccountId);
+    this.accountNonces.set(tradeAccountId as unknown as string, fetched);
+    return fetched;
+  }
+
+  /**
+   * Re-read an auxiliary account's nonce from the API, discarding the
+   * locally tracked one.
+   *
+   * The margin equivalent of {@link O2Client.refreshNonce}. Useful when a
+   * margin child has been driven from somewhere else.
+   */
+  async refreshAccountNonce(tradeAccountId: TradeAccountId): Promise<bigint> {
+    const fetched = await this.getNonce(tradeAccountId);
+    this.accountNonces.set(tradeAccountId as unknown as string, fetched);
+    return fetched;
   }
 }

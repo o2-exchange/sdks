@@ -43,7 +43,8 @@
     "format": "biome check --write src tests examples",
     "format:check": "biome ci --linter-enabled=false --assist-enabled=false src tests examples",
     "docs": "typedoc",
-    "docs:watch": "typedoc --watch"
+    "docs:watch": "typedoc --watch",
+    "test:integration:turbo": "O2_INTEGRATION=1 vitest run tests/turbo/turbo.integration.test.ts"
   },
   "dependencies": {
     "@noble/hashes": "^2.0.0",

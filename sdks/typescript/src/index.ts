@@ -21,7 +21,12 @@ export {
 // ── API ───────────────────────────────────────────────────────────
 export { O2Api, type O2ApiOptions } from "./api.js";
 // ── High-level client ─────────────────────────────────────────────
-export { type CreateOrderOptions, O2Client, type O2ClientOptions } from "./client.js";
+export {
+  type CreateOrderOptions,
+  type CreateSessionOptions,
+  O2Client,
+  type O2ClientOptions,
+} from "./client.js";
 // ── Config ────────────────────────────────────────────────────────
 export {
   DEVNET,
@@ -49,14 +54,15 @@ export {
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
-
 // ── Errors ────────────────────────────────────────────────────────
 export {
   AccountNotFound,
+  ActiveSpotOrderLimitExceeded,
   AlreadySubscribed,
   BlockNotFound,
   EventsNotFound,
   GeoRestricted,
+  InsufficientBalance,
   InternalError,
   InvalidAmount,
   InvalidOrderParams,
@@ -66,6 +72,8 @@ export {
   InvalidSignature,
   InvalidTimeRange,
   InvalidTradeCount,
+  InvalidTriggerOrderArgs,
+  MarginAccountNotInSessionScope,
   MarketAlreadyExists,
   MarketNotFound,
   MarketPaused,
@@ -74,6 +82,9 @@ export {
   OnChainRevertError,
   OrderNotActive,
   OrderNotFound,
+  ParentOrderAlreadyHasFills,
+  ParentOrderIdMismatch,
+  ParentQuantityMismatch,
   ParseError,
   RateLimitExceeded,
   SessionExpired,
@@ -81,6 +92,9 @@ export {
   TooManyActions,
   TooManySubscriptions,
   TradeNotFound,
+  TriggerConflictsWithParent,
+  TriggerOrderQuotaExceeded,
+  TriggerPairSameDirection,
   WhitelistNotConfigured,
 } from "./errors.js";
 // ── Models ────────────────────────────────────────────────────────
@@ -163,6 +177,112 @@ export {
 } from "./models.js";
 // ── On-chain revert decoding ──────────────────────────────────────
 export { augmentRevertReason } from "./onchain-revert.js";
+// ── Trigger orders (TP/SL) ────────────────────────────────────────
+export {
+  type ActiveOrderEntry,
+  type ActiveOrdersResponse,
+  type ActiveSpotOrder,
+  type ActiveTriggerOrder,
+  activeTriggerIds,
+  boundedMarket,
+  boundedMarketFromSlippage,
+  ceilToTick,
+  floorToTick,
+  orderPairByLock,
+  PARENT_ORDER_PLACEHOLDER,
+  type ParentOrderRef,
+  type ProtectionSpec,
+  priceTick,
+  protectionKind,
+  protectionLeg,
+  stopLimit,
+  stopMarket,
+  stopMarketBounded,
+  type TriggerOrderArgs,
+  type TriggerOrderKind,
+  type TriggerQuantity,
+  triggerFromParent,
+  triggerJudgedPrices,
+  triggerKindDiscriminant,
+  triggerLeg,
+  triggerLockAmount,
+  triggerLockPrice,
+  triggerQuantity,
+  triggerQuantityDiscriminant,
+  type WireSide,
+  walkPrice,
+  wireSide,
+  withTriggerQuantity,
+} from "./triggers.js";
+// ── Turbo (margin) ────────────────────────────────────────────────
+export {
+  addCollateralAction,
+  addMarginCollateralAction,
+  borrowAction,
+  buildReferralPayload,
+  buildSignedReferralEnvelope,
+  closeMarginSessionAction,
+  drawAction,
+  effectiveBitmap,
+  encodeParallelNonce,
+  firstFreePosition,
+  type Hex,
+  isMarginChildAction,
+  isMarginPoolAction,
+  MARGIN_SESSION_EXPIRY,
+  type MarginAction,
+  type MarginLimits,
+  type MarginStateWire,
+  type MarginTierWire,
+  type MarginWiring,
+  marginActionToCall,
+  marginBorrowableBase,
+  marginCohortOf,
+  marginDrawAmount,
+  marginFreezeLine,
+  marginLimits,
+  marginLiquidationLine,
+  marginSellableBase,
+  marginSession,
+  marginShortableBase,
+  type NextMarginAccount,
+  type NonceWindow,
+  type NonceWindowSlot,
+  newMarginAccountNonce,
+  type OrderBookCleanup,
+  ParallelNonceWindowFull,
+  PROLONG_PERIODS,
+  type ProlongPeriod,
+  prolongPeriodIndex,
+  prolongSessionAction,
+  registerMarginAccountAction,
+  repayAction,
+  repayBaseFromCollateralAction,
+  repayFromCollateralAction,
+  returnQuoteAction,
+  revokeMarginAccountSessionAction,
+  type SignedEnvelope,
+  scaleFor,
+  setAutoProlongAction,
+  setMarginAccountSessionAction,
+  signReferralPayload,
+  startMarginSessionAction,
+  TurboClient,
+  type TurboOpenResult,
+  type TurboOrderOptions,
+  type TurboPosition,
+  type TurboReferralActivation,
+  type TurboReferralCode,
+  type TurboReferralStatus,
+  type TurboSize,
+  type TurboSnapshot,
+  type TurboWiring,
+  u256BE,
+  value,
+  valueCeil,
+  withdrawFromMarginAccountAction,
+  withdrawFromMarginAction,
+} from "./turbo/index.js";
 // ── Utilities ─────────────────────────────────────────────────────
 export {
   capitalizeSide,
@@ -174,7 +294,6 @@ export {
   scaleNumericPrice,
   scaleOrderType,
 } from "./utils.js";
-
 // ── WebSocket ─────────────────────────────────────────────────────
 export {
   type ConnectionEvent,

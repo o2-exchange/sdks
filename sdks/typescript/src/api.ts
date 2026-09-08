@@ -54,6 +54,23 @@ import {
   type WithdrawRequest,
   type WithdrawResponse,
 } from "./models.js";
+import type { ActiveOrdersResponse } from "./triggers.js";
+import type { NonceWindow } from "./turbo/parallelNonce.js";
+import type {
+  SignedEnvelope,
+  TurboReferralActivation,
+  TurboReferralCode,
+  TurboReferralStatus,
+} from "./turbo/referral.js";
+import type {
+  Hex,
+  MarginPoolWire,
+  MarginStateWire,
+  MarginTierWire,
+  MarginWiringWire,
+  NextMarginAccount,
+  OrderBookCleanup,
+} from "./turbo/wire.js";
 
 /**
  * Configuration options for {@link O2Api}.
@@ -86,6 +103,15 @@ export interface O2ApiOptions {
  */
 export class O2Api {
   protected readonly baseUrl: string;
+  /**
+   * Base for the analytics surface.
+   *
+   * Defaults to {@link O2Api.baseUrl} — on the public deployments analytics
+   * is mounted on the same host, which is why `/analytics/v1/whitelist` has
+   * always worked without one. Split deployments set `analyticsBase` on the
+   * {@link NetworkConfig}.
+   */
+  protected readonly analyticsBaseUrl: string;
   protected readonly faucetUrl: string | null;
   protected readonly maxRetries: number;
   protected readonly retryDelayMs: number;
@@ -93,6 +119,7 @@ export class O2Api {
 
   constructor(options: O2ApiOptions) {
     this.baseUrl = options.config.apiBase;
+    this.analyticsBaseUrl = options.config.analyticsBase ?? options.config.apiBase;
     this.faucetUrl = options.config.faucetUrl;
     this.maxRetries = options.maxRetries ?? 3;
     this.retryDelayMs = options.retryDelayMs ?? 1000;
@@ -108,9 +135,21 @@ export class O2Api {
       body?: unknown;
       headers?: Record<string, string>;
       query?: Record<string, string | number | boolean | undefined>;
+      /** Override the host. Used for the analytics surface. */
+      baseUrl?: string;
+      /**
+       * Never retry this request at the transport layer.
+       *
+       * Set on every SIGNED MUTATION. Their payloads carry a nonce and a
+       * signature fixed before dispatch, and an accepted-but-lost response
+       * is indistinguishable from a rejected one — so a replay can submit
+       * the same trade twice. The caller must reconcile state and build a
+       * fresh action instead.
+       */
+      noRetry?: boolean;
     } = {},
   ): Promise<T> {
-    let url = `${this.baseUrl}${path}`;
+    let url = `${options.baseUrl ?? this.baseUrl}${path}`;
     if (options.query) {
       const params = new URLSearchParams();
       for (const [key, val] of Object.entries(options.query)) {
@@ -139,11 +178,48 @@ export class O2Api {
         });
         clearTimeout(timeoutId);
 
-        const body = (await resp.json()) as Record<string, unknown>;
+        // NOT ALWAYS JSON. A gateway rejection, a 413, a 5xx from the
+        // edge — several answers arrive as plain text, and calling
+        // `.json()` on them threw `Unexpected token 'F'` and buried the
+        // actual message. Read the body once, then decide.
+        const text = await resp.text();
+        let body: Record<string, unknown> | null = null;
+        try {
+          body = (text ? JSON.parse(text) : {}) as Record<string, unknown>;
+        } catch {
+          body = null;
+        }
 
-        if (!resp.ok) {
-          const err = parseApiError(body);
-          if (err instanceof RateLimitExceeded && attempt < this.maxRetries) {
+        if (!resp.ok || body === null) {
+          const err =
+            body === null
+              ? new O2Error(
+                  resp.ok
+                    ? `Malformed response from ${path}: ${text.slice(0, 300)}`
+                    : `HTTP ${resp.status} from ${path}: ${text.slice(0, 300)}`,
+                  resp.ok ? undefined : resp.status,
+                )
+              : parseApiError(body);
+
+          // RATE LIMITS ONLY, AND ONLY WHERE A REPLAY IS SAFE.
+          //
+          // Recognising the limit by STATUS as well as body code is the
+          // point: the backoff used to fire only when `parseApiError`
+          // produced a `RateLimitExceeded`, which needs code 1003, so a
+          // gateway answering 429 in any other shape got no backoff at
+          // all. A rate limit is refused before the handler runs, so
+          // resending it cannot duplicate anything.
+          //
+          // 5xx is NOT retried, and that distinction is the whole safety
+          // argument. A 502 can arrive after the batch already landed, and
+          // a 500 can carry an on-chain revert — the request's fate is
+          // unknown. Resending a SIGNED payload then risks a duplicate
+          // order, and with the sequential-nonce self-heal it could even
+          // re-sign under the next nonce and place one for real. The
+          // Python SDK draws the same line.
+          const retryable =
+            !options.noRetry && (err instanceof RateLimitExceeded || resp.status === 429);
+          if (retryable && attempt < this.maxRetries) {
             const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
             await sleep(delay);
             lastError = err;
@@ -157,6 +233,11 @@ export class O2Api {
         clearTimeout(timeoutId);
         if (error instanceof O2Error) throw error;
         lastError = error as Error;
+        // A signed mutation that failed mid-flight may still have LANDED;
+        // the transport must not decide to send it again. `break`, not a
+        // skipped delay — the loop would otherwise run the next attempt
+        // anyway, just without waiting first.
+        if (options.noRetry) break;
         if (attempt < this.maxRetries) {
           const delay = this.retryDelayMs * 2 ** attempt * (0.5 + Math.random());
           await sleep(delay);
@@ -191,6 +272,16 @@ export class O2Api {
     return this.request<T>("PUT", path, { body, headers });
   }
 
+  /** GET against the analytics surface. */
+  protected async getAnalytics<T>(path: string): Promise<T> {
+    return this.request<T>("GET", path, { baseUrl: this.analyticsBaseUrl });
+  }
+
+  /** POST against the analytics surface. */
+  protected async postAnalytics<T>(path: string, body: unknown): Promise<T> {
+    return this.request<T>("POST", path, { body, baseUrl: this.analyticsBaseUrl });
+  }
+
   // ── Market Data ─────────────────────────────────────────────────
 
   /** Fetch all markets and global registry configuration. */
@@ -204,6 +295,11 @@ export class O2Api {
       chain_id: raw.chain_id as string,
       base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
+      // PASSED THROUGH, not dropped. This response is rebuilt from an
+      // explicit field list, so anything not named here vanishes — and
+      // `margin` vanishing made the whole Turbo surface report itself as
+      // unavailable on deployments where it is perfectly well wired.
+      margin: (raw.margin as MarginWiringWire | null | undefined) ?? undefined,
     };
   }
 
@@ -476,8 +572,12 @@ export class O2Api {
    * @param request - The session creation request.
    */
   async createSession(ownerId: string, request: SessionRequest): Promise<SessionResponse> {
-    return this.put<SessionResponse>("/v1/session", request, {
-      "O2-Owner-Id": ownerId,
+    return this.request<SessionResponse>("PUT", "/v1/session", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+      // The signed owner nonce makes an accepted-but-lost response
+      // ambiguous. Never replay a session registration.
+      noRetry: true,
     });
   }
 
@@ -497,6 +597,8 @@ export class O2Api {
     const body = await this.request<Record<string, unknown>>("POST", "/v1/session/actions", {
       body: request,
       headers: { "O2-Owner-Id": ownerId },
+      // Signed, nonce-bound: never replayed by the transport.
+      noRetry: true,
     });
 
     if (isActionsSuccess(body)) {
@@ -522,9 +624,204 @@ export class O2Api {
    * @param request - The signed withdrawal request.
    */
   async withdraw(ownerId: string, request: WithdrawRequest): Promise<WithdrawResponse> {
-    return this.post<WithdrawResponse>("/v1/accounts/withdraw", request, {
-      "O2-Owner-Id": ownerId,
+    return this.request<WithdrawResponse>("POST", "/v1/accounts/withdraw", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+      // A withdrawal can be accepted before its response is lost. The
+      // caller reconciles the owner nonce rather than replaying it.
+      noRetry: true,
     });
+  }
+
+  /**
+   * The parallel-nonce sliding window for one (account, lane).
+   *
+   * The authority on which positions are already burned. Without it a
+   * client can only guess, and a guess is wrong in two different ways: a
+   * spent position is refused as "already used", and a word the window has
+   * slid past is refused as "out of sliding window".
+   */
+  async getAccountWindow(
+    tradeAccountId: TradeAccountId | string,
+    nonceSessionId = 0,
+  ): Promise<NonceWindow> {
+    return this.get<NonceWindow>("/v1/accounts/window", {
+      trade_account_id: tradeAccountId,
+      nonce_session_id: String(nonceSessionId),
+    });
+  }
+
+  /**
+   * A trader's currently-active orders on one market: spot orders with
+   * their child triggers nested, interleaved with standalone triggers.
+   *
+   * The ONLY way to discover standalone trigger orders that predate the
+   * websocket connection — `subscribe_orders` carries them on changes
+   * only, so a client that just connected cannot see them at all.
+   */
+  async getActiveOrders(
+    marketId: MarketId,
+    contract: TradeAccountId,
+    direction: "asc" | "desc" = "desc",
+    count = 50,
+  ): Promise<ActiveOrdersResponse> {
+    return this.get<ActiveOrdersResponse>("/v1/orders/active", {
+      market_id: marketId,
+      contract,
+      direction,
+      count,
+    });
+  }
+
+  // ── Margin ("Turbo") ────────────────────────────────────────────
+
+  /**
+   * The tiers currently on sale — the products a Turbo account is opened
+   * onto.
+   *
+   * Latest-version-only; the history lives at `/v1/margin/tiers/history`.
+   */
+  async getMarginTiers(): Promise<MarginTierWire[]> {
+    const body = await this.get<{ tiers?: MarginTierWire[] } | MarginTierWire[]>(
+      "/v1/margin/tiers",
+    );
+    return Array.isArray(body) ? body : (body.tiers ?? []);
+  }
+
+  /**
+   * Everything the API knows about one margin account: session, tier,
+   * balances and the oracle prints every risk figure is derived from.
+   */
+  async getMarginState(marginAccountId: Hex): Promise<MarginStateWire> {
+    return this.get<MarginStateWire>(
+      `/v1/margin/state?account=${encodeURIComponent(marginAccountId)}`,
+    );
+  }
+
+  /**
+   * The pool's inventory and pause flag.
+   *
+   * The inventory is what bounds a borrow: a credit line is permission to
+   * borrow, not a promise the coins exist.
+   */
+  async getMarginPool(): Promise<MarginPoolWire> {
+    return this.get<MarginPoolWire>("/v1/margin/pool");
+  }
+
+  /**
+   * The id of the next margin account this parent could open.
+   *
+   * A pure function of `(oracle, parent, index)`, so it can be signed
+   * against before the account exists — which is exactly what registration
+   * does.
+   *
+   * @param index - Ask for a specific index rather than the next one.
+   *   Older deployments ignore this and always answer with the next.
+   */
+  async getNextMarginAccount(
+    parentContractId: Hex,
+    index?: number,
+  ): Promise<NextMarginAccount | null> {
+    const params = new URLSearchParams({ parent_contract: parentContractId });
+    if (index !== undefined) params.set("index", String(index));
+    try {
+      return await this.get<NextMarginAccount>(`/v1/margin/next-account?${params}`);
+    } catch {
+      // Margin may not be wired on this deployment at all. That is a fact
+      // about the network, not a failure of the caller's request.
+      return null;
+    }
+  }
+
+  /** Ledger entries for one margin account. */
+  async getMarginActivity(marginAccountId: Hex, limit?: number): Promise<unknown[]> {
+    const params = new URLSearchParams({ account: marginAccountId });
+    if (limit !== undefined) params.set("limit", String(limit));
+    const body = await this.get<{ activity?: unknown[] } | unknown[]>(
+      `/v1/margin/activity?${params}`,
+    );
+    return Array.isArray(body) ? body : (body.activity ?? []);
+  }
+
+  /**
+   * Every book still holding something of this account's, with its live
+   * order ids — the list a clean close must carry.
+   *
+   * The chain re-verifies completeness, so a stale list reverts rather than
+   * stranding value. Fetch it at close time, never earlier.
+   */
+  async getMarginCloseCleanups(marginAccountId: Hex): Promise<OrderBookCleanup[]> {
+    const params = new URLSearchParams({ account: marginAccountId });
+    try {
+      const body = await this.get<{ cleanups?: OrderBookCleanup[] } | OrderBookCleanup[]>(
+        `/v1/margin/close-cleanups?${params}`,
+      );
+      return Array.isArray(body) ? body : (body.cleanups ?? []);
+    } catch {
+      // Older deployments do not serve the route; an empty list still
+      // settles every book the chain finds drained.
+      return [];
+    }
+  }
+
+  /**
+   * Submit a session batch that REGISTERS a margin account.
+   *
+   * Its own route because the proxies do not exist yet and only this one
+   * deploys them before running the signed batch. Same payload and same
+   * core as `/v1/session/actions` — the deploy is the entire difference.
+   */
+  async submitMarginAccountActions(
+    ownerId: string,
+    request: SessionActionsRequest,
+  ): Promise<SessionActionsResponse> {
+    const body = await this.request<Record<string, unknown>>("POST", "/v1/margin/accounts", {
+      body: request,
+      headers: { "O2-Owner-Id": ownerId },
+      // Signed, nonce-bound: never replayed by the transport.
+      noRetry: true,
+    });
+
+    if (isActionsSuccess(body)) {
+      return SessionActionsResponse.fromResponse(body, parseOrder);
+    }
+    const error = parseApiError(body);
+    if (error.code != null) {
+      return new SessionActionsResponse(null, null, null, null, error.code, error.message);
+    }
+    throw error;
+  }
+
+  // ── Turbo referral ──────────────────────────────────────────────
+
+  /**
+   * Whether this wallet was referred, and whether its discount is live.
+   *
+   * Never-referred is a FACT, not an error: the endpoint answers
+   * `{ referred: false }` rather than 404ing.
+   */
+  async getTurboReferralStatus(refereeAddress: string): Promise<TurboReferralStatus> {
+    const params = new URLSearchParams({ referee: refereeAddress });
+    return this.getAnalytics<TurboReferralStatus>(`/analytics/v1/turbo/referral/status?${params}`);
+  }
+
+  /** Mint (or re-read) a referral code. Idempotent. */
+  async createTurboReferralCode(envelope: SignedEnvelope): Promise<TurboReferralCode> {
+    return this.postAnalytics<TurboReferralCode>("/analytics/v1/turbo/referral/code", envelope);
+  }
+
+  /**
+   * Bind this wallet to a referrer's code.
+   *
+   * PERMANENT: `referee_address` is unique and first code wins, which is
+   * why the payload is signed. 404 is an unknown code, 409 means this
+   * wallet was already referred, 400 covers self-referral.
+   */
+  async activateTurboReferral(envelope: SignedEnvelope): Promise<TurboReferralActivation> {
+    return this.postAnalytics<TurboReferralActivation>(
+      "/analytics/v1/turbo/referral/activate",
+      envelope,
+    );
   }
 
   // ── Analytics ───────────────────────────────────────────────────

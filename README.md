@@ -34,6 +34,11 @@ All three SDKs share the same capabilities:
 - **Batch Actions** — Up to 5 actions per request (cancel + settle + create in one call)
 - **Idempotent Setup** — `setup_account()` is safe to call on every startup
 
+The TypeScript SDK additionally ships **Turbo (margin) trading** — `long()` /
+`short()` against a credit line, with the funding, sweeping and settling
+composed into one signed batch. See the
+[Turbo guide](sdks/typescript/docs/guides/turbo.md).
+
 ## 🌐 Network and Funding Model
 
 - **Testnet/Devnet** — `setup_account()` creates the trading account, applies whitelist rules, and attempts faucet minting.

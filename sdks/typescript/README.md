@@ -136,6 +136,7 @@ Identifier usage:
 - **WebSocket Streams** — Real-time depth, order, trade, balance, and nonce updates via `AsyncGenerator`
 - **Wallet Support** — Fuel-native and EVM wallets with session-based signing
 - **Batch Actions** — Submit up to 5 actions per request (cancel + settle + create in one call)
+- **Turbo (Margin)** — Trade a credit line with `long()` / `short()`; funding, sweeping and settling happen behind the call
 - **Dual Output** — ESM and CJS builds for maximum compatibility
 - **Zero Heavy Dependencies** — Uses `@noble/secp256k1` and `@noble/hashes` (no native modules)
 
@@ -148,7 +149,7 @@ Identifier usage:
 | `setupAccount(wallet)` | Idempotent account setup |
 | `topUpFromFaucet(wallet)` | Explicit faucet top-up to the wallet's trading account (testnet/devnet) |
 | `setSession(session)` / `clearSession()` | Restore or clear the active client session |
-| `createSession(wallet, markets, expiryDays?)` | Create and store a trading session |
+| `createSession(wallet, markets, options?)` | Create and store a trading session (`{ turbo: true }` scopes it for margin) |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
 | `cancelOrder(orderId, market, session?)` | Cancel a specific order |
 | `cancelAllOrders(market, session?)` | Cancel all open orders |
@@ -161,6 +162,13 @@ Identifier usage:
 | `streamOrders(id)` / `streamTrades(market)` | Real-time updates |
 | `refreshNonce(session?)` | Re-sync a session nonce |
 | `withdraw(wallet, asset, amount, to?)` | Withdraw funds |
+| `turbo.open(params)` | Open a Turbo (margin) account |
+| `turbo.long(market, size, options?)` | Buy on the credit line — draws and settles behind the call |
+| `turbo.short(market, size, options?)` | Sell short — borrows the asset in kind behind the call |
+| `turbo.closePosition(market, options?)` | Close a position |
+| `turbo.snapshot()` / `turbo.positions()` / `turbo.limits()` | Account state, positions, and the on-chain gate stack |
+| `turbo.addMargin()` / `turbo.extend()` / `turbo.closeAccount()` | Account lifecycle |
+| `turbo.referral.mintCode()` / `.activate(code)` / `.status()` | Referral programme |
 
 Utility exports such as `resolveMarket`, `resolveAsset`, `ensureNumeric`, and
 `scaleOrderType` are available from the package root for custom client flows.
@@ -173,6 +181,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 
 - [Identifiers and Wallet Types](docs/guides/identifiers.md)
 - [Trading](docs/guides/trading.md)
+- [Turbo (Margin) Trading](docs/guides/turbo.md)
 - [CCXT Compatibility (Alpha)](docs/guides/ccxt-compatibility.md)
 - [Market Data](docs/guides/market-data.md)
 - [WebSocket Streams](docs/guides/websocket-streams.md)
@@ -187,6 +196,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 | [`market-maker.ts`](examples/market-maker.ts) | Two-sided quoting loop with cancel/replace |
 | [`taker-bot.ts`](examples/taker-bot.ts) | Monitor depth and take liquidity |
 | [`portfolio.ts`](examples/portfolio.ts) | Multi-market balance tracking and management |
+| [`turbo.ts`](examples/turbo.ts) | Open a Turbo account, go long and short on the credit line, close out |
 
 Run an example:
 
