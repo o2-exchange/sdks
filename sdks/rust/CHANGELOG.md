@@ -1,4 +1,10 @@
 # Changelog
+## 0.3.1 (2026-09-08)
+
+### Features
+
+- ccxt compatibility (optional) (#66)
+
 ## 0.3.0 (2026-08-20)
 
 ### Breaking Changes
