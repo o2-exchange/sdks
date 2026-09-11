@@ -227,3 +227,76 @@ match client.create_order(&mut session, market_symbol, ...).await {
 - OrderType encoding is tightly packed (no padding)
 - gas = `u64::MAX`; chain_id can be 0 on testnet
 - Markets accept both hex IDs and symbol pairs (e.g., "fFUEL/fUSDC")
+
+## Fast Bridge
+
+`o2_sdk::bridge` exports `FastBridgeClient`, `BridgeError`, request/response
+models, and inspection helpers/types. The client/error are also re-exported at
+the crate root. This client is separate from trading sessions and `O2Client::withdraw()`.
+Use `FastBridgeClient::new(base_url: &str)` (30-second timeout) or
+`FastBridgeClient::with_timeout(base_url: &str, timeout: Duration)`, both returning
+`Result<Self, BridgeError>`. Supply the proxy root URL without `/v1`.
+No built-in network URLs, automatic retries, or redirects. Reconcile ambiguous
+submit timeouts before resubmitting.
+
+Methods are async and return `Result<ResponseType, BridgeError>`:
+
+| Method | Parameters | Response type |
+|--------|------------|---------------|
+| `get_info` | None | `InfoResponse` |
+| `get_assets` | `chain_id: Option<u64>` | `AssetsResponse` |
+| `get_deposit_info` | `source_chain_id: u64, asset_id: Option<&str>, amount: Option<&str>` | `DepositInfoResponse` |
+| `prepare_deposit` | `&DepositPrepareRequest` | `DepositPrepareResponse` |
+| `submit_deposit` | `&SubmitRequest` | `DepositSubmitResponse` |
+| `get_deposit_status` | `source_chain_id: u64, evm_tx_hash: &str` | `DepositStatusResponse` |
+| `get_withdraw_info` | `destination_chain_id: u64, asset_id: Option<&str>, amount: Option<&str>` | `WithdrawInfoResponse` |
+| `get_withdraw_fee` | `destination_chain_id: u64, asset_id: &str` | `WithdrawFeeResponse` |
+| `prepare_withdraw` | `&WithdrawPrepareRequest` | `WithdrawPrepareResponse` |
+| `submit_withdraw` | `&SubmitRequest` | `WithdrawSubmitResponse` |
+| `get_withdraw_status` | `fuel_tx_id: &str` | `WithdrawStatusResponse` |
+
+Request fields (serde camelCase, except `from_address` becomes `from`):
+
+- `DepositPrepareRequest`: `source_chain_id: u64`, `from_address: String` (20-byte EVM), `to: String` (Fuel B256), `to_type: RecipientType` (`Address`/`Contract`), `asset_id: String`, `amount: String`, `permit: Option<DepositPermit>`.
+- `DepositPermit`: `deadline: String` (Unix seconds), `v: u64` (proxy accepts 0..255), `r: String`, `s: String` (32-byte hex). Separate EIP-2612 token approval, not the transaction signature.
+- `WithdrawPrepareRequest`: `destination_chain_id: u64`, `from_address: String` (Fuel B256 address), `to: String` (20-byte EVM), `asset_id: String`, `amount: String`.
+- `SubmitRequest`: `unsigned_transaction: String`, `preparation_proof: String`, `signature: String`. Preserve bytes/proof exactly. Fuel prepare also returns `fuel_chain_id`; omit it from submit.
+
+`asset_id` is the full Fuel AssetId, not the asset sub-ID. API amounts are decimal
+integer strings in Fuel asset base units; no human-unit or float conversion.
+Submit means accepted, not confirmed. Unknown status is a 404; `unavailable`
+relay state does not mean delivered.
+
+All inspection helpers return `Result<InspectionType, BridgeError>`:
+
+| Helper | Parameters | Inspection type |
+|--------|------------|-----------------|
+| `parse_preparation_proof` | `proof: &str` | `PreparationProofClaims`: `version, key_id, expires_at, signer` |
+| `parse_evm_unsigned_transaction` | `unsigned_transaction: &str` | `EvmDepositInspection`: envelope, Messenger call/permit, fee caps, local `signing_digest` |
+| `parse_fuel_unsigned_transaction` | `unsigned_transaction: &str, fuel_chain_id: u64, fuel_max_inputs: u16` | `FuelWithdrawalInspection`: call, assets, fees, policies, inputs/outputs, local `transaction_id` |
+
+Proof claims are **unauthenticated**, not verified. `expires_at` is Unix seconds;
+expired proofs can parse. No `verify` helper or Worker secret belongs in clients.
+Only the proxy authenticates proof/operation/transaction binding. Fuel chain ID
+and consensus `maxInputs` must be independently trusted; the latter is not in
+the bytes and determines absolute VM pointers. Parsers make no RPC calls and
+reject unsupported formats, fixed Fuel Coin outputs and zero withdrawal recipients,
+but are not economic approval.
+
+EVM quantities are decimal `String`s to preserve uint256 precision. `amount`
+uses EVM token units/wei; `estimated_network_fee = gas_limit * max_fee_per_gas`
+is a cap excluding rollup L1 fees. Fuel amounts use `u64`; `bridge_fee` is the
+embedded quote and `net_amount = gross_amount - bridge_fee` is expected, not
+guaranteed. `network_fee.max_fee` uses Fuel base-asset units. Block expiration is
+independent of proof expiry. Change/Variable output amounts and Variable
+recipients/assets are unsigned execution results.
+
+Before signing, compare chain/contracts, recipient/type, asset, amount, fee
+limits, expiry and all inputs/outputs against trusted expectations. Sign the
+local raw digest with `crypto::fuel_compact_sign`, not `personal_sign`/`raw_sign`
+(both rehash). Fuel needs compact 64-byte signatures; EVM needs 65-byte
+`r || s || v`. See [the complete example](examples/fast_bridge.rs).
+
+`BridgeError::Api { status, code, message, details }` preserves HTTP errors with
+string proxy codes. `Transport` wraps reqwest errors, `Json` wraps JSON/model
+decoding errors, and `Invalid` reports invalid configuration or parser input.

@@ -97,11 +97,16 @@ and market contracts, so `settle_balance(...)` does not necessarily change aggre
 
 Default network configs:
 
-| Network | REST API | WebSocket | Fuel RPC | Faucet |
-|---------|----------|-----------|----------|--------|
-| `Network.TESTNET` | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
-| `Network.DEVNET` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
-| `Network.MAINNET` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+| Endpoint | `Network.MAINNET` | `Network.TESTNET` | `Network.DEVNET` |
+|----------|---------|---------|--------|
+| REST API | `https://api.o2.app` | `https://api.testnet.o2.app` | `https://api.devnet.o2.app` |
+| WebSocket | `wss://api.o2.app/v1/ws` | `wss://api.testnet.o2.app/v1/ws` | `wss://api.devnet.o2.app/v1/ws` |
+| Fuel RPC | `https://mainnet.fuel.network/v1/graphql` | `https://testnet.fuel.network/v1/graphql` | `https://devnet.fuel.network/v1/graphql` |
+| Faucet | none | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| Fast Bridge API ([info](#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | `https://bridge.devnet.o2.app` |
+
+> [!WARNING]
+> Devnet will be deprecated soon. Use Testnet for new development and testing.
 
 API rate limits: <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
 
@@ -121,7 +126,32 @@ client = O2Client(
 ```
 
 > [!IMPORTANT]
-> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. See [Fast Bridge](#fast-bridge) for cross-chain transfers.
+
+## Fast Bridge
+
+Use `FastBridgeClient` for EVM-to-Fuel deposits and Fuel-to-EVM withdrawals.
+It is separate from `O2Client.withdraw()` and does not use trading sessions.
+
+Default network configs:
+
+| Setting | Default |
+|---------|---------|
+| Proxy URL (`base_url`) | Required for every network; no built-in mainnet/testnet URL. Supply the root URL without `/v1`. |
+| Request timeout (`timeout_seconds`) | `30` seconds |
+
+Configure the bridge independently of `O2Client`'s `Network` setting:
+
+```python
+from o2_sdk import FastBridgeClient
+
+async with FastBridgeClient("https://my-bridge.example.com", timeout_seconds=30) as bridge:
+    info = await bridge.get_info()
+```
+
+See the [Fast Bridge example](examples/fast_bridge.py) for all endpoints,
+native ETH/ERC-20 requests, permit fields, proof decoding, transaction
+inspection, signing, submission, status, and error handling.
 
 ## Wallet Security
 
@@ -211,6 +241,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 | Example | Description |
 |---------|-------------|
 | [`quickstart.py`](examples/quickstart.py) | Connect, create a wallet, place your first order |
+| [`fast_bridge.py`](examples/fast_bridge.py) | Cross-chain discovery, inspection, signing, submission, and status |
 | [`market_maker.py`](examples/market_maker.py) | Two-sided quoting loop with cancel/replace |
 | [`taker_bot.py`](examples/taker_bot.py) | Monitor depth and take liquidity |
 | [`portfolio.py`](examples/portfolio.py) | Multi-market balance tracking and management |

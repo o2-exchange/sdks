@@ -46,15 +46,24 @@ composed into one signed batch. See the
 - **Withdrawals** — all SDKs expose `withdraw(...)` to move assets from the trading account to an address or contract identity.
 
 > [!IMPORTANT]
-> Mainnet note: account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+> Mainnet note: account setup requires an owner wallet that already has funds deposited for trading. For Fast Bridge configuration and examples, see the [TypeScript](sdks/typescript/README.md#fast-bridge), [Python](sdks/python/README.md#fast-bridge), or [Rust](sdks/rust/README.md#fast-bridge) SDK documentation.
 
 ## 🔌 Default Network Endpoints
 
-| Network | REST API | WebSocket | Fuel RPC | Faucet |
-|---------|----------|-----------|----------|--------|
-| Testnet | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
-| Devnet | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
-| Mainnet | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+| Endpoint | Mainnet | Testnet | Devnet |
+|----------|---------|---------|--------|
+| REST API | `https://api.o2.app` | `https://api.testnet.o2.app` | `https://api.devnet.o2.app` |
+| WebSocket | `wss://api.o2.app/v1/ws` | `wss://api.testnet.o2.app/v1/ws` | `wss://api.devnet.o2.app/v1/ws` |
+| Fuel RPC | `https://mainnet.fuel.network/v1/graphql` | `https://testnet.fuel.network/v1/graphql` | `https://devnet.fuel.network/v1/graphql` |
+| Faucet | none | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| Fast Bridge API ([TypeScript](sdks/typescript/README.md#fast-bridge), [Python](sdks/python/README.md#fast-bridge), [Rust](sdks/rust/README.md#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | `https://bridge.devnet.o2.app` |
+
+> [!WARNING]
+> Devnet will be deprecated soon. Use Testnet for new development and testing.
+
+Fast Bridge URLs above are provisional placeholders, not verified deployments
+or built-in SDK defaults. Replace them with your deployment URLs and configure
+`FastBridgeClient` separately.
 
 API rate limits are documented at <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
 
@@ -233,4 +242,3 @@ Each SDK also includes an `AGENTS.md` with a complete LLM-optimized API referenc
 ## 📄 License
 
 [Apache License 2.0](LICENSE) — Copyright 2026 Breathe Speed Inc.
-

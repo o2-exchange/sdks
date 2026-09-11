@@ -4,6 +4,13 @@ A complete SDK for trading on the O2 Exchange, a fully on-chain order book
 DEX on the Fuel Network.
 """
 
+from .bridge import (
+    BridgeApiError,
+    FastBridgeClient,
+    parse_evm_unsigned_transaction,
+    parse_fuel_unsigned_transaction,
+    parse_preparation_proof,
+)
 from .client import MarketActionsBuilder, O2Client
 from .config import Network, NetworkConfig, get_config
 from .crypto import (
@@ -176,6 +183,7 @@ __all__ = [
     "Bar",
     "BlockNotFound",
     "BoundedMarketOrder",
+    "BridgeApiError",
     "CancelOrderAction",
     "CancelOrderRequestAction",
     "ChainInt",
@@ -194,6 +202,7 @@ __all__ = [
     "EvmWallet",
     "ExternalEvmSigner",
     "ExternalSigner",
+    "FastBridgeClient",
     "FaucetResponse",
     "GeoRestricted",
     "Id",
@@ -292,6 +301,9 @@ __all__ = [
     "is_session_error",
     "load_evm_wallet",
     "load_wallet",
+    "parse_evm_unsigned_transaction",
+    "parse_fuel_unsigned_transaction",
+    "parse_preparation_proof",
     "personal_sign",
     "raw_sign",
     "to_fuel_compact_signature",

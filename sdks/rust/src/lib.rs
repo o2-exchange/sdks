@@ -172,6 +172,7 @@
 //! - [`guides::error_handling`] — Error types and recovery patterns
 //! - [`guides::external_signers`] — Integrating KMS/HSM via the `SignableWallet` trait
 pub mod api;
+pub mod bridge;
 pub mod client;
 pub mod config;
 pub mod crypto;
@@ -184,6 +185,7 @@ mod onchain_revert;
 pub mod websocket;
 
 // Re-export primary types for convenience.
+pub use bridge::{BridgeError, FastBridgeClient};
 pub use client::{IntoWithdrawDestination, MarketActionsBuilder, MetadataPolicy, O2Client};
 pub use config::{Network, NetworkConfig};
 pub use crypto::{EvmWallet, SignableWallet, Wallet};
