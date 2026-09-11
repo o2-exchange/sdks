@@ -20,6 +20,13 @@ export {
 
 // ── API ───────────────────────────────────────────────────────────
 export { O2Api, type O2ApiOptions } from "./api.js";
+export { BridgeApiError, FastBridgeClient, type FastBridgeClientOptions } from "./bridge/client.js";
+export * as bridge from "./bridge/index.js";
+export {
+  parseEvmUnsignedTransaction,
+  parseFuelUnsignedTransaction,
+  parsePreparationProof,
+} from "./bridge/inspection.js";
 // ── High-level client ─────────────────────────────────────────────
 export {
   type CreateOrderOptions,

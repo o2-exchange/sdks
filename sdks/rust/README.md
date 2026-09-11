@@ -92,11 +92,16 @@ and market contracts, so `settle_balance(...)` does not necessarily change aggre
 
 Default network configs:
 
-| Network | REST API | WebSocket | Fuel RPC | Faucet |
-|---------|----------|-----------|----------|--------|
-| `Network::Testnet` | `https://api.testnet.o2.app` | `wss://api.testnet.o2.app/v1/ws` | `https://testnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` |
-| `Network::Devnet` | `https://api.devnet.o2.app` | `wss://api.devnet.o2.app/v1/ws` | `https://devnet.fuel.network/v1/graphql` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
-| `Network::Mainnet` | `https://api.o2.app` | `wss://api.o2.app/v1/ws` | `https://mainnet.fuel.network/v1/graphql` | none |
+| Endpoint | `Network::Mainnet` | `Network::Testnet` | `Network::Devnet` |
+|----------|---------|---------|--------|
+| REST API | `https://api.o2.app` | `https://api.testnet.o2.app` | `https://api.devnet.o2.app` |
+| WebSocket | `wss://api.o2.app/v1/ws` | `wss://api.testnet.o2.app/v1/ws` | `wss://api.devnet.o2.app/v1/ws` |
+| Fuel RPC | `https://mainnet.fuel.network/v1/graphql` | `https://testnet.fuel.network/v1/graphql` | `https://devnet.fuel.network/v1/graphql` |
+| Faucet | none | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
+| Fast Bridge API ([info](#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | `https://bridge.devnet.o2.app` |
+
+> [!WARNING]
+> Devnet will be deprecated soon. Use Testnet for new development and testing.
 
 API rate limits: <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
 
@@ -114,7 +119,36 @@ let client = O2Client::with_config(cfg);
 ```
 
 > [!IMPORTANT]
-> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. SDK-native bridging flows are coming soon.
+> Mainnet note: there is no faucet; account setup requires an owner wallet that already has funds deposited for trading. See [Fast Bridge](#fast-bridge) for cross-chain transfers.
+
+## Fast Bridge
+
+Use `FastBridgeClient` for EVM-to-Fuel deposits and Fuel-to-EVM withdrawals.
+It is separate from `O2Client::withdraw()` and does not use trading sessions.
+
+Default network configs:
+
+| Setting | Default |
+|---------|---------|
+| Proxy URL (`base_url`) | Required for every network; no built-in mainnet/testnet URL. Supply the root URL without `/v1`. |
+| Request timeout | 30 seconds; override with `FastBridgeClient::with_timeout()` |
+
+Configure the bridge independently of `O2Client`'s `Network` setting:
+
+```rust
+use o2_sdk::FastBridgeClient;
+use std::time::Duration;
+
+let bridge = FastBridgeClient::with_timeout(
+    "https://my-bridge.example.com",
+    Duration::from_secs(30),
+)?;
+let info = bridge.get_info().await?;
+```
+
+See the [Fast Bridge example](examples/fast_bridge.rs) for all endpoints,
+native ETH/ERC-20 requests, permit fields, proof decoding, transaction
+inspection, signing, submission, status, and error handling.
 
 ## Wallet Security
 
@@ -200,6 +234,7 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 | Example | Description |
 |---------|-------------|
 | [`quickstart.rs`](examples/quickstart.rs) | Connect, create a wallet, place your first order |
+| [`fast_bridge.rs`](examples/fast_bridge.rs) | Cross-chain discovery, inspection, signing, submission, and status |
 | [`market_maker.rs`](examples/market_maker.rs) | Two-sided quoting loop with cancel/replace |
 | [`taker_bot.rs`](examples/taker_bot.rs) | Monitor depth and take liquidity |
 | [`portfolio.rs`](examples/portfolio.rs) | Multi-market balance tracking and management |
