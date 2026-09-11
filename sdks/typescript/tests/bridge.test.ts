@@ -15,6 +15,24 @@ const normalize = (value: unknown): unknown =>
   JSON.parse(JSON.stringify(value, (_, v) => (typeof v === "bigint" ? v.toString() : v)));
 
 describe("Fast Bridge offline inspection", () => {
+  it("rejects mismatched or invalid Fuel consensus context", () => {
+    for (const [vector, maxInputs] of [
+      [vectors.fuel[0], 511],
+      [vectors.fuel[3], 255],
+    ] as const) {
+      expect(() => parseFuelUnsignedTransaction(vector.unsignedTransaction, 0n, maxInputs)).toThrow(
+        "Fuel call pointer does not address this transaction's script data",
+      );
+    }
+    for (const maxInputs of [0, 65536]) {
+      expect(() =>
+        parseFuelUnsignedTransaction(vectors.fuel[0].unsignedTransaction, 0n, maxInputs),
+      ).toThrow("Invalid Fuel consensus maxInputs");
+    }
+    expect(() =>
+      parseFuelUnsignedTransaction(vectors.fuel[0].unsignedTransaction, 1n << 64n, 255),
+    ).toThrow("Fuel chain ID must fit u64");
+  });
   for (const v of vectors.invalidEvm) {
     it(`rejects EVM ${v.name}`, () => {
       expect(() => parseEvmUnsignedTransaction(v.unsignedTransaction)).toThrow();
@@ -116,6 +134,29 @@ describe("Fast Bridge offline inspection", () => {
 });
 
 describe("Fast Bridge errors and transport", () => {
+  it("preserves body-read transport errors without retrying a submit", async () => {
+    const error = new DOMException("Response timed out", "AbortError");
+    const fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(error);
+            },
+          }),
+          { status: 202 },
+        ),
+    );
+    const client = new FastBridgeClient({ baseUrl: "https://bridge.example", fetch });
+    await expect(
+      client.submitWithdraw({
+        preparationProof: "proof",
+        unsignedTransaction: "0x00",
+        signature: "0x01",
+      }),
+    ).rejects.toBe(error);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
   it("handles malformed JSON response shapes predictably", async () => {
     for (const [status, payload, code] of [
       [200, null, "INVALID_RESPONSE"],

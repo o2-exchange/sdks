@@ -252,7 +252,8 @@ export interface FuelInputInspection {
   witnessIndex?: number;
 }
 export interface FuelOutputInspection {
-  type: "coin" | "contract" | "change" | "variable";
+  type: "contract" | "change" | "variable";
+  /** Variable recipients/assets and Change/Variable amounts are execution results, not signed guarantees. */
   to?: string;
   amount?: bigint;
   assetId?: string;
@@ -373,6 +374,7 @@ export function parseFuelUnsignedTransaction(
   const outputs: FuelOutputInspection[] = [];
   for (let i = 0; i < outputCount; i++) {
     const kind = r.count(3);
+    requireValue(kind !== 0, "Coin outputs are unsupported in proxy withdrawals");
     if (kind === 1) {
       const inputIndex = r.count();
       requireValue(inputs[inputIndex]?.type === "contract");
@@ -387,7 +389,7 @@ export function parseFuelUnsignedTransaction(
       if (kind === 2) zero(start + 32, 8);
       if (kind === 3) zero(start, 72);
       outputs.push({
-        type: kind === 0 ? "coin" : kind === 2 ? "change" : "variable",
+        type: kind === 2 ? "change" : "variable",
         to,
         amount,
         assetId,
@@ -439,6 +441,10 @@ export function parseFuelUnsignedTransaction(
     bridgeFee = d.num();
   d.done();
   requireValue(paddedRecipient.slice(0, 12).every((b) => b === 0) && grossAmount >= bridgeFee);
+  requireValue(
+    paddedRecipient.slice(12).some((b) => b !== 0),
+    "Zero withdrawal recipient",
+  );
   requireValue(
     inputs.some((i) => i.contractId === assetRegistryContractId),
     "Missing Asset Registry input",

@@ -145,9 +145,7 @@ Configure the bridge independently of `O2Client`'s `Network` setting:
 ```python
 from o2_sdk import FastBridgeClient
 
-async with FastBridgeClient(
-    "https://my-bridge.example.com", timeout_seconds=30
-) as bridge:
+async with FastBridgeClient("https://my-bridge.example.com", timeout_seconds=30) as bridge:
     info = await bridge.get_info()
 ```
 

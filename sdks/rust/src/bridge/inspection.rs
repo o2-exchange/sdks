@@ -359,6 +359,7 @@ pub struct FuelInputInspection {
 pub struct FuelOutputInspection {
     #[serde(rename = "type")]
     pub kind: String,
+    /// Variable to/asset_id and Change/Variable amounts are unsigned execution results.
     pub to: Option<String>,
     pub amount: Option<u64>,
     pub asset_id: Option<String>,
@@ -493,6 +494,10 @@ pub fn parse_fuel_unsigned_transaction(
     let mut outputs = Vec::new();
     for _ in 0..output_count {
         let kind = r.count(3)?;
+        check(
+            kind != 0,
+            "Coin outputs are unsupported in proxy withdrawals",
+        )?;
         if kind == 1 {
             let index = r.count(16384)?;
             check(
@@ -517,7 +522,7 @@ pub fn parse_fuel_unsigned_transaction(
                 normalized[start..start + 72].fill(0);
             }
             outputs.push(FuelOutputInspection {
-                kind: ["coin", "contract", "change", "variable"][kind].into(),
+                kind: if kind == 2 { "change" } else { "variable" }.into(),
                 to: Some(to),
                 amount: Some(amount),
                 asset_id: Some(asset),
@@ -567,6 +572,10 @@ pub fn parse_fuel_unsigned_transaction(
     check(
         recipient[..12].iter().all(|b| *b == 0) && gross >= fee,
         "Invalid recipient or fee",
+    )?;
+    check(
+        recipient[12..].iter().any(|b| *b != 0),
+        "Zero withdrawal recipient",
     )?;
     check(
         inputs

@@ -124,6 +124,15 @@ mutateFuel("nonzero data padding", (b) => { b[dataStart + call.scriptData.length
 mutateFuel("predicate input", (b) => { b[inputStart + 159] = 1; });
 mutateFuel("unsupported witness index", (b) => { b[inputStart + 143] = 1; });
 mutateFuel("unsupported input type", (b) => { b[inputStart + 7] = 3; });
+const coinOutputTx = ScriptTransactionRequest.from({ ...tx,
+  outputs: tx.outputs.map((output, index) => index === 0 ? { ...output, type: OutputType.Coin } : output),
+});
+invalidFuel.push({ name: "fixed Coin output",
+  unsignedTransaction: "0x" + Buffer.from(coinOutputTx.toTransactionBytes()).toString("hex") });
+mutateFuel("zero withdrawal recipient", (b) => {
+  const recipientStart = dataStart + 88 + 8 + Buffer.byteLength("withdraw_via_fast_bridge_with_fee") + 32 + 4;
+  b.fill(0, recipientStart, recipientStart + 32);
+});
 const alternateProvider = { getChain: async () => ({ consensusParameters: { txParameters: { maxInputs: bn(511) } } }) };
 const alternateRegistry = new Contract(registryId, abi, alternateProvider);
 const alternateCall = await alternateRegistry.functions.withdraw_via_fast_bridge_with_fee(subId, 11155111, "0x" + "00".repeat(12) + evmAddress.slice(2), bn(2345))

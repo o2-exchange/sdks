@@ -131,8 +131,8 @@ pub async fn withdraw(
     // max_fee is a cap in Fuel's base asset, not necessarily the withdrawn asset.
     // Block expiry is separate from proof expiry. Check every input owner/asset,
     // all contracts and outputs against trusted config and your transfer intent.
-    // Variable-output values may be simulation results excluded from the signing
-    // ID; they are NOT signed guarantees. Parsers make no RPC calls/certification.
+    // Change/Variable amounts and Variable to/asset_id are execution results excluded
+    // from the signing ID, NOT signed guarantees. Parsers make no RPC calls/certification.
     if !approve(request, &tx) {
         return Err("Withdrawal not approved".into());
     }

@@ -250,6 +250,8 @@ class FuelInputInspection:
 
 @dataclass(frozen=True)
 class FuelOutputInspection:
+    """Change/Variable amounts and Variable to/asset_id are unsigned execution results."""
+
     type: str
     to: str | None = None
     amount: int | None = None
@@ -370,6 +372,7 @@ def parse_fuel_unsigned_transaction(
     outputs = []
     for _ in range(output_count):
         kind = r.count(3)
+        _check(kind != 0, "Coin outputs are unsupported in proxy withdrawals")
         if kind == 1:
             index = r.count()
             _check(index < len(inputs) and inputs[index].type == "contract")
@@ -384,9 +387,7 @@ def parse_fuel_unsigned_transaction(
             if kind == 3:
                 zero(start, 72)
             outputs.append(
-                FuelOutputInspection(
-                    ["coin", "contract", "change", "variable"][kind], to, amount, asset
-                )
+                FuelOutputInspection("change" if kind == 2 else "variable", to, amount, asset)
             )
     witness_offset = r.offset
     _check(r.num() == 0, "Expected empty unsigned witness")
@@ -418,6 +419,7 @@ def parse_fuel_unsigned_transaction(
     sub_id, chain, recipient, fee = _hex(d.take(32)), d.num(4), d.take(32), d.num()
     d.done()
     _check(not any(recipient[:12]) and gross >= fee)
+    _check(any(recipient[12:]), "Zero withdrawal recipient")
     _check(any(i.contract_id == registry for i in inputs), "Missing Asset Registry input")
     tx_id = _hex(
         hashlib.sha256(fuel_chain_id.to_bytes(8, "big") + normalized[:witness_offset]).digest()

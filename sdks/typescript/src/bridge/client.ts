@@ -60,9 +60,11 @@ export class FastBridgeClient {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    // Body-read failures are transport errors, not malformed JSON (submit may be accepted).
+    const responseText = await response.text();
     let payload: unknown;
     try {
-      payload = await response.json();
+      payload = JSON.parse(responseText);
     } catch {
       throw new BridgeApiError(
         response.status,

@@ -124,6 +124,31 @@ def test_malformed_inputs():
         parse_fuel_unsigned_transaction("0x" + raw.hex(), 0, 255)
 
 
+def test_fuel_consensus_context():
+    for vector, max_inputs in [(VECTORS["fuel"][0], 511), (VECTORS["fuel"][3], 255)]:
+        with pytest.raises(ValueError, match="Fuel call pointer"):
+            parse_fuel_unsigned_transaction(vector["unsignedTransaction"], 0, max_inputs)
+    raw = VECTORS["fuel"][0]["unsignedTransaction"]
+    for chain_id in [-1, 2**64]:
+        with pytest.raises(ValueError):
+            parse_fuel_unsigned_transaction(raw, chain_id, 255)
+    for max_inputs in [0, 65536]:
+        with pytest.raises(ValueError):
+            parse_fuel_unsigned_transaction(raw, 0, max_inputs)
+
+
+def test_invalid_client_configuration():
+    for url in [
+        "file:///tmp",
+        "https://bridge.example?query=yes",
+        "https://user:pass@bridge.example",
+    ]:
+        with pytest.raises(ValueError):
+            FastBridgeClient(url)
+    with pytest.raises(ValueError):
+        FastBridgeClient("https://bridge.example", timeout_seconds=0)
+
+
 async def test_all_endpoints():
     session = MagicMock(spec=aiohttp.ClientSession)
     index = 0

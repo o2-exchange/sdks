@@ -123,8 +123,8 @@ export async function withdraw(
   // maxFee is a cap in Fuel's base asset, not necessarily the withdrawn asset.
   // Block expiry is independent of proof expiry. Check every input owner/asset,
   // all contracts and outputs against trusted config and your transfer intent.
-  // Variable-output values may be simulation results, excluded from the signing
-  // ID; they are NOT signed guarantees. No parser makes RPC calls or certifies safety.
+  // Change/Variable amounts and Variable to/assetId are execution results excluded
+  // from the signing ID, NOT signed guarantees. Parsers make no RPC calls or safety approvals.
   if (!(await approve(request, tx))) throw new Error("Withdrawal not approved");
   checkExpiry(claims);
 

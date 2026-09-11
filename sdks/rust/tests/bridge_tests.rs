@@ -121,6 +121,41 @@ fn proof_decoding_and_malformed_data() {
     }
 }
 
+#[test]
+fn fuel_consensus_context() {
+    let fixtures = vectors();
+    for (index, max_inputs) in [(0, 511), (3, 255)] {
+        let error = parse_fuel_unsigned_transaction(
+            fixtures["fuel"][index]["unsignedTransaction"]
+                .as_str()
+                .unwrap(),
+            0,
+            max_inputs,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("Fuel call pointer"));
+    }
+    assert!(parse_fuel_unsigned_transaction(
+        fixtures["fuel"][0]["unsignedTransaction"].as_str().unwrap(),
+        0,
+        0
+    )
+    .is_err());
+    // u64/u16 parameter types reject negative/overflowing context at compile time.
+}
+
+#[test]
+fn invalid_client_configuration() {
+    for url in [
+        "file:///tmp",
+        "https://bridge.example?query=yes",
+        "https://user:pass@bridge.example",
+    ] {
+        assert!(FastBridgeClient::new(url).is_err());
+    }
+    assert!(FastBridgeClient::with_timeout("https://bridge.example", Duration::ZERO).is_err());
+}
+
 #[tokio::test]
 async fn all_endpoint_mappings() {
     let fixtures: Value =
