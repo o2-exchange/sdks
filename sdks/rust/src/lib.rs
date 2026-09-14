@@ -185,7 +185,7 @@ mod onchain_revert;
 pub mod websocket;
 
 // Re-export primary types for convenience.
-pub use bridge::{BridgeError, FastBridgeClient};
+pub use bridge::{BridgeError, FastBridgeClient, FAST_BRIDGE_MAINNET_URL, FAST_BRIDGE_TESTNET_URL};
 pub use client::{IntoWithdrawDestination, MarketActionsBuilder, MetadataPolicy, O2Client};
 pub use config::{Network, NetworkConfig};
 pub use crypto::{EvmWallet, SignableWallet, Wallet};

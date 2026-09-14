@@ -14,11 +14,13 @@ export class BridgeApiError extends O2Error {
   }
 }
 export interface FastBridgeClientOptions {
-  /** Proxy root URL, without /v1. No deployment URL is assumed. */
+  /** Proxy root URL, without /v1. */
   baseUrl: string;
   timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
 }
+export const FAST_BRIDGE_MAINNET_URL = "https://bridge.o2.app";
+export const FAST_BRIDGE_TESTNET_URL = "https://bridge.testnet.o2.app";
 /** Independent, stateless bridge client. Requests are single-attempt, including submissions.
  * An ambiguous submit timeout must be reconciled using the appropriate status endpoint. */
 export class FastBridgeClient {

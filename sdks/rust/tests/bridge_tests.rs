@@ -156,6 +156,12 @@ fn invalid_client_configuration() {
     assert!(FastBridgeClient::with_timeout("https://bridge.example", Duration::ZERO).is_err());
 }
 
+#[test]
+fn fast_bridge_urls() {
+    assert_eq!(FAST_BRIDGE_MAINNET_URL, "https://bridge.o2.app");
+    assert_eq!(FAST_BRIDGE_TESTNET_URL, "https://bridge.testnet.o2.app");
+}
+
 #[tokio::test]
 async fn all_endpoint_mappings() {
     let fixtures: Value =

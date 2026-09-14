@@ -103,7 +103,7 @@ Default network configs:
 | WebSocket | `wss://api.o2.app/v1/ws` | `wss://api.testnet.o2.app/v1/ws` | `wss://api.devnet.o2.app/v1/ws` |
 | Fuel RPC | `https://mainnet.fuel.network/v1/graphql` | `https://testnet.fuel.network/v1/graphql` | `https://devnet.fuel.network/v1/graphql` |
 | Faucet | none | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
-| Fast Bridge API ([info](#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | `https://bridge.devnet.o2.app` |
+| Fast Bridge API ([info](#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | not available |
 
 > [!WARNING]
 > Devnet will be deprecated soon. Use Testnet for new development and testing.
@@ -135,19 +135,21 @@ It is separate from `O2Client.withdraw()` and does not use trading sessions.
 
 Default network configs:
 
-| Setting | Default |
-|---------|---------|
-| Proxy URL (`base_url`) | Required for every network; no built-in mainnet/testnet URL. Supply the root URL without `/v1`. |
-| Request timeout (`timeout_seconds`) | `30` seconds |
+| Setting | `Network.MAINNET` | `Network.TESTNET` |
+|---------|-------------------|-------------------|
+| Proxy URL | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` |
+| Request timeout (`timeout_seconds`) | `30` seconds | `30` seconds |
 
-Configure the bridge independently of `O2Client`'s `Network` setting:
+Pass the bridge-specific URL explicitly:
 
 ```python
-from o2_sdk import FastBridgeClient
+from o2_sdk import FAST_BRIDGE_TESTNET_URL, FastBridgeClient
 
-async with FastBridgeClient("https://my-bridge.example.com", timeout_seconds=30) as bridge:
+async with FastBridgeClient(FAST_BRIDGE_TESTNET_URL) as bridge:
     info = await bridge.get_info()
 ```
+
+For a custom deployment, pass its proxy root URL without `/v1` instead.
 
 See the [Fast Bridge example](examples/fast_bridge.py) for all endpoints,
 native ETH/ERC-20 requests, permit fields, proof decoding, transaction

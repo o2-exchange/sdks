@@ -11,6 +11,8 @@ import aiohttp
 import pytest
 
 from o2_sdk import (
+    FAST_BRIDGE_MAINNET_URL,
+    FAST_BRIDGE_TESTNET_URL,
     BridgeApiError,
     FastBridgeClient,
     parse_evm_unsigned_transaction,
@@ -147,6 +149,11 @@ def test_invalid_client_configuration():
             FastBridgeClient(url)
     with pytest.raises(ValueError):
         FastBridgeClient("https://bridge.example", timeout_seconds=0)
+
+
+def test_fast_bridge_urls():
+    assert FAST_BRIDGE_MAINNET_URL == "https://bridge.o2.app"
+    assert FAST_BRIDGE_TESTNET_URL == "https://bridge.testnet.o2.app"
 
 
 async def test_all_endpoints():

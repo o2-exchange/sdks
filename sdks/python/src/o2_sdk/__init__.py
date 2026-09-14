@@ -5,6 +5,8 @@ DEX on the Fuel Network.
 """
 
 from .bridge import (
+    FAST_BRIDGE_MAINNET_URL,
+    FAST_BRIDGE_TESTNET_URL,
     BridgeApiError,
     FastBridgeClient,
     parse_evm_unsigned_transaction,
@@ -163,6 +165,8 @@ from .websocket import ConnectionEvent, ConnectionState
 
 __all__ = [
     "DEFAULT_NONCE_TTL_SECS",
+    "FAST_BRIDGE_MAINNET_URL",
+    "FAST_BRIDGE_TESTNET_URL",
     "GAS_MAX",
     "MAX_NONCE_SESSION_ID",
     "MISMATCHED_SELECTOR_REASON",

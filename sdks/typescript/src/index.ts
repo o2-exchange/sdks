@@ -20,7 +20,13 @@ export {
 
 // ── API ───────────────────────────────────────────────────────────
 export { O2Api, type O2ApiOptions } from "./api.js";
-export { BridgeApiError, FastBridgeClient, type FastBridgeClientOptions } from "./bridge/client.js";
+export {
+  BridgeApiError,
+  FAST_BRIDGE_MAINNET_URL,
+  FAST_BRIDGE_TESTNET_URL,
+  FastBridgeClient,
+  type FastBridgeClientOptions,
+} from "./bridge/client.js";
 export * as bridge from "./bridge/index.js";
 export {
   parseEvmUnsignedTransaction,

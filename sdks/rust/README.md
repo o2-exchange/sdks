@@ -98,7 +98,7 @@ Default network configs:
 | WebSocket | `wss://api.o2.app/v1/ws` | `wss://api.testnet.o2.app/v1/ws` | `wss://api.devnet.o2.app/v1/ws` |
 | Fuel RPC | `https://mainnet.fuel.network/v1/graphql` | `https://testnet.fuel.network/v1/graphql` | `https://devnet.fuel.network/v1/graphql` |
 | Faucet | none | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
-| Fast Bridge API ([info](#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | `https://bridge.devnet.o2.app` |
+| Fast Bridge API ([info](#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | not available |
 
 > [!WARNING]
 > Devnet will be deprecated soon. Use Testnet for new development and testing.
@@ -128,23 +128,21 @@ It is separate from `O2Client::withdraw()` and does not use trading sessions.
 
 Default network configs:
 
-| Setting | Default |
-|---------|---------|
-| Proxy URL (`base_url`) | Required for every network; no built-in mainnet/testnet URL. Supply the root URL without `/v1`. |
-| Request timeout | 30 seconds; override with `FastBridgeClient::with_timeout()` |
+| Setting | `Network::Mainnet` | `Network::Testnet` |
+|---------|--------------------|--------------------|
+| Proxy URL | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` |
+| Request timeout | 30 seconds | 30 seconds |
 
-Configure the bridge independently of `O2Client`'s `Network` setting:
+Pass the bridge-specific URL explicitly:
 
 ```rust
-use o2_sdk::FastBridgeClient;
-use std::time::Duration;
+use o2_sdk::{FastBridgeClient, FAST_BRIDGE_TESTNET_URL};
 
-let bridge = FastBridgeClient::with_timeout(
-    "https://my-bridge.example.com",
-    Duration::from_secs(30),
-)?;
+let bridge = FastBridgeClient::new(FAST_BRIDGE_TESTNET_URL)?;
 let info = bridge.get_info().await?;
 ```
+
+For a custom deployment, pass its proxy root URL without `/v1` instead.
 
 See the [Fast Bridge example](examples/fast_bridge.rs) for all endpoints,
 native ETH/ERC-20 requests, permit fields, proof decoding, transaction

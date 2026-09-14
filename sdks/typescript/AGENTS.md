@@ -269,8 +269,10 @@ Import `FastBridgeClient`, `BridgeApiError`, and the three parsing helpers from
 `@o2exchange/sdk`; bridge types are available through `import type { bridge }`.
 This client is separate from O2 trading sessions and `O2Client.withdraw()`.
 Construct with `{ baseUrl: string, timeoutMs?: number, fetch?: typeof globalThis.fetch }`;
-timeout defaults to 30000 ms. An explicit proxy root URL without `/v1` is required. No built-in network URLs,
-automatic retries, or redirects. An ambiguous submit timeout requires status
+timeout defaults to 30000 ms. Use the exported `FAST_BRIDGE_MAINNET_URL` or
+`FAST_BRIDGE_TESTNET_URL` constant, or pass a custom proxy root URL without
+`/v1`. Devnet has no Fast Bridge endpoint. There are no automatic retries or
+redirects. An ambiguous submit timeout requires status
 reconciliation, not blind resubmission.
 
 All methods return `Promise<ResponseType>`:

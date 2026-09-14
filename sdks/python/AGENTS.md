@@ -348,10 +348,11 @@ Import `FastBridgeClient`, `BridgeApiError`, and the three parsing helpers from
 `o2_sdk`; request/response dataclasses live in `o2_sdk.bridge.models` and
 inspection dataclasses in `o2_sdk.bridge.inspection`. This client is separate
 from O2 trading sessions and `O2Client.withdraw()`.
-Use `FastBridgeClient(base_url, *, timeout_seconds=30, session=None)` with an
-explicit proxy root URL without `/v1`. Use an async context manager or `close()`;
-only owned aiohttp sessions are closed. No built-in network URLs, automatic
-retries, or redirects. Reconcile an ambiguous submit timeout before resubmitting.
+Use exported `FAST_BRIDGE_MAINNET_URL` or `FAST_BRIDGE_TESTNET_URL` with
+`FastBridgeClient(base_url, *, timeout_seconds=30, session=None)`, or pass a
+custom proxy root URL without `/v1`. Devnet has no Fast Bridge endpoint. Use an async context manager or `close()`;
+only owned aiohttp sessions are closed. There are no automatic retries or
+redirects. Reconcile an ambiguous submit timeout before resubmitting.
 
 All methods are async and return the dataclass listed below:
 

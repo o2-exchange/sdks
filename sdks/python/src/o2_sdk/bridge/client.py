@@ -14,6 +14,9 @@ from . import models as m
 
 T = TypeVar("T", bound=m.BridgeModel)
 
+FAST_BRIDGE_MAINNET_URL = "https://bridge.o2.app"
+FAST_BRIDGE_TESTNET_URL = "https://bridge.testnet.o2.app"
+
 
 class BridgeApiError(O2Error):
     def __init__(self, status: int, bridge_code: str, message: str, details: Any = None):

@@ -8,6 +8,9 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::time::Duration;
 
+pub const FAST_BRIDGE_MAINNET_URL: &str = "https://bridge.o2.app";
+pub const FAST_BRIDGE_TESTNET_URL: &str = "https://bridge.testnet.o2.app";
+
 /// Proxy errors preserve HTTP status, string code, and structured details.
 #[derive(Debug, thiserror::Error)]
 pub enum BridgeError {

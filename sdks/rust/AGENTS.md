@@ -233,11 +233,13 @@ match client.create_order(&mut session, market_symbol, ...).await {
 `o2_sdk::bridge` exports `FastBridgeClient`, `BridgeError`, request/response
 models, and inspection helpers/types. The client/error are also re-exported at
 the crate root. This client is separate from trading sessions and `O2Client::withdraw()`.
-Use `FastBridgeClient::new(base_url: &str)` (30-second timeout) or
-`FastBridgeClient::with_timeout(base_url: &str, timeout: Duration)`, both returning
-`Result<Self, BridgeError>`. Supply the proxy root URL without `/v1`.
-No built-in network URLs, automatic retries, or redirects. Reconcile ambiguous
-submit timeouts before resubmitting.
+Use exported `FAST_BRIDGE_MAINNET_URL` or `FAST_BRIDGE_TESTNET_URL` with
+`FastBridgeClient::new(base_url: &str)` (30-second timeout), or pass a custom
+proxy root URL. Devnet has no Fast Bridge endpoint. For custom timeouts, use
+`FastBridgeClient::with_timeout(base_url: &str, timeout: Duration)`. Both
+constructors return `Result<Self, BridgeError>`. Supply the proxy root URL without `/v1`.
+There are no automatic retries or redirects. Reconcile ambiguous submit
+timeouts before resubmitting.
 
 Methods are async and return `Result<ResponseType, BridgeError>`:
 

@@ -56,14 +56,14 @@ composed into one signed batch. See the
 | WebSocket | `wss://api.o2.app/v1/ws` | `wss://api.testnet.o2.app/v1/ws` | `wss://api.devnet.o2.app/v1/ws` |
 | Fuel RPC | `https://mainnet.fuel.network/v1/graphql` | `https://testnet.fuel.network/v1/graphql` | `https://devnet.fuel.network/v1/graphql` |
 | Faucet | none | `https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2` | `https://fuel-o2-faucet.vercel.app/api/devnet/mint-v2` |
-| Fast Bridge API ([TypeScript](sdks/typescript/README.md#fast-bridge), [Python](sdks/python/README.md#fast-bridge), [Rust](sdks/rust/README.md#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | `https://bridge.devnet.o2.app` |
+| Fast Bridge API ([TypeScript](sdks/typescript/README.md#fast-bridge), [Python](sdks/python/README.md#fast-bridge), [Rust](sdks/rust/README.md#fast-bridge)) | `https://bridge.o2.app` | `https://bridge.testnet.o2.app` | not available |
 
 > [!WARNING]
 > Devnet will be deprecated soon. Use Testnet for new development and testing.
 
-Fast Bridge URLs above are provisional placeholders, not verified deployments
-or built-in SDK defaults. Replace them with your deployment URLs and configure
-`FastBridgeClient` separately.
+The Mainnet and Testnet Fast Bridge URLs are exported by each SDK's bridge
+module, separately from the trading network configuration. Clients still take
+an explicit URL, and custom proxy URLs remain supported.
 
 API rate limits are documented at <https://docs.o2.app/api-endpoints-reference.html#rate-limits>.
 

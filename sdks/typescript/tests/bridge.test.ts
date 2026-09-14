@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { bytesToHex, fuelCompactSign, hexToBytes } from "../src/crypto.js";
 import {
+  FAST_BRIDGE_MAINNET_URL,
+  FAST_BRIDGE_TESTNET_URL,
   FastBridgeClient,
   parseEvmUnsignedTransaction,
   parseFuelUnsignedTransaction,
@@ -134,6 +136,10 @@ describe("Fast Bridge offline inspection", () => {
 });
 
 describe("Fast Bridge errors and transport", () => {
+  it("exports the Fast Bridge deployment URLs", () => {
+    expect(FAST_BRIDGE_MAINNET_URL).toBe("https://bridge.o2.app");
+    expect(FAST_BRIDGE_TESTNET_URL).toBe("https://bridge.testnet.o2.app");
+  });
   it("preserves body-read transport errors without retrying a submit", async () => {
     const error = new DOMException("Response timed out", "AbortError");
     const fetch = vi.fn(
