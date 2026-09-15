@@ -31,6 +31,8 @@ jobs:
           cache: pip
           cache-dependency-path: sdks/python/pyproject.toml
       - run: pip install -e ".[dev]"
+      - name: Test Fast Bridge read-only API
+        run: pytest tests/test_bridge_integration.py -m integration -v --timeout=120
       - name: Write integration wallets
         if: env.PY_INTEGRATION_WALLETS != ''
         env:
@@ -76,6 +78,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: sdks/rust -> target
+      - name: Test Fast Bridge read-only API
+        run: cargo test --features integration --test bridge_integration
       - name: Write integration wallets
         if: env.RUST_INTEGRATION_WALLETS != ''
         env:
