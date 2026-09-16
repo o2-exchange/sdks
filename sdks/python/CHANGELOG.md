@@ -5,12 +5,26 @@
 
 - Add the O2-maintained CCXT-compatible public alpha at `@o2exchange/sdk/ccxt` and `o2_sdk.ccxt`. The adapters extend the official TypeScript and asynchronous Python CCXT `Exchange` classes, provide normalized market data and private trading methods, map failures to official CCXT errors, and support testnet-verified limit and price-bounded market orders while keeping CCXT optional for each core SDK.
 
-#### Add a stateless FastBridgeClient for every Fast Bridge proxy v1 endpoint,
+#### Fast Bridge proxy support
 
-unauthenticated preparation-proof claim decoding, and offline EVM/Fuel
-transaction inspection with locally derived signing digests. Reuse existing
-dependencies and include cross-language oracle fixtures and usage examples.
-Expose the final Mainnet and Testnet proxy URLs as bridge-specific constants.
+Add a dedicated, stateless `FastBridgeClient` covering all eleven v1 endpoints
+for route and asset discovery, fee and availability checks, deposit and
+withdrawal preparation, signed transaction submission, and status lookup.
+Mainnet and Testnet proxy URLs are exported as `FAST_BRIDGE_MAINNET_URL` and
+`FAST_BRIDGE_TESTNET_URL`, independently of the O2 trading network config.
+
+Clients can inspect transactions before signing with
+`parse_evm_unsigned_transaction` and `parse_fuel_unsigned_transaction`. The
+parsers decode recipients, assets, amounts, bridge and network fees, expiration
+and transaction policies, and locally derive the EVM signing digest or Fuel
+transaction ID. `parse_preparation_proof` exposes the proof version, key ID,
+expiry and signer as unauthenticated claims; only the proxy can authenticate
+the proof and its binding to the exact prepared transaction.
+
+The client uses typed dataclasses and proxy errors, bounded single-attempt HTTP
+calls, and no new runtime dependencies. Cross-language oracle fixtures,
+complete signing examples, and live read-only Testnet coverage exercise the
+public proxy without requiring funded wallets.
 
 ### Features
 
