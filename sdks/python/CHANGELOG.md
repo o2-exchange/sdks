@@ -1,4 +1,22 @@
 # Changelog
+## 0.5.0 (2026-09-16)
+
+### Breaking Changes
+
+- Add the O2-maintained CCXT-compatible public alpha at `@o2exchange/sdk/ccxt` and `o2_sdk.ccxt`. The adapters extend the official TypeScript and asynchronous Python CCXT `Exchange` classes, provide normalized market data and private trading methods, map failures to official CCXT errors, and support testnet-verified limit and price-bounded market orders while keeping CCXT optional for each core SDK.
+
+#### Add a stateless FastBridgeClient for every Fast Bridge proxy v1 endpoint,
+
+unauthenticated preparation-proof claim decoding, and offline EVM/Fuel
+transaction inspection with locally derived signing digests. Reuse existing
+dependencies and include cross-language oracle fixtures and usage examples.
+Expose the final Mainnet and Testnet proxy URLs as bridge-specific constants.
+
+### Features
+
+- ccxt compatibility (optional) (#66)
+- add Fast Bridge proxy support to TypeScript, Python, and Rust (#77)
+
 ## 0.4.0 (2026-08-20)
 
 ### Breaking Changes
