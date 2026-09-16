@@ -5,27 +5,6 @@
 
 - Add the O2-maintained CCXT-compatible public alpha at `@o2exchange/sdk/ccxt` and `o2_sdk.ccxt`. The adapters extend the official TypeScript and asynchronous Python CCXT `Exchange` classes, provide normalized market data and private trading methods, map failures to official CCXT errors, and support testnet-verified limit and price-bounded market orders while keeping CCXT optional for each core SDK.
 
-#### Fast Bridge proxy support
-
-Add a dedicated, stateless `FastBridgeClient` covering all eleven v1 endpoints
-for route and asset discovery, fee and availability checks, deposit and
-withdrawal preparation, signed transaction submission, and status lookup.
-Mainnet and Testnet proxy URLs are exported as `FAST_BRIDGE_MAINNET_URL` and
-`FAST_BRIDGE_TESTNET_URL`, independently of the O2 trading network config.
-
-Clients can inspect transactions before signing with
-`parseEvmUnsignedTransaction` and `parseFuelUnsignedTransaction`. The parsers
-decode recipients, assets, amounts, bridge and network fees, expiration and
-transaction policies, and locally derive the EVM signing digest or Fuel
-transaction ID. `parsePreparationProof` exposes the proof version, key ID,
-expiry and signer as unauthenticated claims; only the proxy can authenticate
-the proof and its binding to the exact prepared transaction.
-
-The client uses typed requests, responses and proxy errors, bounded
-single-attempt HTTP calls, and no new runtime dependencies. Cross-language
-oracle fixtures, complete signing examples, and live read-only Testnet coverage
-exercise the public proxy without requiring funded wallets.
-
 #### Add Turbo (margin) trading at `client.turbo`. `long()` and `short()` compose the sweep, the funding leg and the order into one signed atomic batch — a buy draws quote against the credit line, a sell borrows the asset in kind — so callers never handle draw/borrow/repay themselves. Also covers the account lifecycle (`open`, `addMargin`, `extend`, `closePosition`, `repayDrawn`, `closeAccount`), reads (`snapshot`, `positions`, `limits`, `maxSell`), and the referral programme (`turbo.referral`). `createSession(wallet, markets, { turbo: true })` scopes the session to the margin pool and the caller's margin accounts, including ones not yet opened — the scope is signed and cannot be widened afterwards.
 
 Nonces are now tracked per executing account rather than per session, so a Turbo batch (which runs as the margin child) cannot desync the parent's counter. `refreshAccountNonce(id)` re-reads one.
@@ -39,6 +18,26 @@ Also from live testnet runs: margin children are re-armed automatically when the
 Parallel-nonce cursors are seeded from `GET /v1/accounts/window` rather than guessed, matching what the Python SDK already did.
 
 ### Features
+
+#### O2 Fast Bridge
+
+Applications can now move supported assets between EVM chains and Fuel through
+O2 Fast Bridge. `FastBridgeClient` provides the complete workflow: discover
+routes and assets, check availability and fees, prepare deposits and
+withdrawals, submit signed transactions, and track their status. The Mainnet
+and Testnet service URLs are available as `FAST_BRIDGE_MAINNET_URL` and
+`FAST_BRIDGE_TESTNET_URL`.
+
+Before signing, applications can inspect the exact prepared transaction with
+`parseEvmUnsignedTransaction` or `parseFuelUnsignedTransaction`, including its
+recipient, asset, amount, fees, and expiration. These helpers also calculate
+the value the wallet must sign. `parsePreparationProof` can display the proof's
+version, key ID, expiry, and signer, but only the Fast Bridge service can verify
+that proof and its connection to the prepared transaction.
+
+Complete examples demonstrate discovery, inspection, signing, submission, and
+status checks. Live read-only tests exercise the deployed Testnet service
+without requiring funded wallets.
 
 - ccxt compatibility (optional) (#66)
 - Turbo (margin) trading (#76)

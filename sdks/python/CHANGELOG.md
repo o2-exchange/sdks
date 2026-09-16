@@ -5,28 +5,28 @@
 
 - Add the O2-maintained CCXT-compatible public alpha at `@o2exchange/sdk/ccxt` and `o2_sdk.ccxt`. The adapters extend the official TypeScript and asynchronous Python CCXT `Exchange` classes, provide normalized market data and private trading methods, map failures to official CCXT errors, and support testnet-verified limit and price-bounded market orders while keeping CCXT optional for each core SDK.
 
-#### Fast Bridge proxy support
-
-Add a dedicated, stateless `FastBridgeClient` covering all eleven v1 endpoints
-for route and asset discovery, fee and availability checks, deposit and
-withdrawal preparation, signed transaction submission, and status lookup.
-Mainnet and Testnet proxy URLs are exported as `FAST_BRIDGE_MAINNET_URL` and
-`FAST_BRIDGE_TESTNET_URL`, independently of the O2 trading network config.
-
-Clients can inspect transactions before signing with
-`parse_evm_unsigned_transaction` and `parse_fuel_unsigned_transaction`. The
-parsers decode recipients, assets, amounts, bridge and network fees, expiration
-and transaction policies, and locally derive the EVM signing digest or Fuel
-transaction ID. `parse_preparation_proof` exposes the proof version, key ID,
-expiry and signer as unauthenticated claims; only the proxy can authenticate
-the proof and its binding to the exact prepared transaction.
-
-The client uses typed dataclasses and proxy errors, bounded single-attempt HTTP
-calls, and no new runtime dependencies. Cross-language oracle fixtures,
-complete signing examples, and live read-only Testnet coverage exercise the
-public proxy without requiring funded wallets.
-
 ### Features
+
+#### O2 Fast Bridge
+
+Applications can now move supported assets between EVM chains and Fuel through
+O2 Fast Bridge. `FastBridgeClient` provides the complete workflow: discover
+routes and assets, check availability and fees, prepare deposits and
+withdrawals, submit signed transactions, and track their status. The Mainnet
+and Testnet service URLs are available as `FAST_BRIDGE_MAINNET_URL` and
+`FAST_BRIDGE_TESTNET_URL`.
+
+Before signing, applications can inspect the exact prepared transaction with
+`parse_evm_unsigned_transaction` or `parse_fuel_unsigned_transaction`,
+including its recipient, asset, amount, fees, and expiration. These helpers
+also calculate the value the wallet must sign. `parse_preparation_proof` can
+display the proof's version, key ID, expiry, and signer, but only the Fast
+Bridge service can verify that proof and its connection to the prepared
+transaction.
+
+Complete examples demonstrate discovery, inspection, signing, submission, and
+status checks. Live read-only tests exercise the deployed Testnet service
+without requiring funded wallets.
 
 - ccxt compatibility (optional) (#66)
 - add Fast Bridge proxy support to TypeScript, Python, and Rust (#77)
