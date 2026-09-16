@@ -12,7 +12,6 @@ Expose the final Mainnet and Testnet proxy URLs as bridge-specific constants.
 
 ### Features
 
-- ccxt compatibility (optional) (#66)
 - add Fast Bridge proxy support to TypeScript, Python, and Rust (#77)
 
 ## 0.3.0 (2026-08-20)
