@@ -1,0 +1,267 @@
+[
+  {
+    "name": "getInfo",
+    "path": "/v1/info",
+    "method": "GET",
+    "response": {
+      "environment": "test",
+      "apiVersion": "test",
+      "configVersion": "test",
+      "preparationProofTtlSeconds": 1,
+      "fuel": {
+        "chainId": "0",
+        "network": "test",
+        "contracts": {
+          "fastBridge": "test",
+          "assetRegistry": "test",
+          "wrappedAssetsMinter": "test",
+          "gasOracle": "test",
+          "rateLimiter": "test"
+        }
+      },
+      "chains": [
+        {
+          "chainId": 11155111,
+          "name": "test",
+          "messengerAddress": "0x1111111111111111111111111111111111111111",
+          "outpostAddress": "0x1111111111111111111111111111111111111111"
+        }
+      ]
+    },
+    "query": {}
+  },
+  {
+    "name": "getAssets",
+    "path": "/v1/assets",
+    "method": "GET",
+    "response": {
+      "configVersion": "test",
+      "assets": [
+        {
+          "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "symbol": "test",
+          "fuelDecimals": 1,
+          "routes": [
+            {
+              "chainId": 11155111,
+              "tokenAddress": null,
+              "tokenDecimals": 1
+            }
+          ]
+        }
+      ]
+    },
+    "query": {
+      "chainId": 11155111
+    }
+  },
+  {
+    "name": "getDepositInfo",
+    "path": "/v1/deposit/info",
+    "method": "GET",
+    "response": {
+      "sourceChainId": 11155111,
+      "routeEnabled": true,
+      "messengerAddress": "0x1111111111111111111111111111111111111111",
+      "paused": true,
+      "assets": [
+        {
+          "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "tokenAddress": null,
+          "tokenDecimals": 1,
+          "fuelDecimals": 1,
+          "whitelisted": true,
+          "depositCap": null,
+          "depositedAmount": "100",
+          "remainingCapacity": null,
+          "requiresAllowance": true,
+          "allowanceSpender": null,
+          "permitSupported": true,
+          "amountEligible": true,
+          "ineligibilityReason": "test"
+        }
+      ]
+    },
+    "query": {
+      "sourceChainId": 11155111,
+      "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "amount": "100"
+    }
+  },
+  {
+    "name": "prepareDeposit",
+    "path": "/v1/deposit/prepare",
+    "method": "POST",
+    "response": {
+      "unsignedTransaction": "0x00",
+      "preparationProof": "test"
+    },
+    "body": {
+      "sourceChainId": 11155111,
+      "from": "0x1111111111111111111111111111111111111111",
+      "to": "0x1111111111111111111111111111111111111111",
+      "toType": "address",
+      "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "amount": "100",
+      "permit": {
+        "deadline": "test",
+        "v": 1,
+        "r": "test",
+        "s": "test"
+      }
+    }
+  },
+  {
+    "name": "submitDeposit",
+    "path": "/v1/deposit/submit",
+    "method": "POST",
+    "response": {
+      "sourceChainId": 11155111,
+      "evmTxHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "status": "submitted",
+      "submittedAt": "test"
+    },
+    "body": {
+      "preparationProof": "test",
+      "unsignedTransaction": "0x00",
+      "signature": "0x01"
+    }
+  },
+  {
+    "name": "getDepositStatus",
+    "path": "/v1/deposit/status",
+    "method": "GET",
+    "response": {
+      "sourceChainId": 11155111,
+      "evmTxHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "source": {
+        "status": "pending",
+        "blockNumber": "100",
+        "confirmations": "100"
+      },
+      "fuel": {
+        "status": "unavailable"
+      },
+      "requestHash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    },
+    "query": {
+      "sourceChainId": 11155111,
+      "evmTxHash": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  {
+    "name": "getWithdrawInfo",
+    "path": "/v1/withdraw/info",
+    "method": "GET",
+    "response": {
+      "destinationChainId": 11155111,
+      "routeEnabled": true,
+      "messengerAddress": "0x1111111111111111111111111111111111111111",
+      "outpostAddress": "0x1111111111111111111111111111111111111111",
+      "fuelContracts": {
+        "assetRegistry": "test",
+        "wrappedAssetsMinter": "test",
+        "gasOracle": "test",
+        "rateLimiter": "test"
+      },
+      "paused": true,
+      "recipientFormat": "evm-address",
+      "assets": [
+        {
+          "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "tokenAddress": null,
+          "fuelDecimals": 1,
+          "tokenDecimals": 1,
+          "withdrawEnabled": true,
+          "fee": "100",
+          "feeQuoteBlockHeight": "100",
+          "feeObservedAt": "test",
+          "rateLimit": {
+            "transactionLimit": null,
+            "dailyLimit": null,
+            "withdrawnToday": "100",
+            "remainingToday": null,
+            "resetsAt": "test"
+          },
+          "amountEligible": true,
+          "ineligibilityReason": "test"
+        }
+      ]
+    },
+    "query": {
+      "destinationChainId": 11155111,
+      "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "amount": "100"
+    }
+  },
+  {
+    "name": "getWithdrawFee",
+    "path": "/v1/withdraw/fee",
+    "method": "GET",
+    "response": {
+      "destinationChainId": 11155111,
+      "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "fee": "100",
+      "fuelBlockHeight": "100",
+      "observedAt": "test",
+      "configVersion": "test"
+    },
+    "query": {
+      "destinationChainId": 11155111,
+      "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  },
+  {
+    "name": "prepareWithdraw",
+    "path": "/v1/withdraw/prepare",
+    "method": "POST",
+    "response": {
+      "unsignedTransaction": "0x00",
+      "fuelChainId": "0",
+      "preparationProof": "test"
+    },
+    "body": {
+      "destinationChainId": 11155111,
+      "from": "0x1111111111111111111111111111111111111111",
+      "to": "0x1111111111111111111111111111111111111111",
+      "assetId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "amount": "100"
+    }
+  },
+  {
+    "name": "submitWithdraw",
+    "path": "/v1/withdraw/submit",
+    "method": "POST",
+    "response": {
+      "fuelTxId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "status": "submitted",
+      "submittedAt": "test"
+    },
+    "body": {
+      "preparationProof": "test",
+      "unsignedTransaction": "0x00",
+      "signature": "0x01"
+    }
+  },
+  {
+    "name": "getWithdrawStatus",
+    "path": "/v1/withdraw/status",
+    "method": "GET",
+    "response": {
+      "fuelTxId": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "fuel": {
+        "status": "pending",
+        "blockHeight": "100",
+        "failureReason": "test"
+      },
+      "requestHash": "0x1111111111111111111111111111111111111111111111111111111111111111",
+      "destinationChainId": 11155111,
+      "destination": {
+        "status": "unavailable"
+      }
+    },
+    "query": {
+      "fuelTxId": "0x1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  }
+]
