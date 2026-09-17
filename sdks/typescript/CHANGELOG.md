@@ -1,4 +1,48 @@
 # Changelog
+## 0.4.0 (2026-09-16)
+
+### Breaking Changes
+
+- Add the O2-maintained CCXT-compatible public alpha at `@o2exchange/sdk/ccxt` and `o2_sdk.ccxt`. The adapters extend the official TypeScript and asynchronous Python CCXT `Exchange` classes, provide normalized market data and private trading methods, map failures to official CCXT errors, and support testnet-verified limit and price-bounded market orders while keeping CCXT optional for each core SDK.
+
+#### Add Turbo (margin) trading at `client.turbo`. `long()` and `short()` compose the sweep, the funding leg and the order into one signed atomic batch — a buy draws quote against the credit line, a sell borrows the asset in kind — so callers never handle draw/borrow/repay themselves. Also covers the account lifecycle (`open`, `addMargin`, `extend`, `closePosition`, `repayDrawn`, `closeAccount`), reads (`snapshot`, `positions`, `limits`, `maxSell`), and the referral programme (`turbo.referral`). `createSession(wallet, markets, { turbo: true })` scopes the session to the margin pool and the caller's margin accounts, including ones not yet opened — the scope is signed and cannot be widened afterwards.
+
+Nonces are now tracked per executing account rather than per session, so a Turbo batch (which runs as the margin child) cannot desync the parent's counter. `refreshAccountNonce(id)` re-reads one.
+
+Verified against live testnet, which surfaced several defects no unit test could: `getMarkets()` dropped the `margin` block from `/v1/markets`, making the whole Turbo surface report itself unavailable; margin batches execute as the child and so need the PARENT contract as their owner id and a PARALLEL nonce with a typed signature; account discovery cannot assume `/v1/accounts` carries margin fields; `tiers()` now hides retired tiers and `open()` resolves the term a prepaid tier actually sells; notional- and clamp-derived quantities are fitted to the market's fractional-price rule.
+
+Adds take-profit and stop-loss. `createOrderWithTriggers` attaches protection atomically to a new order; `createTriggerOrder`, `createTriggerOrders` (OCO) and `cancelTriggerOrder` cover standalone legs; `cancelAllTriggerOrders` and `getActiveOrders` list and clear them. `turbo.long`/`short` take the same `takeProfit`/`stopLoss` options, so protection rides the same signed batch as the position it protects. Prices are tick-aligned and quantities fitted against every price in the batch, because an inherited trigger leg is checked at its own price. Trigger rejections 7005-7011 are now typed errors.
+
+Also from live testnet runs: margin children are re-armed automatically when the parent's session key rotates (otherwise the account silently goes untradeable); parallel nonces no longer replay across processes; a lagging sequential nonce self-heals from the rejection that names the right one; non-JSON error bodies surface their message instead of throwing a JSON parse error; and `closeAccount` cancels resting orders, flattens positions and retires in-kind debts before closing.
+
+Parallel-nonce cursors are seeded from `GET /v1/accounts/window` rather than guessed, matching what the Python SDK already did.
+
+### Features
+
+#### O2 Fast Bridge
+
+Applications can now move supported assets between EVM chains and Fuel through
+O2 Fast Bridge. `FastBridgeClient` provides the complete workflow: discover
+routes and assets, check availability and fees, prepare deposits and
+withdrawals, submit signed transactions, and track their status. The Mainnet
+and Testnet service URLs are available as `FAST_BRIDGE_MAINNET_URL` and
+`FAST_BRIDGE_TESTNET_URL`.
+
+Before signing, applications can inspect the exact prepared transaction with
+`parseEvmUnsignedTransaction` or `parseFuelUnsignedTransaction`, including its
+recipient, asset, amount, fees, and expiration. These helpers also calculate
+the value the wallet must sign. `parsePreparationProof` can display the proof's
+version, key ID, expiry, and signer, but only the Fast Bridge service can verify
+that proof and its connection to the prepared transaction.
+
+Complete examples demonstrate discovery, inspection, signing, submission, and
+status checks. Live read-only tests exercise the deployed Testnet service
+without requiring funded wallets.
+
+- ccxt compatibility (optional) (#66)
+- Turbo (margin) trading (#76)
+- add Fast Bridge proxy support to TypeScript, Python, and Rust (#77)
+
 ## 0.3.0 (2026-08-20)
 
 ### Breaking Changes

@@ -1,4 +1,36 @@
 # Changelog
+## 0.5.0 (2026-09-16)
+
+### Breaking Changes
+
+- Add the O2-maintained CCXT-compatible public alpha at `@o2exchange/sdk/ccxt` and `o2_sdk.ccxt`. The adapters extend the official TypeScript and asynchronous Python CCXT `Exchange` classes, provide normalized market data and private trading methods, map failures to official CCXT errors, and support testnet-verified limit and price-bounded market orders while keeping CCXT optional for each core SDK.
+
+### Features
+
+#### O2 Fast Bridge
+
+Applications can now move supported assets between EVM chains and Fuel through
+O2 Fast Bridge. `FastBridgeClient` provides the complete workflow: discover
+routes and assets, check availability and fees, prepare deposits and
+withdrawals, submit signed transactions, and track their status. The Mainnet
+and Testnet service URLs are available as `FAST_BRIDGE_MAINNET_URL` and
+`FAST_BRIDGE_TESTNET_URL`.
+
+Before signing, applications can inspect the exact prepared transaction with
+`parse_evm_unsigned_transaction` or `parse_fuel_unsigned_transaction`,
+including its recipient, asset, amount, fees, and expiration. These helpers
+also calculate the value the wallet must sign. `parse_preparation_proof` can
+display the proof's version, key ID, expiry, and signer, but only the Fast
+Bridge service can verify that proof and its connection to the prepared
+transaction.
+
+Complete examples demonstrate discovery, inspection, signing, submission, and
+status checks. Live read-only tests exercise the deployed Testnet service
+without requiring funded wallets.
+
+- ccxt compatibility (optional) (#66)
+- add Fast Bridge proxy support to TypeScript, Python, and Rust (#77)
+
 ## 0.4.0 (2026-08-20)
 
 ### Breaking Changes
