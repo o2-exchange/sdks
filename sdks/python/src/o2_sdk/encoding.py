@@ -80,6 +80,8 @@ def encode_order_args(
       PostOnly(3):      u64(3)                                  [8 bytes]
       Market(4):        u64(4)                                  [8 bytes]
       BoundedMarket(5): u64(5) + u64(max_price) + u64(min_price) [24 bytes]
+      TurboSharedSpot(6):     u64(6)                            [8 bytes]
+      TurboSharedPostOnly(7): u64(7)                            [8 bytes]
     """
     result = bytearray()
     result += u64_be(price)
@@ -105,6 +107,10 @@ def encode_order_args(
         max_price = int(order_type_data["max_price"])
         min_price = int(order_type_data["min_price"])
         result += u64_be(5) + u64_be(max_price) + u64_be(min_price)
+    elif order_type == "TurboSharedSpot":
+        result += u64_be(6)
+    elif order_type == "TurboSharedPostOnly":
+        result += u64_be(7)
     else:
         raise ValueError(f"Unknown order type: {order_type}")
 

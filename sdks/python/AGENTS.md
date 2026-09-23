@@ -95,7 +95,7 @@ asyncio.run(main())
 | Type | Values / Fields | Description |
 |------|-----------------|-------------|
 | `OrderSide` | `BUY`, `SELL` | Side of an order |
-| `OrderType` | `SPOT`, `MARKET`, `FILL_OR_KILL`, `POST_ONLY` | Simple order type enum (use `LimitOrder` / `BoundedMarketOrder` for parameterized types) |
+| `OrderType` | `SPOT`, `MARKET`, `FILL_OR_KILL`, `POST_ONLY`, `TURBO_SHARED_SPOT`, `TURBO_SHARED_POST_ONLY` | Simple order type enum (use `LimitOrder` / `BoundedMarketOrder` for parameterized types) |
 | `LimitOrder` | `price: NumericInput, timestamp: int \| None` | Limit order with expiry (prices auto-scaled unless `ChainInt`) |
 | `BoundedMarketOrder` | `max_price: NumericInput, min_price: NumericInput` | Bounded market order (auto-scaled unless `ChainInt`) |
 | `ChainInt` | `value: int` | Explicit already-scaled chain integer wrapper |
@@ -298,7 +298,7 @@ On-chain reverts (no code field) raise `OnChainRevert` with `.reason` (e.g., `"N
 | Type | Key Fields | Description |
 |------|------------|-------------|
 | `OrderSide` | `BUY`, `SELL` | Enum for order side |
-| `OrderType` | `SPOT`, `MARKET`, `FILL_OR_KILL`, `POST_ONLY` | Enum for simple order types (use `LimitOrder` / `BoundedMarketOrder` for parameterized types) |
+| `OrderType` | `SPOT`, `MARKET`, `FILL_OR_KILL`, `POST_ONLY`, `TURBO_SHARED_SPOT`, `TURBO_SHARED_POST_ONLY` | Enum for simple order types (use `LimitOrder` / `BoundedMarketOrder` for parameterized types) |
 | `LimitOrder` | `price: NumericInput, timestamp: int \| None` | Limit order params |
 | `BoundedMarketOrder` | `max_price: NumericInput, min_price: NumericInput` | Bounded market params |
 | `ChainInt` | `value: int` | Explicit raw chain integer (already scaled) |

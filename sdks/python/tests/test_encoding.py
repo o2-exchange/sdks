@@ -3,6 +3,8 @@
 import struct
 from typing import ClassVar
 
+import pytest
+
 from o2_sdk.encoding import (
     GAS_MAX,
     action_to_call,
@@ -17,6 +19,7 @@ from o2_sdk.encoding import (
     function_selector,
     u64_be,
 )
+from o2_sdk.models import CreateOrderAction, OrderSide, OrderType
 
 
 class TestU64Be:
@@ -170,6 +173,26 @@ class TestEncodeOrderArgs:
         assert result[16:24] == u64_be(5)  # BoundedMarket variant = 5
         assert result[24:32] == u64_be(110000000)
         assert result[32:40] == u64_be(90000000)
+
+    def test_turbo_shared_spot(self):
+        result = encode_order_args(100000000, 5000000000, "TurboSharedSpot")
+        assert result == bytes.fromhex(
+            "0000000005f5e100"  # price
+            "000000012a05f200"  # quantity
+            "0000000000000006"  # TurboSharedSpot variant = 6
+        )
+
+    def test_turbo_shared_post_only(self):
+        result = encode_order_args(100000000, 5000000000, "TurboSharedPostOnly")
+        assert result == bytes.fromhex(
+            "0000000005f5e100"  # price
+            "000000012a05f200"  # quantity
+            "0000000000000007"  # TurboSharedPostOnly variant = 7
+        )
+
+    def test_unknown_order_type_rejected(self):
+        with pytest.raises(ValueError, match="Unknown order type: TurboShared"):
+            encode_order_args(100, 200, "TurboShared")
 
     def test_tightly_packed(self):
         """Verify different order types produce different sizes (tightly packed)."""
@@ -351,6 +374,37 @@ class TestActionToCall:
         call = action_to_call(action, self.MARKET_INFO)
         assert call["amount"] == 5000000000  # quantity for sell
         assert call["asset_id"] == bytes.fromhex("11" * 32)  # base asset for sell
+
+    @pytest.mark.parametrize(
+        ("order_type", "variant"),
+        [
+            (OrderType.TURBO_SHARED_SPOT, 6),
+            (OrderType.TURBO_SHARED_POST_ONLY, 7),
+        ],
+    )
+    def test_create_order_turbo_shared_label_round_trip(self, order_type, variant):
+        action = CreateOrderAction(
+            side=OrderSide.BUY,
+            price="100000000",
+            quantity="5000000000",
+            order_type=order_type,
+        ).to_dict()
+        assert action["CreateOrder"]["order_type"] == order_type.value
+        assert OrderType(action["CreateOrder"]["order_type"]) is order_type
+        call = action_to_call(action, self.MARKET_INFO)
+        assert call["call_data"] == (u64_be(100000000) + u64_be(5000000000) + u64_be(variant))
+
+    def test_create_order_unknown_label_rejected(self):
+        action = {
+            "CreateOrder": {
+                "side": "Buy",
+                "price": "100000000",
+                "quantity": "5000000000",
+                "order_type": "TurboSharedLimit",
+            }
+        }
+        with pytest.raises(ValueError, match="Unknown order type"):
+            action_to_call(action, self.MARKET_INFO)
 
     def test_cancel_order(self):
         action = {

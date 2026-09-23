@@ -42,6 +42,16 @@ Enums
    .. attribute:: POST_ONLY
       :value: "PostOnly"
 
+   .. attribute:: TURBO_SHARED_SPOT
+      :value: "TurboSharedSpot"
+
+      House-only. The order book shares the order with its Turbo sidecar.
+
+   .. attribute:: TURBO_SHARED_POST_ONLY
+      :value: "TurboSharedPostOnly"
+
+      House-only. The order book shares the order with its Turbo sidecar.
+
 
 Order type parameter classes
 ----------------------------

@@ -78,12 +78,19 @@ class OrderType(Enum):
     - :class:`LimitOrder` for limit orders (requires price + timestamp).
     - :class:`BoundedMarketOrder` for bounded market orders (requires
       max_price + min_price).
+
+    ``TURBO_SHARED_SPOT`` and ``TURBO_SHARED_POST_ONLY`` are House-only
+    types. The order book shares these orders with its Turbo sidecar. When
+    the book has no sidecar, it converts them to ``SPOT`` / ``POST_ONLY``
+    before it assigns an order ID.
     """
 
     SPOT = "Spot"
     MARKET = "Market"
     FILL_OR_KILL = "FillOrKill"
     POST_ONLY = "PostOnly"
+    TURBO_SHARED_SPOT = "TurboSharedSpot"
+    TURBO_SHARED_POST_ONLY = "TurboSharedPostOnly"
 
 
 @dataclass

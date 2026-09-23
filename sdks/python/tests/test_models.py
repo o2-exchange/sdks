@@ -23,6 +23,7 @@ from o2_sdk.models import (
     Market,
     MarketsResponse,
     Order,
+    OrderType,
     Trade,
     WhitelistResponse,
     WithdrawResponse,
@@ -250,6 +251,36 @@ class TestOrder:
         }
         order = Order.from_dict(data)
         assert not order.is_open
+
+    @pytest.mark.parametrize("label", ["TurboSharedSpot", "TurboSharedPostOnly"])
+    def test_turbo_shared_label_parses(self, label):
+        data = {
+            "order_id": "0x5566",
+            "side": "Buy",
+            "order_type": label,
+            "quantity": "1000",
+            "quantity_fill": "0",
+            "price": "100",
+            "price_fill": "0",
+            "timestamp": "0",
+            "close": False,
+            "partially_filled": False,
+            "cancel": False,
+        }
+        order = Order.from_dict(data)
+        assert order.order_type == label
+        assert OrderType(order.order_type).value == label
+        assert order.is_open
+
+
+class TestOrderType:
+    def test_turbo_shared_labels(self):
+        assert OrderType.TURBO_SHARED_SPOT.value == "TurboSharedSpot"
+        assert OrderType.TURBO_SHARED_POST_ONLY.value == "TurboSharedPostOnly"
+
+    def test_unknown_label_rejected(self):
+        with pytest.raises(ValueError):
+            OrderType("TurboSharedMarket")
 
 
 class TestBalance:

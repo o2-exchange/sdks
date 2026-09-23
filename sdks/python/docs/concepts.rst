@@ -149,6 +149,13 @@ values for simple types, or typed dataclasses for ``Limit`` and
        and match immediately.
    * - ``OrderType.FILL_OR_KILL``
      - Must be filled entirely or not at all.
+   * - ``OrderType.TURBO_SHARED_SPOT`` / ``OrderType.TURBO_SHARED_POST_ONLY``
+     - House-only Spot / PostOnly liquidity that the order book shares with
+       its Turbo sidecar. The order book changes the order to Spot /
+       PostOnly when it has no sidecar. The account must have the House
+       role when a sidecar is set. The order book can reject new
+       ``TURBO_SHARED_SPOT`` orders with
+       ``SidecarError::SharedSpotCreationDisabled``.
    * - ``LimitOrder(price, timestamp)``
      - Like Spot but includes a limit price and a timestamp for
        time-in-force semantics.
