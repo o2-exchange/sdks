@@ -349,7 +349,7 @@ async def test_shared_order_executes_resting_turbo_liquidity(turbo_context):
             except O2Error:
                 await asyncio.sleep(1)
                 continue
-            funding_source = executed.get("order", {}).get("funding_source", {})
+            funding_source = (executed.get("order") or {}).get("funding_source") or {}
             if _same_id(funding_source.get("order_id"), source_id):
                 break
             await asyncio.sleep(1)
