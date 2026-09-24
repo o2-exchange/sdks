@@ -19,7 +19,7 @@ from o2_sdk.encoding import (
     function_selector,
     u64_be,
 )
-from o2_sdk.models import CreateOrderAction, OrderSide, OrderType
+from o2_sdk.models import CreateOrderAction, CreateSharedOrderAction, OrderSide, OrderType
 
 
 class TestU64Be:
@@ -375,24 +375,51 @@ class TestActionToCall:
         assert call["amount"] == 5000000000  # quantity for sell
         assert call["asset_id"] == bytes.fromhex("11" * 32)  # base asset for sell
 
+    @pytest.mark.parametrize("side", [OrderSide.BUY, OrderSide.SELL])
+    def test_create_shared_order_uses_backend_action_and_variant_7(self, side):
+        action = CreateSharedOrderAction(
+            side=side,
+            price="100000000",
+            quantity="5000000000",
+        ).to_dict()
+        assert action == {
+            "CreateSharedOrder": {
+                "side": side.value,
+                "price": "100000000",
+                "quantity": "5000000000",
+            }
+        }
+        call = action_to_call(action, self.MARKET_INFO)
+        assert call["contract_id"] == bytes.fromhex("ab" * 32)
+        assert call["function_selector"] == function_selector("create_order")
+        assert call["call_data"] == u64_be(100000000) + u64_be(5000000000) + u64_be(7)
+        if side is OrderSide.BUY:
+            assert call["amount"] == 500000000
+            assert call["asset_id"] == bytes.fromhex("22" * 32)
+        else:
+            assert call["amount"] == 5000000000
+            assert call["asset_id"] == bytes.fromhex("11" * 32)
+
     @pytest.mark.parametrize(
-        ("order_type", "variant"),
-        [
-            (OrderType.TURBO_SHARED_SPOT, 6),
-            (OrderType.TURBO_SHARED_POST_ONLY, 7),
-        ],
+        "order_type", [OrderType.TURBO_SHARED_SPOT, OrderType.TURBO_SHARED_POST_ONLY]
     )
-    def test_create_order_turbo_shared_label_round_trip(self, order_type, variant):
+    def test_create_order_rejects_shared_types_not_accepted_by_backend(self, order_type):
         action = CreateOrderAction(
             side=OrderSide.BUY,
             price="100000000",
             quantity="5000000000",
             order_type=order_type,
-        ).to_dict()
-        assert action["CreateOrder"]["order_type"] == order_type.value
-        assert OrderType(action["CreateOrder"]["order_type"]) is order_type
-        call = action_to_call(action, self.MARKET_INFO)
-        assert call["call_data"] == (u64_be(100000000) + u64_be(5000000000) + u64_be(variant))
+        )
+        with pytest.raises(ValueError, match="create_shared_order"):
+            action.to_dict()
+        with pytest.raises(ValueError, match="create_shared_order"):
+            action_to_call(
+                {"CreateOrder": {
+                    "side": "Buy", "price": "100000000", "quantity": "5000000000",
+                    "order_type": order_type.value,
+                }},
+                self.MARKET_INFO,
+            )
 
     def test_create_order_unknown_label_rejected(self):
         action = {

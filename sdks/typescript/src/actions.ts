@@ -28,6 +28,7 @@ export type Action =
       quantity: Numeric;
       orderType?: OrderType;
     }
+  | { type: "createSharedOrder"; side: Side; price: Numeric; quantity: Numeric }
   | { type: "cancelOrder"; orderId: OrderId }
   | { type: "settleBalance" }
   | { type: "registerReferer"; to: Identity };
@@ -57,6 +58,11 @@ export function createOrderAction(
   orderType?: OrderType,
 ): Action {
   return { type: "createOrder", side, price, quantity, orderType };
+}
+
+/** Create a shared PostOnly order action. */
+export function createSharedOrderAction(side: Side, price: Numeric, quantity: Numeric): Action {
+  return { type: "createSharedOrder", side, price, quantity };
 }
 
 /**

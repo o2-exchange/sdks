@@ -79,10 +79,8 @@ class OrderType(Enum):
     - :class:`BoundedMarketOrder` for bounded market orders (requires
       max_price + min_price).
 
-    ``TURBO_SHARED_SPOT`` and ``TURBO_SHARED_POST_ONLY`` are House-only
-    types. The order book shares these orders with its Turbo sidecar. When
-    the book has no sidecar, it converts them to ``SPOT`` / ``POST_ONLY``
-    before it assigns an order ID.
+    The Turbo shared labels may appear in order responses. To place a
+    shared PostOnly order, use ``create_shared_order()``.
     """
 
     SPOT = "Spot"
@@ -983,6 +981,8 @@ class CreateOrderAction:
     order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT
 
     def to_dict(self) -> dict:
+        if self.order_type in (OrderType.TURBO_SHARED_SPOT, OrderType.TURBO_SHARED_POST_ONLY):
+            raise ValueError("Use create_shared_order() for Turbo shared orders")
         ot: Any
         if isinstance(self.order_type, LimitOrder):
             lo = self.order_type
@@ -1011,6 +1011,24 @@ class CreateOrderAction:
                 "price": self.price,
                 "quantity": self.quantity,
                 "order_type": ot,
+            }
+        }
+
+
+@dataclass
+class CreateSharedOrderAction:
+    """Place a PostOnly order eligible for sharing with Turbo markets."""
+
+    side: OrderSide
+    price: str
+    quantity: str
+
+    def to_dict(self) -> dict:
+        return {
+            "CreateSharedOrder": {
+                "side": self.side.value,
+                "price": self.price,
+                "quantity": self.quantity,
             }
         }
 
@@ -1057,7 +1075,13 @@ class RegisterRefererAction:
         return {"RegisterReferer": {"to": {"ContractId": str(self.to)}}}
 
 
-Action = CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction
+Action = (
+    CreateOrderAction
+    | CreateSharedOrderAction
+    | CancelOrderAction
+    | SettleBalanceAction
+    | RegisterRefererAction
+)
 
 
 @dataclass
@@ -1068,6 +1092,15 @@ class CreateOrderRequestAction:
     price: NumericInput
     quantity: NumericInput
     order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT
+
+
+@dataclass
+class CreateSharedOrderRequestAction:
+    """High-level shared PostOnly order (human values or ChainInt raw values)."""
+
+    side: OrderSide
+    price: NumericInput
+    quantity: NumericInput
 
 
 @dataclass
@@ -1084,7 +1117,12 @@ class SettleBalanceRequestAction:
     pass
 
 
-UserAction = CreateOrderRequestAction | CancelOrderRequestAction | SettleBalanceRequestAction
+UserAction = (
+    CreateOrderRequestAction
+    | CreateSharedOrderRequestAction
+    | CancelOrderRequestAction
+    | SettleBalanceRequestAction
+)
 
 
 @dataclass

@@ -276,8 +276,9 @@ def action_to_call(action: dict, market_info: dict) -> dict:
     contract_id = bytes.fromhex(market_info["contract_id"][2:])
     zero_asset = bytes(32)
 
-    if "CreateOrder" in action:
-        data = action["CreateOrder"]
+    if "CreateOrder" in action or "CreateSharedOrder" in action:
+        shared = "CreateSharedOrder" in action
+        data = action["CreateSharedOrder" if shared else "CreateOrder"]
         price = int(data["price"])
         quantity = int(data["quantity"])
         side = data["side"]
@@ -290,22 +291,28 @@ def action_to_call(action: dict, market_info: dict) -> dict:
             amount = quantity
             asset_id = bytes.fromhex(market_info["base"]["asset"][2:])
 
-        # Parse order_type from JSON format
-        ot = data["order_type"]
-        if isinstance(ot, str):
-            ot_name = ot
+        # Shared PostOnly orders use their own action shape.
+        if shared:
+            ot_name = "TurboSharedPostOnly"
             ot_data = None
-        elif isinstance(ot, dict):
-            if "Limit" in ot:
-                ot_name = "Limit"
-                ot_data = {"price": ot["Limit"][0], "timestamp": ot["Limit"][1]}
-            elif "BoundedMarket" in ot:
-                ot_name = "BoundedMarket"
-                ot_data = ot["BoundedMarket"]
-            else:
-                raise ValueError(f"Unknown order type dict: {ot}")
         else:
-            raise ValueError(f"Invalid order_type: {ot}")
+            ot = data["order_type"]
+            if isinstance(ot, str):
+                ot_name = ot
+                ot_data = None
+            elif isinstance(ot, dict):
+                if "Limit" in ot:
+                    ot_name = "Limit"
+                    ot_data = {"price": ot["Limit"][0], "timestamp": ot["Limit"][1]}
+                elif "BoundedMarket" in ot:
+                    ot_name = "BoundedMarket"
+                    ot_data = ot["BoundedMarket"]
+                else:
+                    raise ValueError(f"Unknown order type dict: {ot}")
+            else:
+                raise ValueError(f"Invalid order_type: {ot}")
+            if ot_name in ("TurboSharedSpot", "TurboSharedPostOnly"):
+                raise ValueError("Use create_shared_order() for Turbo shared orders")
 
         call_data = encode_order_args(price, quantity, ot_name, ot_data)
         return {

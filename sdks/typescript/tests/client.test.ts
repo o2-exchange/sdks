@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Signer } from "../src/crypto.js";
-import { Network, O2Client } from "../src/index.js";
+import { createSharedOrderAction, Network, O2Client } from "../src/index.js";
 import {
   type AccountInfo,
   assetId,
@@ -519,6 +519,56 @@ describe("O2Client management", () => {
 });
 
 describe("O2Client bigint precision", () => {
+  it("submits a shared order through the dedicated action", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submit = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createSharedOrder(MARKET, "buy", "2", "0.1", { settleFirst: false });
+    expect(submit).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET_ID,
+            actions: [
+              { CreateSharedOrder: { side: "Buy", price: "2000000000", quantity: "100000000" } },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
+  it("includes shared orders in type-safe batches", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submit = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.batchActions([
+      { market: MARKET, actions: [createSharedOrderAction("sell", "2", "0.1")] },
+    ]);
+    expect(submit).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET_ID,
+            actions: [
+              { CreateSharedOrder: { side: "Sell", price: "2000000000", quantity: "100000000" } },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
   it("createOrder accepts bigint quantity at atomic-unit precision", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());

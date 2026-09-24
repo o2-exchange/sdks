@@ -915,6 +915,15 @@ export interface CreateOrderPayload {
   };
 }
 
+/** Payload for a shared PostOnly order. */
+export interface CreateSharedOrderPayload {
+  CreateSharedOrder: {
+    side: string;
+    price: string;
+    quantity: string;
+  };
+}
+
 /**
  * Payload for a CancelOrder action.
  */
@@ -958,6 +967,7 @@ export interface RegisterRefererPayload {
  */
 export type ActionPayload =
   | CreateOrderPayload
+  | CreateSharedOrderPayload
   | CancelOrderPayload
   | SettleBalancePayload
   | RegisterRefererPayload;

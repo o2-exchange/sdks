@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  actionToCall,
   adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
   buildSessionSigningBytes,
@@ -27,6 +28,22 @@ import {
 } from "../src/encoding.js";
 
 describe("Encoding Module", () => {
+  it("encodes a shared order with its dedicated action and PostOnly variant", () => {
+    const market = {
+      contractId: `0x${"11".repeat(32)}`,
+      marketId: `0x${"22".repeat(32)}`,
+      base: { asset: `0x${"33".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "BASE" },
+      quote: { asset: `0x${"44".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "QUOTE" },
+    };
+    const call = actionToCall(
+      { CreateSharedOrder: { side: "Buy", price: "2000000000", quantity: "100000000" } },
+      market,
+    );
+    expect(call.functionSelector).toEqual(functionSelector("create_order"));
+    expect(call.amount).toBe(200000000n);
+    expect(call.assetId).toEqual(hexToBytes(market.quote.asset));
+    expect(call.callData).toEqual(concat([u64BE(2000000000n), u64BE(100000000n), u64BE(7n)]));
+  });
   describe("u64BE", () => {
     it("encodes 0 correctly", () => {
       const result = u64BE(0);

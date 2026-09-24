@@ -12,6 +12,7 @@ export {
   type Action,
   cancelOrderAction,
   createOrderAction,
+  createSharedOrderAction,
   type MarketActionGroup,
   type Numeric,
   registerRefererAction,

@@ -183,6 +183,7 @@ Identifier usage:
 | `setSession(session)` / `clearSession()` | Restore or clear the active client session |
 | `createSession(wallet, markets, options?)` | Create and store a trading session (`{ turbo: true }` scopes it for margin) |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
+| `createSharedOrder(market, side, price, qty, options?)` | Place a shared PostOnly order |
 | `cancelOrder(orderId, market, session?)` | Cancel a specific order |
 | `cancelAllOrders(market, session?)` | Cancel all open orders |
 | `settleBalance(market, session?)` | Settle filled order proceeds |
@@ -208,6 +209,17 @@ Low-level encoding helpers, including `adjustQuantityForFractionalPrice`, are
 available from `@o2exchange/sdk/internals`.
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
+
+### Shared orders
+
+Eligible accounts can place PostOnly orders that may also be available in Turbo markets:
+
+```ts
+await client.createSharedOrder("fETH/fUSDC", "buy", "2000", "0.1");
+// In a batch: createSharedOrderAction("buy", "2000", "0.1")
+```
+
+Use this only when the market and account are enabled for sharing. Otherwise the request may be rejected or placed as an ordinary PostOnly order. Existing `createOrder` calls remain unchanged.
 
 ## Guides
 

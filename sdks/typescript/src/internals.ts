@@ -34,6 +34,7 @@ export {
   type CancelOrderAction,
   type ContractCall,
   type CreateOrderAction,
+  type CreateSharedOrderAction,
   concat,
   encodeIdentity,
   encodeOptionCallData,

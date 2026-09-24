@@ -586,6 +586,42 @@ export class O2Client {
     return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
   }
 
+  /** Place a shared PostOnly order. */
+  async createSharedOrder(
+    market: MarketRef,
+    side: "buy" | "sell",
+    price: Numeric,
+    quantity: Numeric,
+    options?: Omit<CreateOrderOptions, "orderType">,
+  ): Promise<SessionActionsResponse> {
+    const session = options?.session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+      resolved,
+      price,
+      quantity,
+      "price",
+      "quantity",
+    );
+    const actions: ActionPayload[] = [];
+    if (options?.settleFirst ?? true) {
+      actions.push({ SettleBalance: { to: { ContractId: session.tradeAccountId } } });
+    }
+    actions.push({
+      CreateSharedOrder: {
+        side: capitalizeSide(side),
+        price: scaledPrice.toString(),
+        quantity: scaledQuantity.toString(),
+      },
+    });
+    return this.submitBatch(
+      [{ market_id: resolved.market_id, actions }],
+      options?.collectOrders ?? true,
+      session,
+    );
+  }
+
   /**
    * Place an order with take-profit and/or stop-loss attached, atomically.
    *
@@ -1578,6 +1614,22 @@ export class O2Client {
             price: scaledPrice.toString(),
             quantity: scaledQuantity.toString(),
             order_type: scaleOrderType(action.orderType ?? "Spot", market),
+          },
+        };
+      }
+      case "createSharedOrder": {
+        const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
+          market,
+          action.price,
+          action.quantity,
+          "action.price",
+          "action.quantity",
+        );
+        return {
+          CreateSharedOrder: {
+            side: capitalizeSide(action.side),
+            price: scaledPrice.toString(),
+            quantity: scaledQuantity.toString(),
           },
         };
       }

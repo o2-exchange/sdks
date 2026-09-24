@@ -71,6 +71,7 @@ pub enum OrderTypeEncoding {
     PostOnly,
     Market,
     BoundedMarket { max_price: u64, min_price: u64 },
+    TurboSharedPostOnly,
 }
 
 /// Encode OrderArgs struct for CreateOrder call_data.
@@ -108,6 +109,9 @@ pub fn encode_order_args(price: u64, quantity: u64, order_type: &OrderTypeEncodi
             result.extend_from_slice(&u64_be(5));
             result.extend_from_slice(&u64_be(*max_price));
             result.extend_from_slice(&u64_be(*min_price));
+        }
+        OrderTypeEncoding::TurboSharedPostOnly => {
+            result.extend_from_slice(&u64_be(7));
         }
     }
 
@@ -339,6 +343,37 @@ pub fn action_to_call(
                 }
             });
 
+            Ok((call, json))
+        }
+        Action::CreateSharedOrder {
+            side,
+            price,
+            quantity,
+        } => {
+            let base_asset = parse_hex_32(market.base.asset.as_str())?;
+            let quote_asset = parse_hex_32(market.quote.asset.as_str())?;
+            let scaled_price = market.scale_price(price)?;
+            let scaled_quantity = market.scale_quantity(quantity)?;
+            let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity)?;
+            market.validate_order(scaled_price, scaled_quantity)?;
+            let side_str = side.as_str();
+            let call = create_order_to_call(
+                &contract_id,
+                side_str,
+                scaled_price,
+                scaled_quantity,
+                &OrderTypeEncoding::TurboSharedPostOnly,
+                market.base.decimals,
+                &base_asset,
+                &quote_asset,
+            );
+            let json = serde_json::json!({
+                "CreateSharedOrder": {
+                    "side": side_str,
+                    "price": scaled_price.to_string(),
+                    "quantity": scaled_quantity.to_string()
+                }
+            });
             Ok((call, json))
         }
         Action::CancelOrder { order_id } => {

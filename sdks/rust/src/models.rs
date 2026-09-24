@@ -553,6 +553,11 @@ pub enum Action {
         quantity: UnsignedDecimal,
         order_type: OrderType,
     },
+    CreateSharedOrder {
+        side: Side,
+        price: UnsignedDecimal,
+        quantity: UnsignedDecimal,
+    },
     CancelOrder {
         order_id: OrderId,
     },
@@ -1499,6 +1504,14 @@ pub struct CreateOrderAction {
     pub order_type: serde_json::Value,
 }
 
+/// A shared PostOnly order action payload.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSharedOrderAction {
+    pub side: String,
+    pub price: String,
+    pub quantity: String,
+}
+
 /// A CancelOrder action payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelOrderAction {
@@ -1518,6 +1531,10 @@ pub enum ActionItem {
     CreateOrder {
         #[serde(rename = "CreateOrder")]
         create_order: CreateOrderAction,
+    },
+    CreateSharedOrder {
+        #[serde(rename = "CreateSharedOrder")]
+        create_shared_order: CreateSharedOrderAction,
     },
     CancelOrder {
         #[serde(rename = "CancelOrder")]
