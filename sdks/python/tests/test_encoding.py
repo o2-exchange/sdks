@@ -414,10 +414,14 @@ class TestActionToCall:
             action.to_dict()
         with pytest.raises(ValueError, match="create_shared_order"):
             action_to_call(
-                {"CreateOrder": {
-                    "side": "Buy", "price": "100000000", "quantity": "5000000000",
-                    "order_type": order_type.value,
-                }},
+                {
+                    "CreateOrder": {
+                        "side": "Buy",
+                        "price": "100000000",
+                        "quantity": "5000000000",
+                        "order_type": order_type.value,
+                    }
+                },
                 self.MARKET_INFO,
             )
 

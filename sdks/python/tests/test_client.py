@@ -190,16 +190,22 @@ async def test_batch_actions_normalizes_shared_builder_group(monkeypatch: pytest
         return ActionsResponse.from_dict({"tx_id": "0x" + "aa" * 32})
 
     monkeypatch.setattr(client.api, "submit_actions", fake_submit_actions)
-    group = client.actions_for(market).create_shared_order(
-        OrderSide.BUY, ChainInt(100000000), ChainInt(5000000000)
-    ).build()
+    group = (
+        client.actions_for(market)
+        .create_shared_order(OrderSide.BUY, ChainInt(100000000), ChainInt(5000000000))
+        .build()
+    )
     result = await client.batch_actions([group], session=session)
     assert result.success
-    assert captured["request"]["actions"][0]["actions"] == [{
-        "CreateSharedOrder": {
-            "side": "Buy", "price": "100000000", "quantity": "5000000000",
+    assert captured["request"]["actions"][0]["actions"] == [
+        {
+            "CreateSharedOrder": {
+                "side": "Buy",
+                "price": "100000000",
+                "quantity": "5000000000",
+            }
         }
-    }]
+    ]
 
 
 @pytest.mark.asyncio
