@@ -204,6 +204,7 @@ Identifier usage:
 | `top_up_from_faucet(&wallet)` | Explicit faucet top-up to the wallet's trading account (testnet/devnet) |
 | `create_session(&wallet, markets, ttl)` | Create a trading session |
 | `create_order(&mut session, market_symbol, side, price, qty, ...)` | Place an order |
+| `create_shared_order(&mut session, market_symbol, side, price, qty, ...)` | Place a shared PostOnly order |
 | `cancel_order(&mut session, order_id, market)` | Cancel a specific order |
 | `cancel_all_orders(&mut session, market)` | Cancel all open orders |
 | `settle_balance(&mut session, market)` | Settle filled order proceeds |
@@ -215,6 +216,31 @@ Identifier usage:
 | `stream_orders(identities)` / `stream_trades(market_id)` | Real-time updates |
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
+
+### Shared orders
+
+Eligible accounts can place PostOnly orders that may also be available in Turbo markets:
+
+```rust
+let actions = client.actions_for("fETH/fUSDC").await?
+    .settle_balance()
+    .create_shared_order(Side::Buy, "2000", "0.1")
+    .build()?;
+client.batch_actions(&mut session, "fETH/fUSDC", actions, true).await?;
+```
+
+Use this only when the market and account are enabled for sharing. Otherwise the request may be rejected or placed as an ordinary PostOnly order. Existing `create_order` calls remain unchanged.
+
+To execute against available Turbo orders using an existing resting order,
+provide its order ID and execution limits:
+
+```rust
+client.execute_turbo_orders(
+    &mut session, "fETH/fUSDC", source_order_id, "0.1", 2
+).await?;
+```
+
+This is an explicit action; placing a shared order does not execute it automatically. Availability depends on the market, order, and account.
 
 ## Guides
 

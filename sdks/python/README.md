@@ -93,6 +93,38 @@ asyncio.run(main())
 `get_balances(trade_account_id)` is an aggregated view across trading account
 and market contracts, so `settle_balance(...)` does not necessarily change aggregate totals.
 
+## Shared orders
+
+Eligible accounts can place PostOnly orders that may also be available in
+Turbo markets:
+
+```python
+group = (
+    client.actions_for("fETH/fUSDC")
+    .settle_balance()
+    .create_shared_order(OrderSide.BUY, "2000", "0.1")
+    .build()
+)
+await client.batch_actions([group], collect_orders=True)
+```
+
+Use `create_shared_order` only when the market and account are enabled for
+sharing. Otherwise the request may be rejected or placed as an ordinary
+PostOnly order. Existing `create_order` calls continue to place ordinary orders.
+
+To execute against available Turbo orders using an existing resting order,
+provide its order ID and execution limits:
+
+```python
+group = client.actions_for("fETH/fUSDC").execute_turbo_orders(
+    source_order_id, "0.1", max_fills=2
+).build()
+await client.batch_actions([group], collect_orders=True)
+```
+
+This is an explicit action; placing a shared order does not execute it
+automatically. Availability depends on the market, order, and account.
+
 ## Network Configuration
 
 Default network configs:

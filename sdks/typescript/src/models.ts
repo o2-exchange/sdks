@@ -915,6 +915,24 @@ export interface CreateOrderPayload {
   };
 }
 
+/** Payload for a shared PostOnly order. */
+export interface CreateSharedOrderPayload {
+  CreateSharedOrder: {
+    side: string;
+    price: string;
+    quantity: string;
+  };
+}
+
+/** Payload for executing a resting order against Turbo orders. */
+export interface ExecuteTurboOrdersPayload {
+  ExecuteTurboOrders: {
+    source_order_id: OrderId;
+    max_base_quantity: string;
+    max_fills: string;
+  };
+}
+
 /**
  * Payload for a CancelOrder action.
  */
@@ -958,6 +976,8 @@ export interface RegisterRefererPayload {
  */
 export type ActionPayload =
   | CreateOrderPayload
+  | CreateSharedOrderPayload
+  | ExecuteTurboOrdersPayload
   | CancelOrderPayload
   | SettleBalancePayload
   | RegisterRefererPayload;

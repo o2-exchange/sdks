@@ -3,7 +3,7 @@
 /// Tests Fuel ABI encoding primitives, function selectors, session signing bytes,
 /// and action signing bytes.
 use o2_sdk::encoding::*;
-use o2_sdk::models::{IntoValidId, Market, MarketAsset};
+use o2_sdk::models::{Action, IntoValidId, Market, MarketAsset, Side};
 use o2_sdk::UnsignedDecimal;
 
 #[test]
@@ -383,6 +383,28 @@ fn test_create_order_to_call_sell() {
 }
 
 #[test]
+fn test_shared_order_call_encoding() {
+    let contract_id = [0x11; 32];
+    let base_asset = [0x22; 32];
+    let quote_asset = [0x33; 32];
+    let call = create_order_to_call(
+        &contract_id,
+        "Buy",
+        2_000_000_000,
+        100_000_000,
+        &OrderTypeEncoding::TurboSharedPostOnly,
+        9,
+        &base_asset,
+        &quote_asset,
+    );
+    assert_eq!(call.function_selector, function_selector("create_order"));
+    assert_eq!(call.amount, 200_000_000);
+    assert_eq!(call.asset_id, quote_asset);
+    let data = call.call_data.unwrap();
+    assert_eq!(&data[16..], &u64_be(7));
+}
+
+#[test]
 fn test_cancel_order_to_call() {
     let contract_id = [0x11; 32];
     let order_id = [0xFF; 32];
@@ -482,6 +504,64 @@ fn test_market() -> Market {
             decimals: 9,
             max_precision: 3,
         },
+    }
+}
+
+#[test]
+fn test_shared_order_action_wire_and_call() {
+    let market = test_market();
+    let action = Action::CreateSharedOrder {
+        side: Side::Buy,
+        price: "2".parse().unwrap(),
+        quantity: "0.1".parse().unwrap(),
+    };
+    let (call, json) = action_to_call(&action, &market, "", None).unwrap();
+    assert_eq!(json["CreateSharedOrder"]["side"], "Buy");
+    assert_eq!(json["CreateSharedOrder"]["price"], "2000000000");
+    assert_eq!(json["CreateSharedOrder"]["quantity"], "100000000");
+    assert!(json["CreateSharedOrder"].get("order_type").is_none());
+    assert_eq!(call.function_selector, function_selector("create_order"));
+    assert_eq!(&call.call_data.unwrap()[16..], &u64_be(7));
+}
+
+#[test]
+fn test_execute_turbo_orders_action_wire_and_call() {
+    let market = test_market();
+    let source_order_id = "0xabababababababababababababababababababababababababababababababab"
+        .into_valid()
+        .unwrap();
+    let action = Action::ExecuteTurboOrders {
+        source_order_id,
+        max_base_quantity: "0.1".parse().unwrap(),
+        max_fills: 2,
+    };
+    let (call, json) = action_to_call(&action, &market, "", None).unwrap();
+    assert_eq!(json["ExecuteTurboOrders"]["max_base_quantity"], "100000000");
+    assert_eq!(json["ExecuteTurboOrders"]["max_fills"], "2");
+    assert_eq!(
+        call.function_selector,
+        function_selector("execute_turbo_orders")
+    );
+    assert_eq!(call.amount, 0);
+    assert_eq!(call.asset_id, [0u8; 32]);
+    let data = call.call_data.unwrap();
+    assert_eq!(data.len(), 48);
+    assert_eq!(&data[32..40], &u64_be(100_000_000));
+    assert_eq!(&data[40..], &u64_be(2));
+}
+
+#[test]
+fn test_execute_turbo_orders_rejects_zero_bounds() {
+    let market = test_market();
+    for (quantity, max_fills) in [("0", 1), ("0.1", 0)] {
+        let action = Action::ExecuteTurboOrders {
+            source_order_id: "0xabababababababababababababababababababababababababababababababab"
+                .into_valid()
+                .unwrap(),
+            max_base_quantity: quantity.parse().unwrap(),
+            max_fills,
+        };
+        assert!(action_to_call(&action, &market, "", None).is_err());
     }
 }
 

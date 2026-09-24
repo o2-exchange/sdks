@@ -80,6 +80,8 @@ def encode_order_args(
       PostOnly(3):      u64(3)                                  [8 bytes]
       Market(4):        u64(4)                                  [8 bytes]
       BoundedMarket(5): u64(5) + u64(max_price) + u64(min_price) [24 bytes]
+      TurboSharedSpot(6):     u64(6)                            [8 bytes]
+      TurboSharedPostOnly(7): u64(7)                            [8 bytes]
     """
     result = bytearray()
     result += u64_be(price)
@@ -105,6 +107,10 @@ def encode_order_args(
         max_price = int(order_type_data["max_price"])
         min_price = int(order_type_data["min_price"])
         result += u64_be(5) + u64_be(max_price) + u64_be(min_price)
+    elif order_type == "TurboSharedSpot":
+        result += u64_be(6)
+    elif order_type == "TurboSharedPostOnly":
+        result += u64_be(7)
     else:
         raise ValueError(f"Unknown order type: {order_type}")
 
@@ -270,8 +276,9 @@ def action_to_call(action: dict, market_info: dict) -> dict:
     contract_id = bytes.fromhex(market_info["contract_id"][2:])
     zero_asset = bytes(32)
 
-    if "CreateOrder" in action:
-        data = action["CreateOrder"]
+    if "CreateOrder" in action or "CreateSharedOrder" in action:
+        shared = "CreateSharedOrder" in action
+        data = action["CreateSharedOrder" if shared else "CreateOrder"]
         price = int(data["price"])
         quantity = int(data["quantity"])
         side = data["side"]
@@ -284,22 +291,28 @@ def action_to_call(action: dict, market_info: dict) -> dict:
             amount = quantity
             asset_id = bytes.fromhex(market_info["base"]["asset"][2:])
 
-        # Parse order_type from JSON format
-        ot = data["order_type"]
-        if isinstance(ot, str):
-            ot_name = ot
+        # Shared PostOnly orders use their own action shape.
+        if shared:
+            ot_name = "TurboSharedPostOnly"
             ot_data = None
-        elif isinstance(ot, dict):
-            if "Limit" in ot:
-                ot_name = "Limit"
-                ot_data = {"price": ot["Limit"][0], "timestamp": ot["Limit"][1]}
-            elif "BoundedMarket" in ot:
-                ot_name = "BoundedMarket"
-                ot_data = ot["BoundedMarket"]
-            else:
-                raise ValueError(f"Unknown order type dict: {ot}")
         else:
-            raise ValueError(f"Invalid order_type: {ot}")
+            ot = data["order_type"]
+            if isinstance(ot, str):
+                ot_name = ot
+                ot_data = None
+            elif isinstance(ot, dict):
+                if "Limit" in ot:
+                    ot_name = "Limit"
+                    ot_data = {"price": ot["Limit"][0], "timestamp": ot["Limit"][1]}
+                elif "BoundedMarket" in ot:
+                    ot_name = "BoundedMarket"
+                    ot_data = ot["BoundedMarket"]
+                else:
+                    raise ValueError(f"Unknown order type dict: {ot}")
+            else:
+                raise ValueError(f"Invalid order_type: {ot}")
+            if ot_name in ("TurboSharedSpot", "TurboSharedPostOnly"):
+                raise ValueError("Use create_shared_order() for Turbo shared orders")
 
         call_data = encode_order_args(price, quantity, ot_name, ot_data)
         return {
@@ -309,6 +322,25 @@ def action_to_call(action: dict, market_info: dict) -> dict:
             "asset_id": asset_id,
             "gas": GAS_MAX,
             "call_data": call_data,
+        }
+
+    elif "ExecuteTurboOrders" in action:
+        data = action["ExecuteTurboOrders"]
+        order_id = data["source_order_id"]
+        order_id_bytes = bytes.fromhex(order_id[2:] if order_id.startswith("0x") else order_id)
+        if len(order_id_bytes) != 32:
+            raise ValueError("source_order_id must be a 32-byte hex ID")
+        quantity = int(data["max_base_quantity"])
+        fills = int(data["max_fills"])
+        if not 0 < quantity < 2**64 or not 0 < fills < 2**64:
+            raise ValueError("max_base_quantity and max_fills must be positive u64 values")
+        return {
+            "contract_id": contract_id,
+            "function_selector": function_selector("execute_turbo_orders"),
+            "amount": 0,
+            "asset_id": zero_asset,
+            "gas": GAS_MAX,
+            "call_data": order_id_bytes + u64_be(quantity) + u64_be(fills),
         }
 
     elif "CancelOrder" in action:

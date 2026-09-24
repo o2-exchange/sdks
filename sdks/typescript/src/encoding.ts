@@ -73,6 +73,7 @@ export type OrderTypeVariant =
   | "FillOrKill"
   | "PostOnly"
   | "Market"
+  | "TurboSharedPostOnly"
   | { Limit: { price: bigint; timestamp: bigint } }
   | { BoundedMarket: { maxPrice: bigint; minPrice: bigint } };
 
@@ -87,6 +88,7 @@ export type OrderTypeVariant =
  *   PostOnly(3):      u64(3)                                   [8 bytes]
  *   Market(4):        u64(4)                                   [8 bytes]
  *   BoundedMarket(5): u64(5) + u64(maxPrice) + u64(minPrice)  [24 bytes]
+ *   TurboSharedPostOnly(7): u64(7)                            [8 bytes]
  */
 export function encodeOrderArgs(
   price: bigint,
@@ -103,6 +105,8 @@ export function encodeOrderArgs(
     parts.push(u64BE(3));
   } else if (orderType === "Market") {
     parts.push(u64BE(4));
+  } else if (orderType === "TurboSharedPostOnly") {
+    parts.push(u64BE(7));
   } else if (typeof orderType === "object" && "Limit" in orderType) {
     parts.push(u64BE(0));
     parts.push(u64BE(orderType.Limit.price));
@@ -251,6 +255,18 @@ export interface CreateOrderAction {
   };
 }
 
+export interface CreateSharedOrderAction {
+  CreateSharedOrder: { side: "buy" | "sell" | "Buy" | "Sell"; price: string; quantity: string };
+}
+
+export interface ExecuteTurboOrdersAction {
+  ExecuteTurboOrders: {
+    source_order_id: string;
+    max_base_quantity: string;
+    max_fills: string;
+  };
+}
+
 export type OrderTypeJSON =
   | "Spot"
   | "FillOrKill"
@@ -307,6 +323,8 @@ export interface CancelTriggerOrderAction {
 
 export type ActionJSON =
   | CreateOrderAction
+  | CreateSharedOrderAction
+  | ExecuteTurboOrdersAction
   | CancelOrderAction
   | SettleBalanceAction
   | RegisterRefererAction
@@ -371,12 +389,15 @@ export function actionToCall(
 ): ContractCall {
   const contractIdBytes = hexToBytes(market.contractId);
 
-  if ("CreateOrder" in action) {
-    const data = action.CreateOrder;
+  if ("CreateOrder" in action || "CreateSharedOrder" in action) {
+    const shared = "CreateSharedOrder" in action;
+    const data = shared ? action.CreateSharedOrder : action.CreateOrder;
     const price = BigInt(data.price);
     const quantity = BigInt(data.quantity);
     const baseDecimals = market.base.decimals;
-    const otVariant = parseOrderTypeJSON(data.order_type);
+    const otVariant = shared
+      ? "TurboSharedPostOnly"
+      : parseOrderTypeJSON(action.CreateOrder.order_type);
     const callData = encodeOrderArgs(price, quantity, otVariant);
 
     let amount: bigint;
@@ -397,6 +418,31 @@ export function actionToCall(
       assetId,
       gas: GAS_MAX,
       callData,
+    };
+  }
+
+  if ("ExecuteTurboOrders" in action) {
+    const data = action.ExecuteTurboOrders;
+    const orderId = hexToBytes(data.source_order_id);
+    const quantity = BigInt(data.max_base_quantity);
+    const fills = BigInt(data.max_fills);
+    const maxU64 = (1n << 64n) - 1n;
+    if (
+      orderId.length !== 32 ||
+      quantity <= 0n ||
+      quantity > maxU64 ||
+      fills <= 0n ||
+      fills > maxU64
+    ) {
+      throw new Error("Invalid Turbo execution bounds or source order ID");
+    }
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("execute_turbo_orders"),
+      amount: 0n,
+      assetId: ZERO_ASSET,
+      gas: GAS_MAX,
+      callData: concat([orderId, u64BE(quantity), u64BE(fills)]),
     };
   }
 

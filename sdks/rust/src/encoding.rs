@@ -71,6 +71,7 @@ pub enum OrderTypeEncoding {
     PostOnly,
     Market,
     BoundedMarket { max_price: u64, min_price: u64 },
+    TurboSharedPostOnly,
 }
 
 /// Encode OrderArgs struct for CreateOrder call_data.
@@ -108,6 +109,9 @@ pub fn encode_order_args(price: u64, quantity: u64, order_type: &OrderTypeEncodi
             result.extend_from_slice(&u64_be(5));
             result.extend_from_slice(&u64_be(*max_price));
             result.extend_from_slice(&u64_be(*min_price));
+        }
+        OrderTypeEncoding::TurboSharedPostOnly => {
+            result.extend_from_slice(&u64_be(7));
         }
     }
 
@@ -339,6 +343,70 @@ pub fn action_to_call(
                 }
             });
 
+            Ok((call, json))
+        }
+        Action::CreateSharedOrder {
+            side,
+            price,
+            quantity,
+        } => {
+            let base_asset = parse_hex_32(market.base.asset.as_str())?;
+            let quote_asset = parse_hex_32(market.quote.asset.as_str())?;
+            let scaled_price = market.scale_price(price)?;
+            let scaled_quantity = market.scale_quantity(quantity)?;
+            let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity)?;
+            market.validate_order(scaled_price, scaled_quantity)?;
+            let side_str = side.as_str();
+            let call = create_order_to_call(
+                &contract_id,
+                side_str,
+                scaled_price,
+                scaled_quantity,
+                &OrderTypeEncoding::TurboSharedPostOnly,
+                market.base.decimals,
+                &base_asset,
+                &quote_asset,
+            );
+            let json = serde_json::json!({
+                "CreateSharedOrder": {
+                    "side": side_str,
+                    "price": scaled_price.to_string(),
+                    "quantity": scaled_quantity.to_string()
+                }
+            });
+            Ok((call, json))
+        }
+        Action::ExecuteTurboOrders {
+            source_order_id,
+            max_base_quantity,
+            max_fills,
+        } => {
+            let order_id = parse_hex_32(source_order_id.as_str())?;
+            let quantity = market.scale_quantity(max_base_quantity)?;
+            if quantity == 0 || *max_fills == 0 {
+                return Err(crate::errors::O2Error::Other(
+                    "Turbo execution bounds must be positive".into(),
+                ));
+            }
+            let mut call_data = Vec::with_capacity(48);
+            call_data.extend_from_slice(&order_id);
+            call_data.extend_from_slice(&u64_be(quantity));
+            call_data.extend_from_slice(&u64_be(*max_fills));
+            let call = CallArg {
+                contract_id,
+                function_selector: function_selector("execute_turbo_orders"),
+                amount: 0,
+                asset_id: [0u8; 32],
+                gas: GAS_MAX,
+                call_data: Some(call_data),
+            };
+            let json = serde_json::json!({
+                "ExecuteTurboOrders": {
+                    "source_order_id": source_order_id,
+                    "max_base_quantity": quantity.to_string(),
+                    "max_fills": max_fills.to_string()
+                }
+            });
             Ok((call, json))
         }
         Action::CancelOrder { order_id } => {

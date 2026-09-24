@@ -78,12 +78,17 @@ class OrderType(Enum):
     - :class:`LimitOrder` for limit orders (requires price + timestamp).
     - :class:`BoundedMarketOrder` for bounded market orders (requires
       max_price + min_price).
+
+    The Turbo shared labels may appear in order responses. To place a
+    shared PostOnly order, use ``create_shared_order()``.
     """
 
     SPOT = "Spot"
     MARKET = "Market"
     FILL_OR_KILL = "FillOrKill"
     POST_ONLY = "PostOnly"
+    TURBO_SHARED_SPOT = "TurboSharedSpot"
+    TURBO_SHARED_POST_ONLY = "TurboSharedPostOnly"
 
 
 @dataclass
@@ -976,6 +981,8 @@ class CreateOrderAction:
     order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT
 
     def to_dict(self) -> dict:
+        if self.order_type in (OrderType.TURBO_SHARED_SPOT, OrderType.TURBO_SHARED_POST_ONLY):
+            raise ValueError("Use create_shared_order() for Turbo shared orders")
         ot: Any
         if isinstance(self.order_type, LimitOrder):
             lo = self.order_type
@@ -1004,6 +1011,53 @@ class CreateOrderAction:
                 "price": self.price,
                 "quantity": self.quantity,
                 "order_type": ot,
+            }
+        }
+
+
+@dataclass
+class CreateSharedOrderAction:
+    """Place a PostOnly order eligible for sharing with Turbo markets."""
+
+    side: OrderSide
+    price: str
+    quantity: str
+
+    def to_dict(self) -> dict:
+        return {
+            "CreateSharedOrder": {
+                "side": self.side.value,
+                "price": self.price,
+                "quantity": self.quantity,
+            }
+        }
+
+
+@dataclass
+class ExecuteTurboOrdersAction:
+    """Execute a resting order against available Turbo orders."""
+
+    source_order_id: Id
+    max_base_quantity: str
+    max_fills: int
+
+    def to_dict(self) -> dict:
+        order_id = Id(str(self.source_order_id))
+        if len(order_id) != 66:
+            raise ValueError("source_order_id must be a 32-byte hex ID")
+        quantity = int(self.max_base_quantity)
+        if (
+            not 0 < quantity < 2**64
+            or not isinstance(self.max_fills, int)
+            or isinstance(self.max_fills, bool)
+            or not 0 < self.max_fills < 2**64
+        ):
+            raise ValueError("max_base_quantity and max_fills must be positive u64 values")
+        return {
+            "ExecuteTurboOrders": {
+                "source_order_id": str(order_id),
+                "max_base_quantity": str(quantity),
+                "max_fills": str(self.max_fills),
             }
         }
 
@@ -1050,7 +1104,14 @@ class RegisterRefererAction:
         return {"RegisterReferer": {"to": {"ContractId": str(self.to)}}}
 
 
-Action = CreateOrderAction | CancelOrderAction | SettleBalanceAction | RegisterRefererAction
+Action = (
+    CreateOrderAction
+    | CreateSharedOrderAction
+    | ExecuteTurboOrdersAction
+    | CancelOrderAction
+    | SettleBalanceAction
+    | RegisterRefererAction
+)
 
 
 @dataclass
@@ -1061,6 +1122,24 @@ class CreateOrderRequestAction:
     price: NumericInput
     quantity: NumericInput
     order_type: OrderType | LimitOrder | BoundedMarketOrder = OrderType.SPOT
+
+
+@dataclass
+class CreateSharedOrderRequestAction:
+    """High-level shared PostOnly order (human values or ChainInt raw values)."""
+
+    side: OrderSide
+    price: NumericInput
+    quantity: NumericInput
+
+
+@dataclass
+class ExecuteTurboOrdersRequestAction:
+    """Execute a resting order with a human or raw base-quantity bound."""
+
+    source_order_id: Id | str
+    max_base_quantity: NumericInput
+    max_fills: int = 1
 
 
 @dataclass
@@ -1077,7 +1156,13 @@ class SettleBalanceRequestAction:
     pass
 
 
-UserAction = CreateOrderRequestAction | CancelOrderRequestAction | SettleBalanceRequestAction
+UserAction = (
+    CreateOrderRequestAction
+    | CreateSharedOrderRequestAction
+    | ExecuteTurboOrdersRequestAction
+    | CancelOrderRequestAction
+    | SettleBalanceRequestAction
+)
 
 
 @dataclass

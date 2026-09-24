@@ -183,6 +183,74 @@ impl MarketActionsBuilder {
         self
     }
 
+    /// Add a shared PostOnly order action.
+    pub fn create_shared_order<P, Q>(self, side: Side, price: P, quantity: Q) -> Self
+    where
+        P: TryInto<OrderPriceInput, Error = O2Error>,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        let previous_len = self.actions.len();
+        let mut builder = self.create_order(side, price, quantity, OrderType::PostOnly);
+        if builder.actions.len() > previous_len {
+            if let Some(Action::CreateOrder {
+                side,
+                price,
+                quantity,
+                ..
+            }) = builder.actions.pop()
+            {
+                builder.actions.push(Action::CreateSharedOrder {
+                    side,
+                    price,
+                    quantity,
+                });
+            }
+        }
+        builder
+    }
+
+    /// Execute a resting order against available Turbo orders.
+    pub fn execute_turbo_orders<Q>(
+        mut self,
+        source_order_id: impl IntoValidId<OrderId>,
+        max_base_quantity: Q,
+        max_fills: u64,
+    ) -> Self
+    where
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        if self.first_error.is_some() {
+            return self;
+        }
+        let source_order_id = match source_order_id.into_valid() {
+            Ok(id) => id,
+            Err(e) => {
+                self.record_error_once(e);
+                return self;
+            }
+        };
+        let quantity = match max_base_quantity.try_into() {
+            Ok(OrderQuantityInput::Unchecked(v)) => v,
+            Ok(OrderQuantityInput::Checked(v)) => match self.market.validate_quantity_binding(&v) {
+                Ok(()) => v.value(),
+                Err(e) => {
+                    self.record_error_once(e);
+                    return self;
+                }
+            },
+            Err(e) => {
+                self.record_error_once(e);
+                return self;
+            }
+        };
+        self.actions.push(Action::ExecuteTurboOrders {
+            source_order_id,
+            max_base_quantity: quantity,
+            max_fills,
+        });
+        self
+    }
+
     /// Finalize and return the action list.
     ///
     /// Returns the first validation/conversion error encountered while building.
@@ -770,6 +838,56 @@ impl O2Client {
             order_type,
         });
         self.batch_actions(session, market.symbol_pair(), actions, collect_orders)
+            .await
+    }
+
+    /// Place a shared PostOnly order.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_shared_order<M, P, Q>(
+        &mut self,
+        session: &mut Session,
+        market_name: M,
+        side: Side,
+        price: P,
+        quantity: Q,
+        settle_first: bool,
+        collect_orders: bool,
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+        P: TryInto<OrderPriceInput, Error = O2Error>,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        let market_name = market_name.into_market_symbol()?;
+        let market = self.get_market(&market_name).await?;
+        let mut builder = MarketActionsBuilder::new(market.clone());
+        if settle_first {
+            builder = builder.settle_balance();
+        }
+        let actions = builder.create_shared_order(side, price, quantity).build()?;
+        self.batch_actions(session, market.symbol_pair(), actions, collect_orders)
+            .await
+    }
+
+    /// Execute a resting order against available Turbo orders.
+    pub async fn execute_turbo_orders<M, Q>(
+        &mut self,
+        session: &mut Session,
+        market_name: M,
+        source_order_id: &OrderId,
+        max_base_quantity: Q,
+        max_fills: u64,
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        let market_name = market_name.into_market_symbol()?;
+        let market = self.get_market(&market_name).await?;
+        let actions = MarketActionsBuilder::new(market.clone())
+            .execute_turbo_orders(source_order_id.clone(), max_base_quantity, max_fills)
+            .build()?;
+        self.batch_actions(session, market.symbol_pair(), actions, true)
             .await
     }
 
@@ -1590,6 +1708,27 @@ mod tests {
         assert!(matches!(actions[0], Action::SettleBalance));
         assert!(matches!(actions[1], Action::CreateOrder { .. }));
         assert!(matches!(actions[2], Action::CancelOrder { .. }));
+    }
+
+    #[test]
+    fn market_actions_builder_builds_shared_order() {
+        let actions = MarketActionsBuilder::new(dummy_market("0xmarket_a"))
+            .settle_balance()
+            .create_shared_order(Side::Buy, "1.25", "10")
+            .build()
+            .unwrap();
+        assert_eq!(actions.len(), 2);
+        assert!(matches!(actions[0], Action::SettleBalance));
+        assert!(matches!(actions[1], Action::CreateSharedOrder { .. }));
+    }
+
+    #[test]
+    fn market_actions_builder_builds_turbo_execution() {
+        let actions = MarketActionsBuilder::new(dummy_market("0xmarket_a"))
+            .execute_turbo_orders("0xdeadbeef", "0.1", 2)
+            .build()
+            .unwrap();
+        assert!(matches!(actions[0], Action::ExecuteTurboOrders { .. }));
     }
 
     #[test]
