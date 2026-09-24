@@ -49,6 +49,8 @@ from .models import (
     CreateSharedOrderRequestAction,
     DepthSnapshot,
     DepthUpdate,
+    ExecuteTurboOrdersAction,
+    ExecuteTurboOrdersRequestAction,
     FaucetResponse,
     Id,
     Identity,
@@ -98,6 +100,7 @@ class MarketActionsBuilder:
         self._actions: list[
             CreateOrderRequestAction
             | CreateSharedOrderRequestAction
+            | ExecuteTurboOrdersRequestAction
             | CancelOrderRequestAction
             | SettleBalanceRequestAction
         ] = []
@@ -135,6 +138,18 @@ class MarketActionsBuilder:
     ) -> MarketActionsBuilder:
         """Place a PostOnly order eligible for sharing with Turbo markets."""
         self._actions.append(CreateSharedOrderRequestAction(side, price, quantity))
+        return self
+
+    def execute_turbo_orders(
+        self,
+        source_order_id: str | Id,
+        max_base_quantity: NumericInput,
+        max_fills: int = 1,
+    ) -> MarketActionsBuilder:
+        """Execute a resting order against available Turbo orders."""
+        self._actions.append(
+            ExecuteTurboOrdersRequestAction(source_order_id, max_base_quantity, max_fills)
+        )
         return self
 
     def build(self) -> MarketActionGroup:
@@ -1086,6 +1101,15 @@ class O2Client:
                                 side=action.side,
                                 price=str(scaled_price),
                                 quantity=str(scaled_quantity),
+                            )
+                        )
+                    elif isinstance(action, ExecuteTurboOrdersRequestAction):
+                        quantity = market.scale_quantity(action.max_base_quantity)
+                        resolved_actions.append(
+                            ExecuteTurboOrdersAction(
+                                source_order_id=Id(str(action.source_order_id)),
+                                max_base_quantity=str(quantity),
+                                max_fills=action.max_fills,
                             )
                         )
                     elif isinstance(action, CancelOrderRequestAction):

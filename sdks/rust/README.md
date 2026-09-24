@@ -231,6 +231,17 @@ client.batch_actions(&mut session, "fETH/fUSDC", actions, true).await?;
 
 Use this only when the market and account are enabled for sharing. Otherwise the request may be rejected or placed as an ordinary PostOnly order. Existing `create_order` calls remain unchanged.
 
+To execute against available Turbo orders using an existing resting order,
+provide its order ID and execution limits:
+
+```rust
+client.execute_turbo_orders(
+    &mut session, "fETH/fUSDC", source_order_id, "0.1", 2
+).await?;
+```
+
+This is an explicit action; placing a shared order does not execute it automatically. Availability depends on the market, order, and account.
+
 ## Guides
 
 | Guide | Description |

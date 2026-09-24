@@ -324,6 +324,25 @@ def action_to_call(action: dict, market_info: dict) -> dict:
             "call_data": call_data,
         }
 
+    elif "ExecuteTurboOrders" in action:
+        data = action["ExecuteTurboOrders"]
+        order_id = data["source_order_id"]
+        order_id_bytes = bytes.fromhex(order_id[2:] if order_id.startswith("0x") else order_id)
+        if len(order_id_bytes) != 32:
+            raise ValueError("source_order_id must be a 32-byte hex ID")
+        quantity = int(data["max_base_quantity"])
+        fills = int(data["max_fills"])
+        if not 0 < quantity < 2**64 or not 0 < fills < 2**64:
+            raise ValueError("max_base_quantity and max_fills must be positive u64 values")
+        return {
+            "contract_id": contract_id,
+            "function_selector": function_selector("execute_turbo_orders"),
+            "amount": 0,
+            "asset_id": zero_asset,
+            "gas": GAS_MAX,
+            "call_data": order_id_bytes + u64_be(quantity) + u64_be(fills),
+        }
+
     elif "CancelOrder" in action:
         oid = action["CancelOrder"]["order_id"]
         order_id = bytes.fromhex(oid[2:] if oid.startswith("0x") else oid)

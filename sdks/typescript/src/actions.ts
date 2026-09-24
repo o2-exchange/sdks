@@ -29,6 +29,12 @@ export type Action =
       orderType?: OrderType;
     }
   | { type: "createSharedOrder"; side: Side; price: Numeric; quantity: Numeric }
+  | {
+      type: "executeTurboOrders";
+      sourceOrderId: OrderId;
+      maxBaseQuantity: Numeric;
+      maxFills: number;
+    }
   | { type: "cancelOrder"; orderId: OrderId }
   | { type: "settleBalance" }
   | { type: "registerReferer"; to: Identity };
@@ -63,6 +69,15 @@ export function createOrderAction(
 /** Create a shared PostOnly order action. */
 export function createSharedOrderAction(side: Side, price: Numeric, quantity: Numeric): Action {
   return { type: "createSharedOrder", side, price, quantity };
+}
+
+/** Execute a resting order against available Turbo orders. */
+export function executeTurboOrdersAction(
+  sourceOrderId: OrderId,
+  maxBaseQuantity: Numeric,
+  maxFills = 1,
+): Action {
+  return { type: "executeTurboOrders", sourceOrderId, maxBaseQuantity, maxFills };
 }
 
 /**

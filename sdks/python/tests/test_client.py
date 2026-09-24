@@ -209,6 +209,38 @@ async def test_batch_actions_normalizes_shared_builder_group(monkeypatch: pytest
 
 
 @pytest.mark.asyncio
+async def test_batch_actions_normalizes_turbo_execution(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    market = _test_market()
+    session = _test_session()
+    client._markets_cache = _test_markets_response(market)
+    client._nonce_cache[session.trade_account_id] = 7
+    captured: dict = {}
+
+    async def fake_submit_actions(_owner: str, request: dict) -> ActionsResponse:
+        captured["request"] = request
+        return ActionsResponse.from_dict({"tx_id": "0x" + "aa" * 32})
+
+    monkeypatch.setattr(client.api, "submit_actions", fake_submit_actions)
+    group = (
+        client.actions_for(market)
+        .execute_turbo_orders("0x" + "ab" * 32, ChainInt(5000000000), 2)
+        .build()
+    )
+    result = await client.batch_actions([group], session=session)
+    assert result.success
+    assert captured["request"]["actions"][0]["actions"] == [
+        {
+            "ExecuteTurboOrders": {
+                "source_order_id": "0x" + "ab" * 32,
+                "max_base_quantity": "5000000000",
+                "max_fills": "2",
+            }
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_batch_actions_accepts_chain_int(monkeypatch: pytest.MonkeyPatch):
     client = O2Client()
     market = _test_market()

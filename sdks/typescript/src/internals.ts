@@ -36,6 +36,7 @@ export {
   type CreateOrderAction,
   type CreateSharedOrderAction,
   concat,
+  type ExecuteTurboOrdersAction,
   encodeIdentity,
   encodeOptionCallData,
   encodeOptionNone,

@@ -221,6 +221,16 @@ await client.createSharedOrder("fETH/fUSDC", "buy", "2000", "0.1");
 
 Use this only when the market and account are enabled for sharing. Otherwise the request may be rejected or placed as an ordinary PostOnly order. Existing `createOrder` calls remain unchanged.
 
+To execute against available Turbo orders using an existing resting order,
+provide its order ID and execution limits:
+
+```ts
+await client.executeTurboOrders("fETH/fUSDC", sourceOrderId, "0.1", 2);
+// In a batch: executeTurboOrdersAction(sourceOrderId, "0.1", 2)
+```
+
+This is an explicit action; placing a shared order does not execute it automatically. Availability depends on the market, order, and account.
+
 ## Guides
 
 - [Identifiers and Wallet Types](docs/guides/identifiers.md)

@@ -13,6 +13,7 @@ export {
   cancelOrderAction,
   createOrderAction,
   createSharedOrderAction,
+  executeTurboOrdersAction,
   type MarketActionGroup,
   type Numeric,
   registerRefererAction,

@@ -4,4 +4,4 @@ sdk-typescript: minor
 sdk-rust: minor
 ---
 
-Add shared PostOnly orders for eligible accounts across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.
+Add shared PostOnly orders and explicit Turbo order execution across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.

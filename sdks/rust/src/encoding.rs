@@ -376,6 +376,39 @@ pub fn action_to_call(
             });
             Ok((call, json))
         }
+        Action::ExecuteTurboOrders {
+            source_order_id,
+            max_base_quantity,
+            max_fills,
+        } => {
+            let order_id = parse_hex_32(source_order_id.as_str())?;
+            let quantity = market.scale_quantity(max_base_quantity)?;
+            if quantity == 0 || *max_fills == 0 {
+                return Err(crate::errors::O2Error::Other(
+                    "Turbo execution bounds must be positive".into(),
+                ));
+            }
+            let mut call_data = Vec::with_capacity(48);
+            call_data.extend_from_slice(&order_id);
+            call_data.extend_from_slice(&u64_be(quantity));
+            call_data.extend_from_slice(&u64_be(*max_fills));
+            let call = CallArg {
+                contract_id,
+                function_selector: function_selector("execute_turbo_orders"),
+                amount: 0,
+                asset_id: [0u8; 32],
+                gas: GAS_MAX,
+                call_data: Some(call_data),
+            };
+            let json = serde_json::json!({
+                "ExecuteTurboOrders": {
+                    "source_order_id": source_order_id,
+                    "max_base_quantity": quantity.to_string(),
+                    "max_fills": max_fills.to_string()
+                }
+            });
+            Ok((call, json))
+        }
         Action::CancelOrder { order_id } => {
             let order_id_bytes = parse_hex_32(order_id.as_str())?;
             let call = cancel_order_to_call(&contract_id, &order_id_bytes);

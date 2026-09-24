@@ -19,7 +19,14 @@ from o2_sdk.encoding import (
     function_selector,
     u64_be,
 )
-from o2_sdk.models import CreateOrderAction, CreateSharedOrderAction, OrderSide, OrderType
+from o2_sdk.models import (
+    CreateOrderAction,
+    CreateSharedOrderAction,
+    ExecuteTurboOrdersAction,
+    Id,
+    OrderSide,
+    OrderType,
+)
 
 
 class TestU64Be:
@@ -399,6 +406,28 @@ class TestActionToCall:
         else:
             assert call["amount"] == 5000000000
             assert call["asset_id"] == bytes.fromhex("11" * 32)
+
+    def test_execute_turbo_orders_wire_and_call(self):
+        order_id = Id("ab" * 32)
+        action = ExecuteTurboOrdersAction(order_id, "5000000000", 2).to_dict()
+        assert action == {
+            "ExecuteTurboOrders": {
+                "source_order_id": str(order_id),
+                "max_base_quantity": "5000000000",
+                "max_fills": "2",
+            }
+        }
+        call = action_to_call(action, self.MARKET_INFO)
+        assert call["contract_id"] == bytes.fromhex("ab" * 32)
+        assert call["function_selector"] == function_selector("execute_turbo_orders")
+        assert call["amount"] == 0
+        assert call["asset_id"] == bytes(32)
+        assert call["call_data"] == bytes.fromhex("ab" * 32) + u64_be(5000000000) + u64_be(2)
+
+    @pytest.mark.parametrize("quantity,fills", [("0", 1), ("1", 0), (str(2**64), 1)])
+    def test_execute_turbo_orders_rejects_invalid_bounds(self, quantity, fills):
+        with pytest.raises(ValueError, match="positive u64"):
+            ExecuteTurboOrdersAction(Id("ab" * 32), quantity, fills).to_dict()
 
     @pytest.mark.parametrize(
         "order_type", [OrderType.TURBO_SHARED_SPOT, OrderType.TURBO_SHARED_POST_ONLY]

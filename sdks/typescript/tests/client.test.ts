@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Signer } from "../src/crypto.js";
-import { createSharedOrderAction, Network, O2Client } from "../src/index.js";
+import {
+  createSharedOrderAction,
+  executeTurboOrdersAction,
+  Network,
+  O2Client,
+} from "../src/index.js";
 import {
   type AccountInfo,
   assetId,
@@ -519,6 +524,40 @@ describe("O2Client management", () => {
 });
 
 describe("O2Client bigint precision", () => {
+  it("submits bounded Turbo execution as its own action", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submit = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+    const source = orderId(`0x${"ab".repeat(32)}`);
+    await client.executeTurboOrders(MARKET, source, "0.1", 2);
+    expect(submit).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET_ID,
+            actions: [
+              {
+                ExecuteTurboOrders: {
+                  source_order_id: source,
+                  max_base_quantity: "100000000",
+                  max_fills: "2",
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    await client.batchActions([
+      { market: MARKET, actions: [executeTurboOrdersAction(source, 100000000n)] },
+    ]);
+    expect(submit).toHaveBeenCalledTimes(2);
+  });
+
   it("submits a shared order through the dedicated action", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());

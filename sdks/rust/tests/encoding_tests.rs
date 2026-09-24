@@ -525,6 +525,47 @@ fn test_shared_order_action_wire_and_call() {
 }
 
 #[test]
+fn test_execute_turbo_orders_action_wire_and_call() {
+    let market = test_market();
+    let source_order_id = "0xabababababababababababababababababababababababababababababababab"
+        .into_valid()
+        .unwrap();
+    let action = Action::ExecuteTurboOrders {
+        source_order_id,
+        max_base_quantity: "0.1".parse().unwrap(),
+        max_fills: 2,
+    };
+    let (call, json) = action_to_call(&action, &market, "", None).unwrap();
+    assert_eq!(json["ExecuteTurboOrders"]["max_base_quantity"], "100000000");
+    assert_eq!(json["ExecuteTurboOrders"]["max_fills"], "2");
+    assert_eq!(
+        call.function_selector,
+        function_selector("execute_turbo_orders")
+    );
+    assert_eq!(call.amount, 0);
+    assert_eq!(call.asset_id, [0u8; 32]);
+    let data = call.call_data.unwrap();
+    assert_eq!(data.len(), 48);
+    assert_eq!(&data[32..40], &u64_be(100_000_000));
+    assert_eq!(&data[40..], &u64_be(2));
+}
+
+#[test]
+fn test_execute_turbo_orders_rejects_zero_bounds() {
+    let market = test_market();
+    for (quantity, max_fills) in [("0", 1), ("0.1", 0)] {
+        let action = Action::ExecuteTurboOrders {
+            source_order_id: "0xabababababababababababababababababababababababababababababababab"
+                .into_valid()
+                .unwrap(),
+            max_base_quantity: quantity.parse().unwrap(),
+            max_fills,
+        };
+        assert!(action_to_call(&action, &market, "", None).is_err());
+    }
+}
+
+#[test]
 fn test_adjust_quantity_already_valid() {
     let market = test_market();
     // price=100_000_000, quantity=5_000_000_000

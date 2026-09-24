@@ -622,6 +622,37 @@ export class O2Client {
     );
   }
 
+  /** Execute a resting order against available Turbo orders. */
+  async executeTurboOrders(
+    market: MarketRef,
+    sourceOrderId: OrderId,
+    maxBaseQuantity: Numeric,
+    maxFills = 1,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const marketsData = await this.fetchMarkets();
+    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const bounds = this.normalizeTurboExecution(resolved, maxBaseQuantity, maxFills);
+    return this.submitBatch(
+      [
+        {
+          market_id: resolved.market_id,
+          actions: [
+            {
+              ExecuteTurboOrders: {
+                source_order_id: sourceOrderId,
+                ...bounds,
+              },
+            },
+          ],
+        },
+      ],
+      true,
+      activeSession,
+    );
+  }
+
   /**
    * Place an order with take-profit and/or stop-loss attached, atomically.
    *
@@ -1595,6 +1626,21 @@ export class O2Client {
     return { scaledPrice, scaledQuantity };
   }
 
+  private normalizeTurboExecution(
+    market: Market,
+    maxBaseQuantity: Numeric,
+    maxFills: number,
+  ): { max_base_quantity: string; max_fills: string } {
+    const input = ensureNumeric(maxBaseQuantity, "maxBaseQuantity");
+    const quantity =
+      typeof input === "bigint" ? input : scaleDecimalString(input, market.base.decimals);
+    const maxU64 = (1n << 64n) - 1n;
+    if (quantity <= 0n || quantity > maxU64 || !Number.isSafeInteger(maxFills) || maxFills <= 0) {
+      throw new O2Error("Turbo execution bounds must be positive u64 values");
+    }
+    return { max_base_quantity: quantity.toString(), max_fills: maxFills.toString() };
+  }
+
   /** Convert a type-safe Action to the wire-format ActionPayload. */
   protected actionToPayload(action: Action, market: Market, session?: SessionState): ActionPayload {
     const activeSession = session ?? this.ensureSession();
@@ -1633,6 +1679,13 @@ export class O2Client {
           },
         };
       }
+      case "executeTurboOrders":
+        return {
+          ExecuteTurboOrders: {
+            source_order_id: action.sourceOrderId,
+            ...this.normalizeTurboExecution(market, action.maxBaseQuantity, action.maxFills),
+          },
+        };
       case "cancelOrder":
         return { CancelOrder: { order_id: action.orderId } };
       case "settleBalance":

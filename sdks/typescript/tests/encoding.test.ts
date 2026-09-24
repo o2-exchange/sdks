@@ -28,6 +28,59 @@ import {
 } from "../src/encoding.js";
 
 describe("Encoding Module", () => {
+  it("encodes Turbo execution against a resting order", () => {
+    const market = {
+      contractId: `0x${"11".repeat(32)}`,
+      marketId: `0x${"22".repeat(32)}`,
+      base: { asset: `0x${"33".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "BASE" },
+      quote: { asset: `0x${"44".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "QUOTE" },
+    };
+    const sourceOrderId = `0x${"ab".repeat(32)}`;
+    const call = actionToCall(
+      {
+        ExecuteTurboOrders: {
+          source_order_id: sourceOrderId,
+          max_base_quantity: "5000000000",
+          max_fills: "2",
+        },
+      },
+      market,
+    );
+    expect(call.functionSelector).toEqual(functionSelector("execute_turbo_orders"));
+    expect(call.amount).toBe(0n);
+    expect(call.assetId).toEqual(new Uint8Array(32));
+    expect(call.callData).toEqual(
+      concat([hexToBytes(sourceOrderId), u64BE(5000000000n), u64BE(2n)]),
+    );
+  });
+
+  it("rejects invalid Turbo execution bounds", () => {
+    const market = {
+      contractId: `0x${"11".repeat(32)}`,
+      marketId: `0x${"22".repeat(32)}`,
+      base: { asset: `0x${"33".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "BASE" },
+      quote: { asset: `0x${"44".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "QUOTE" },
+    };
+    for (const [quantity, fills] of [
+      ["0", "1"],
+      ["1", "0"],
+      ["18446744073709551616", "1"],
+    ]) {
+      expect(() =>
+        actionToCall(
+          {
+            ExecuteTurboOrders: {
+              source_order_id: `0x${"ab".repeat(32)}`,
+              max_base_quantity: quantity,
+              max_fills: fills,
+            },
+          },
+          market,
+        ),
+      ).toThrow("Invalid Turbo execution bounds");
+    }
+  });
+
   it("encodes a shared order with its dedicated action and PostOnly variant", () => {
     const market = {
       contractId: `0x${"11".repeat(32)}`,

@@ -259,6 +259,14 @@ export interface CreateSharedOrderAction {
   CreateSharedOrder: { side: "buy" | "sell" | "Buy" | "Sell"; price: string; quantity: string };
 }
 
+export interface ExecuteTurboOrdersAction {
+  ExecuteTurboOrders: {
+    source_order_id: string;
+    max_base_quantity: string;
+    max_fills: string;
+  };
+}
+
 export type OrderTypeJSON =
   | "Spot"
   | "FillOrKill"
@@ -316,6 +324,7 @@ export interface CancelTriggerOrderAction {
 export type ActionJSON =
   | CreateOrderAction
   | CreateSharedOrderAction
+  | ExecuteTurboOrdersAction
   | CancelOrderAction
   | SettleBalanceAction
   | RegisterRefererAction
@@ -409,6 +418,31 @@ export function actionToCall(
       assetId,
       gas: GAS_MAX,
       callData,
+    };
+  }
+
+  if ("ExecuteTurboOrders" in action) {
+    const data = action.ExecuteTurboOrders;
+    const orderId = hexToBytes(data.source_order_id);
+    const quantity = BigInt(data.max_base_quantity);
+    const fills = BigInt(data.max_fills);
+    const maxU64 = (1n << 64n) - 1n;
+    if (
+      orderId.length !== 32 ||
+      quantity <= 0n ||
+      quantity > maxU64 ||
+      fills <= 0n ||
+      fills > maxU64
+    ) {
+      throw new Error("Invalid Turbo execution bounds or source order ID");
+    }
+    return {
+      contractId: contractIdBytes,
+      functionSelector: functionSelector("execute_turbo_orders"),
+      amount: 0n,
+      assetId: ZERO_ASSET,
+      gas: GAS_MAX,
+      callData: concat([orderId, u64BE(quantity), u64BE(fills)]),
     };
   }
 

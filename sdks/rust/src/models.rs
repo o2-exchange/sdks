@@ -558,6 +558,11 @@ pub enum Action {
         price: UnsignedDecimal,
         quantity: UnsignedDecimal,
     },
+    ExecuteTurboOrders {
+        source_order_id: OrderId,
+        max_base_quantity: UnsignedDecimal,
+        max_fills: u64,
+    },
     CancelOrder {
         order_id: OrderId,
     },
@@ -1512,6 +1517,14 @@ pub struct CreateSharedOrderAction {
     pub quantity: String,
 }
 
+/// Execute a resting order against available Turbo orders.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecuteTurboOrdersAction {
+    pub source_order_id: String,
+    pub max_base_quantity: String,
+    pub max_fills: String,
+}
+
 /// A CancelOrder action payload.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CancelOrderAction {
@@ -1535,6 +1548,10 @@ pub enum ActionItem {
     CreateSharedOrder {
         #[serde(rename = "CreateSharedOrder")]
         create_shared_order: CreateSharedOrderAction,
+    },
+    ExecuteTurboOrders {
+        #[serde(rename = "ExecuteTurboOrders")]
+        execute_turbo_orders: ExecuteTurboOrdersAction,
     },
     CancelOrder {
         #[serde(rename = "CancelOrder")]
