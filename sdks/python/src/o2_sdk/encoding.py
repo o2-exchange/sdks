@@ -291,9 +291,12 @@ def action_to_call(action: dict, market_info: dict) -> dict:
             amount = quantity
             asset_id = bytes.fromhex(market_info["base"]["asset"][2:])
 
-        # Shared PostOnly orders use their own action shape.
+        # Shared orders use their own action shape.
         if shared:
-            ot_name = "TurboSharedPostOnly"
+            shared_type = data.get("order_type", "PostOnly")
+            if shared_type not in ("Spot", "PostOnly"):
+                raise ValueError("shared order type must be Spot or PostOnly")
+            ot_name = "TurboShared" + shared_type
             ot_data = None
         else:
             ot = data["order_type"]

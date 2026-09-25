@@ -135,9 +135,12 @@ class MarketActionsBuilder:
         side: OrderSide,
         price: NumericInput,
         quantity: NumericInput,
+        order_type: OrderType = OrderType.POST_ONLY,
     ) -> MarketActionsBuilder:
-        """Place a PostOnly order eligible for sharing with Turbo markets."""
-        self._actions.append(CreateSharedOrderRequestAction(side, price, quantity))
+        """Place a shared Spot or PostOnly order."""
+        if order_type not in (OrderType.SPOT, OrderType.POST_ONLY):
+            raise ValueError("shared order type must be Spot or PostOnly")
+        self._actions.append(CreateSharedOrderRequestAction(side, price, quantity, order_type))
         return self
 
     def execute_turbo_orders(
@@ -1101,6 +1104,7 @@ class O2Client:
                                 side=action.side,
                                 price=str(scaled_price),
                                 quantity=str(scaled_quantity),
+                                order_type=action.order_type,
                             )
                         )
                     elif isinstance(action, ExecuteTurboOrdersRequestAction):
