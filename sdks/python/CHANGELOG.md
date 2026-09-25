@@ -1,4 +1,13 @@
 # Changelog
+## 0.5.1 (2026-09-25)
+
+### Features
+
+- add turbo shared orders support (#78)
+- support shared Spot orders (#80)
+- Allow shared Spot orders through `create_shared_order(..., OrderType.SPOT)`. Existing calls remain shared PostOnly orders.
+- Add shared PostOnly orders and explicit Turbo order execution across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.
+
 ## 0.5.0 (2026-09-16)
 
 ### Breaking Changes

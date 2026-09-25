@@ -1,4 +1,11 @@
 # Changelog
+## 0.4.1 (2026-09-25)
+
+### Features
+
+- add turbo shared orders support (#78)
+- Add shared PostOnly orders and explicit Turbo order execution across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.
+
 ## 0.4.0 (2026-09-16)
 
 ### Breaking Changes
