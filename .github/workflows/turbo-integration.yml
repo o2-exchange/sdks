@@ -1,0 +1,36 @@
+name: Turbo Shared Orders E2E
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: turbo-shared-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  python-turbo-shared:
+    name: Python Turbo Shared Orders
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
+        with:
+          cache: pip
+          cache-dependency-path: sdks/python/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - name: Test Turbo shared orders
+        env:
+          TURBO_TEST_KEY: ${{ secrets.TURBO_TEST_KEY }}
+        run: |
+          if [ -z "$TURBO_TEST_KEY" ]; then
+            echo "::error::TURBO_TEST_KEY secret is required for the Turbo integration test"
+            exit 1
+          fi
+          pytest tests/test_turbo_shared_integration.py -m integration -v --timeout=600

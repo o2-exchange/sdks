@@ -1,4 +1,4 @@
-"""Live E2E test for shared orders and explicit Turbo execution.
+"""Live E2E tests for shared PostOnly, shared Spot, and Turbo execution.
 
 The test creates a session (replacing any existing session on that account) and
 places a small live order. ``TURBO_TEST_MARKET`` defaults to ``fwBTC/fUSDC``.
@@ -118,16 +118,20 @@ async def _available_balance(client: O2Client, account, asset_id: str) -> int:
     return int(balance.trading_account_balance)
 
 
-async def _place_shared_order(client, session, market, side, price, quantity):
+async def _place_shared_order(
+    client, session, market, side, price, quantity, order_type=OrderType.POST_ONLY
+):
     actions = (
         client.actions_for(market)
         .settle_balance()
-        .create_shared_order(side, ChainInt(price), ChainInt(quantity))
+        .create_shared_order(side, ChainInt(price), ChainInt(quantity), order_type)
         .build()
     )
     result = await client.batch_actions([actions], collect_orders=True, session=session)
     assert result.tx_id, f"Shared order submission failed: {result.message}"
-    assert result.orders and len(result.orders) == 1
+    assert result.orders, "Shared order submission returned no orders"
+    if order_type is OrderType.POST_ONLY:
+        assert len(result.orders) == 1
     return result.orders[0]
 
 
@@ -223,7 +227,10 @@ async def test_shared_post_only_order_rests_on_testnet(turbo_context):
             await _cancel_if_open(client, session, market, order_id)
 
 
-async def test_shared_order_executes_resting_turbo_liquidity(turbo_context):
+@pytest.mark.parametrize(
+    "shared_type", [OrderType.POST_ONLY, OrderType.SPOT], ids=["post_only", "spot"]
+)
+async def test_shared_order_executes_resting_turbo_liquidity(turbo_context, shared_type):
     client, account, market, sidecar, get_session = turbo_context
     market_id = str(market.market_id)
     canonical = await _depth(client, market_id)
@@ -322,51 +329,67 @@ async def test_shared_order_executes_resting_turbo_liquidity(turbo_context):
             raise AssertionError("Seeded Turbo order did not appear in demand depth")
 
         session = await get_session()
-        source = await _place_shared_order(client, session, market, side, price, quantity)
-        source_id = str(source.order_id)
-        # The quote rests publicly while crossing Turbo liquidity awaits explicit execution.
-        assert source.order_type == "PostOnly"
-        before = await _indexed_order(client, market_id, source_id)
-        assert before.is_open
-
-        actions = (
-            client.actions_for(market)
-            .execute_turbo_orders(source_id, ChainInt(quantity), max_fills=1)
-            .build()
+        source = await _place_shared_order(
+            client, session, market, side, price, quantity, shared_type
         )
-        result = await client.batch_actions([actions], collect_orders=True, session=session)
-        assert result.tx_id
-        assert result.orders, "Turbo execution produced no order"
+        source_id = str(source.order_id)
+        if shared_type is OrderType.POST_ONLY:
+            # A crossing PostOnly quote rests publicly until explicit execution.
+            assert source.order_type == "PostOnly"
+            before = await _indexed_order(client, market_id, source_id)
+            assert before.is_open
 
-        executed_id = str(result.orders[0].order_id)
-        for _ in range(INDEXER_ATTEMPTS):
-            try:
-                executed = await client.api._request(
-                    "GET",
-                    "/v1/order",
-                    params={"market_id": market_id, "turbo": "true", "order_id": executed_id},
-                )
-            except O2Error:
+            actions = (
+                client.actions_for(market)
+                .execute_turbo_orders(source_id, ChainInt(quantity), max_fills=1)
+                .build()
+            )
+            result = await client.batch_actions([actions], collect_orders=True, session=session)
+            assert result.tx_id
+            assert result.orders, "Turbo execution produced no order"
+
+            executed_id = str(result.orders[0].order_id)
+            for _ in range(INDEXER_ATTEMPTS):
+                try:
+                    executed = await client.api._request(
+                        "GET",
+                        "/v1/order",
+                        params={"market_id": market_id, "turbo": "true", "order_id": executed_id},
+                    )
+                except O2Error:
+                    await asyncio.sleep(1)
+                    continue
+                funding_source = (executed.get("order") or {}).get("funding_source") or {}
+                if _same_id(funding_source.get("order_id"), source_id):
+                    break
                 await asyncio.sleep(1)
-                continue
-            funding_source = (executed.get("order") or {}).get("funding_source") or {}
-            if _same_id(funding_source.get("order_id"), source_id):
-                break
-            await asyncio.sleep(1)
+            else:
+                raise AssertionError("Executed Turbo order did not reference the shared source")
+            previous_fill = int(before.quantity_fill)
         else:
-            raise AssertionError("Executed Turbo order did not reference the shared source")
+            # Shared Spot must fill the seeded Turbo order in the placement transaction.
+            assert source.order_type == "TurboSharedSpot"
+            previous_fill = 0
 
         for _ in range(INDEXER_ATTEMPTS):
             try:
                 after = await client.api.get_order(market_id, source_id)
+                turbo = await counterparty.api._request(
+                    "GET",
+                    "/v1/order",
+                    params={"market_id": market_id, "turbo": "true", "order_id": turbo_order_id},
+                )
             except O2Error:
                 await asyncio.sleep(1)
                 continue
-            if int(after.quantity_fill) > int(before.quantity_fill):
+            if (
+                int(after.quantity_fill) > previous_fill
+                and int(turbo.get("order", turbo).get("quantity_fill", 0)) > 0
+            ):
                 break
             await asyncio.sleep(1)
         else:
-            raise AssertionError("Shared source did not record a Turbo fill")
+            raise AssertionError("Shared source and Turbo order did not record the fill")
     finally:
         if source_id is not None:
             await _cancel_if_open(client, session, market, source_id)
