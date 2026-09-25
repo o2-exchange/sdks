@@ -407,6 +407,42 @@ class TestActionToCall:
             assert call["amount"] == 5000000000
             assert call["asset_id"] == bytes.fromhex("11" * 32)
 
+    @pytest.mark.parametrize("side", [OrderSide.BUY, OrderSide.SELL])
+    def test_create_shared_spot_uses_backend_action_and_variant_6(self, side):
+        action = CreateSharedOrderAction(
+            side=side,
+            price="100000000",
+            quantity="5000000000",
+            order_type=OrderType.SPOT,
+        ).to_dict()
+        assert action["CreateSharedOrder"]["order_type"] == "Spot"
+        call = action_to_call(action, self.MARKET_INFO)
+        assert call["call_data"] == u64_be(100000000) + u64_be(5000000000) + u64_be(6)
+        if side is OrderSide.BUY:
+            assert call["amount"] == 500000000
+            assert call["asset_id"] == bytes.fromhex("22" * 32)
+        else:
+            assert call["amount"] == 5000000000
+            assert call["asset_id"] == bytes.fromhex("11" * 32)
+
+    def test_create_shared_order_rejects_unsupported_type(self):
+        with pytest.raises(ValueError, match="Spot or PostOnly"):
+            CreateSharedOrderAction(
+                OrderSide.BUY, "100000000", "5000000000", OrderType.MARKET
+            ).to_dict()
+        with pytest.raises(ValueError, match="Spot or PostOnly"):
+            action_to_call(
+                {
+                    "CreateSharedOrder": {
+                        "side": "Buy",
+                        "price": "100000000",
+                        "quantity": "5000000000",
+                        "order_type": "Market",
+                    }
+                },
+                self.MARKET_INFO,
+            )
+
     def test_execute_turbo_orders_wire_and_call(self):
         order_id = Id("ab" * 32)
         action = ExecuteTurboOrdersAction(order_id, "5000000000", 2).to_dict()

@@ -1017,20 +1017,24 @@ class CreateOrderAction:
 
 @dataclass
 class CreateSharedOrderAction:
-    """Place a PostOnly order eligible for sharing with Turbo markets."""
+    """Place a shared Spot or PostOnly order."""
 
     side: OrderSide
     price: str
     quantity: str
+    order_type: OrderType = OrderType.POST_ONLY
 
     def to_dict(self) -> dict:
-        return {
-            "CreateSharedOrder": {
-                "side": self.side.value,
-                "price": self.price,
-                "quantity": self.quantity,
-            }
+        if self.order_type not in (OrderType.SPOT, OrderType.POST_ONLY):
+            raise ValueError("shared order type must be Spot or PostOnly")
+        data = {
+            "side": self.side.value,
+            "price": self.price,
+            "quantity": self.quantity,
         }
+        if self.order_type is OrderType.SPOT:
+            data["order_type"] = self.order_type.value
+        return {"CreateSharedOrder": data}
 
 
 @dataclass
@@ -1126,11 +1130,12 @@ class CreateOrderRequestAction:
 
 @dataclass
 class CreateSharedOrderRequestAction:
-    """High-level shared PostOnly order (human values or ChainInt raw values)."""
+    """High-level shared order (human values or ChainInt raw values)."""
 
     side: OrderSide
     price: NumericInput
     quantity: NumericInput
+    order_type: OrderType = OrderType.POST_ONLY
 
 
 @dataclass

@@ -16,6 +16,7 @@ from o2_sdk import (
     O2Client,
     O2Error,
     OrderSide,
+    OrderType,
     SessionInfo,
     SettleBalanceAction,
     WithdrawResponse,
@@ -206,6 +207,50 @@ async def test_batch_actions_normalizes_shared_builder_group(monkeypatch: pytest
             }
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_batch_actions_normalizes_shared_spot_builder_group(monkeypatch: pytest.MonkeyPatch):
+    client = O2Client()
+    market = _test_market()
+    session = _test_session()
+    client._markets_cache = _test_markets_response(market)
+    client._nonce_cache[session.trade_account_id] = 7
+
+    captured: dict = {}
+
+    async def fake_submit_actions(_owner: str, request: dict) -> ActionsResponse:
+        captured["request"] = request
+        return ActionsResponse.from_dict({"tx_id": "0x" + "aa" * 32})
+
+    monkeypatch.setattr(client.api, "submit_actions", fake_submit_actions)
+    group = (
+        client.actions_for(market)
+        .create_shared_order(
+            OrderSide.BUY, ChainInt(100000000), ChainInt(5000000000), OrderType.SPOT
+        )
+        .build()
+    )
+    result = await client.batch_actions([group], session=session)
+    assert result.success
+    assert captured["request"]["actions"][0]["actions"] == [
+        {
+            "CreateSharedOrder": {
+                "side": "Buy",
+                "price": "100000000",
+                "quantity": "5000000000",
+                "order_type": "Spot",
+            }
+        }
+    ]
+
+
+def test_shared_order_builder_rejects_unsupported_type():
+    client = O2Client()
+    with pytest.raises(ValueError, match="Spot or PostOnly"):
+        client.actions_for(_test_market()).create_shared_order(
+            OrderSide.BUY, "1", "1", OrderType.MARKET
+        )
 
 
 @pytest.mark.asyncio

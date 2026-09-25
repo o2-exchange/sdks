@@ -95,8 +95,8 @@ and market contracts, so `settle_balance(...)` does not necessarily change aggre
 
 ## Shared orders
 
-Eligible accounts can place PostOnly orders that may also be available in
-Turbo markets:
+Eligible accounts can place Spot or PostOnly orders that may also be available
+in Turbo markets. PostOnly remains the default:
 
 ```python
 group = (
@@ -108,9 +108,19 @@ group = (
 await client.batch_actions([group], collect_orders=True)
 ```
 
+Pass `OrderType.SPOT` to allow immediate matching before any remainder rests:
+
+```python
+group = client.actions_for("fETH/fUSDC").create_shared_order(
+    OrderSide.BUY, "2000", "0.1", OrderType.SPOT
+).build()
+await client.batch_actions([group], collect_orders=True)
+```
+
 Use `create_shared_order` only when the market and account are enabled for
 sharing. Otherwise the request may be rejected or placed as an ordinary
-PostOnly order. Existing `create_order` calls continue to place ordinary orders.
+order of the selected type. Existing `create_order` calls continue to place
+ordinary orders.
 
 To execute against available Turbo orders using an existing resting order,
 provide its order ID and execution limits:
