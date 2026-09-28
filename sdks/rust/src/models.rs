@@ -558,6 +558,11 @@ pub enum Action {
         price: UnsignedDecimal,
         quantity: UnsignedDecimal,
     },
+    CreateSharedSpotOrder {
+        side: Side,
+        price: UnsignedDecimal,
+        quantity: UnsignedDecimal,
+    },
     ExecuteTurboOrders {
         source_order_id: OrderId,
         max_base_quantity: UnsignedDecimal,

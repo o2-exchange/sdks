@@ -405,6 +405,32 @@ fn test_shared_order_call_encoding() {
 }
 
 #[test]
+fn test_shared_spot_order_call_encoding() {
+    let contract_id = [0x11; 32];
+    let base_asset = [0x22; 32];
+    let quote_asset = [0x33; 32];
+    for (side, expected_amount, expected_asset) in [
+        ("Buy", 200_000_000, quote_asset),
+        ("Sell", 100_000_000, base_asset),
+    ] {
+        let call = create_order_to_call(
+            &contract_id,
+            side,
+            2_000_000_000,
+            100_000_000,
+            &OrderTypeEncoding::TurboSharedSpot,
+            9,
+            &base_asset,
+            &quote_asset,
+        );
+        assert_eq!(call.function_selector, function_selector("create_order"));
+        assert_eq!(call.amount, expected_amount);
+        assert_eq!(call.asset_id, expected_asset);
+        assert_eq!(&call.call_data.unwrap()[16..], &u64_be(6));
+    }
+}
+
+#[test]
 fn test_cancel_order_to_call() {
     let contract_id = [0x11; 32];
     let order_id = [0xFF; 32];
@@ -522,6 +548,22 @@ fn test_shared_order_action_wire_and_call() {
     assert!(json["CreateSharedOrder"].get("order_type").is_none());
     assert_eq!(call.function_selector, function_selector("create_order"));
     assert_eq!(&call.call_data.unwrap()[16..], &u64_be(7));
+}
+
+#[test]
+fn test_shared_spot_order_action_wire_and_call() {
+    let market = test_market();
+    let action = Action::CreateSharedSpotOrder {
+        side: Side::Buy,
+        price: "2".parse().unwrap(),
+        quantity: "0.1".parse().unwrap(),
+    };
+    let (call, json) = action_to_call(&action, &market, "", None).unwrap();
+    assert_eq!(json["CreateSharedOrder"]["side"], "Buy");
+    assert_eq!(json["CreateSharedOrder"]["price"], "2000000000");
+    assert_eq!(json["CreateSharedOrder"]["quantity"], "100000000");
+    assert_eq!(json["CreateSharedOrder"]["order_type"], "Spot");
+    assert_eq!(&call.call_data.unwrap()[16..], &u64_be(6));
 }
 
 #[test]

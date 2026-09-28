@@ -189,20 +189,48 @@ impl MarketActionsBuilder {
         P: TryInto<OrderPriceInput, Error = O2Error>,
         Q: TryInto<OrderQuantityInput, Error = O2Error>,
     {
+        self.create_shared_order_with_type(side, price, quantity, OrderType::PostOnly)
+    }
+
+    /// Add a shared Spot or PostOnly order action.
+    pub fn create_shared_order_with_type<P, Q>(
+        mut self,
+        side: Side,
+        price: P,
+        quantity: Q,
+        order_type: OrderType,
+    ) -> Self
+    where
+        P: TryInto<OrderPriceInput, Error = O2Error>,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
+        if !matches!(&order_type, OrderType::Spot | OrderType::PostOnly) {
+            self.record_error_once(O2Error::Other(
+                "shared order type must be Spot or PostOnly".into(),
+            ));
+            return self;
+        }
         let previous_len = self.actions.len();
-        let mut builder = self.create_order(side, price, quantity, OrderType::PostOnly);
+        let mut builder = self.create_order(side, price, quantity, order_type);
         if builder.actions.len() > previous_len {
             if let Some(Action::CreateOrder {
                 side,
                 price,
                 quantity,
-                ..
+                order_type,
             }) = builder.actions.pop()
             {
-                builder.actions.push(Action::CreateSharedOrder {
-                    side,
-                    price,
-                    quantity,
+                builder.actions.push(match order_type {
+                    OrderType::Spot => Action::CreateSharedSpotOrder {
+                        side,
+                        price,
+                        quantity,
+                    },
+                    _ => Action::CreateSharedOrder {
+                        side,
+                        price,
+                        quantity,
+                    },
                 });
             }
         }
@@ -858,13 +886,46 @@ impl O2Client {
         P: TryInto<OrderPriceInput, Error = O2Error>,
         Q: TryInto<OrderQuantityInput, Error = O2Error>,
     {
+        self.create_shared_order_with_type(
+            session,
+            market_name,
+            side,
+            price,
+            quantity,
+            OrderType::PostOnly,
+            settle_first,
+            collect_orders,
+        )
+        .await
+    }
+
+    /// Place a shared Spot or PostOnly order.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn create_shared_order_with_type<M, P, Q>(
+        &mut self,
+        session: &mut Session,
+        market_name: M,
+        side: Side,
+        price: P,
+        quantity: Q,
+        order_type: OrderType,
+        settle_first: bool,
+        collect_orders: bool,
+    ) -> Result<SessionActionsResponse, O2Error>
+    where
+        M: IntoMarketSymbol,
+        P: TryInto<OrderPriceInput, Error = O2Error>,
+        Q: TryInto<OrderQuantityInput, Error = O2Error>,
+    {
         let market_name = market_name.into_market_symbol()?;
         let market = self.get_market(&market_name).await?;
         let mut builder = MarketActionsBuilder::new(market.clone());
         if settle_first {
             builder = builder.settle_balance();
         }
-        let actions = builder.create_shared_order(side, price, quantity).build()?;
+        let actions = builder
+            .create_shared_order_with_type(side, price, quantity, order_type)
+            .build()?;
         self.batch_actions(session, market.symbol_pair(), actions, collect_orders)
             .await
     }
@@ -1720,6 +1781,25 @@ mod tests {
         assert_eq!(actions.len(), 2);
         assert!(matches!(actions[0], Action::SettleBalance));
         assert!(matches!(actions[1], Action::CreateSharedOrder { .. }));
+    }
+
+    #[test]
+    fn market_actions_builder_builds_shared_spot_order() {
+        let actions = MarketActionsBuilder::new(dummy_market("0xmarket_a"))
+            .create_shared_order_with_type(Side::Sell, "1.25", "10", OrderType::Spot)
+            .build()
+            .unwrap();
+        assert!(matches!(actions[0], Action::CreateSharedSpotOrder { .. }));
+    }
+
+    #[test]
+    fn market_actions_builder_rejects_unsupported_shared_type() {
+        let result = MarketActionsBuilder::new(dummy_market("0xmarket_a"))
+            .create_shared_order_with_type(Side::Buy, "1.25", "10", OrderType::Market)
+            .build();
+        assert!(
+            matches!(result, Err(crate::errors::O2Error::Other(message)) if message.contains("Spot or PostOnly"))
+        );
     }
 
     #[test]

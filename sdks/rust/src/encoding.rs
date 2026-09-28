@@ -71,6 +71,7 @@ pub enum OrderTypeEncoding {
     PostOnly,
     Market,
     BoundedMarket { max_price: u64, min_price: u64 },
+    TurboSharedSpot,
     TurboSharedPostOnly,
 }
 
@@ -109,6 +110,9 @@ pub fn encode_order_args(price: u64, quantity: u64, order_type: &OrderTypeEncodi
             result.extend_from_slice(&u64_be(5));
             result.extend_from_slice(&u64_be(*max_price));
             result.extend_from_slice(&u64_be(*min_price));
+        }
+        OrderTypeEncoding::TurboSharedSpot => {
+            result.extend_from_slice(&u64_be(6));
         }
         OrderTypeEncoding::TurboSharedPostOnly => {
             result.extend_from_slice(&u64_be(7));
@@ -349,7 +353,13 @@ pub fn action_to_call(
             side,
             price,
             quantity,
+        }
+        | Action::CreateSharedSpotOrder {
+            side,
+            price,
+            quantity,
         } => {
+            let shared_spot = matches!(action, Action::CreateSharedSpotOrder { .. });
             let base_asset = parse_hex_32(market.base.asset.as_str())?;
             let quote_asset = parse_hex_32(market.quote.asset.as_str())?;
             let scaled_price = market.scale_price(price)?;
@@ -357,23 +367,30 @@ pub fn action_to_call(
             let scaled_quantity = market.adjust_quantity(scaled_price, scaled_quantity)?;
             market.validate_order(scaled_price, scaled_quantity)?;
             let side_str = side.as_str();
+            let order_type = if shared_spot {
+                OrderTypeEncoding::TurboSharedSpot
+            } else {
+                OrderTypeEncoding::TurboSharedPostOnly
+            };
             let call = create_order_to_call(
                 &contract_id,
                 side_str,
                 scaled_price,
                 scaled_quantity,
-                &OrderTypeEncoding::TurboSharedPostOnly,
+                &order_type,
                 market.base.decimals,
                 &base_asset,
                 &quote_asset,
             );
-            let json = serde_json::json!({
-                "CreateSharedOrder": {
-                    "side": side_str,
-                    "price": scaled_price.to_string(),
-                    "quantity": scaled_quantity.to_string()
-                }
+            let mut payload = serde_json::json!({
+                "side": side_str,
+                "price": scaled_price.to_string(),
+                "quantity": scaled_quantity.to_string()
             });
+            if shared_spot {
+                payload["order_type"] = serde_json::json!("Spot");
+            }
+            let json = serde_json::json!({ "CreateSharedOrder": payload });
             Ok((call, json))
         }
         Action::ExecuteTurboOrders {
