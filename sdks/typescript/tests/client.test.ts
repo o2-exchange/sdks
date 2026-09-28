@@ -582,6 +582,40 @@ describe("O2Client bigint precision", () => {
     );
   });
 
+  it("submits a shared Spot order through the dedicated action", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submit = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.createSharedOrder(MARKET, "buy", "2", "0.1", {
+      settleFirst: false,
+      orderType: "Spot",
+    });
+    expect(submit).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET_ID,
+            actions: [
+              {
+                CreateSharedOrder: {
+                  side: "Buy",
+                  price: "2000000000",
+                  quantity: "100000000",
+                  order_type: "Spot",
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
   it("includes shared orders in type-safe batches", async () => {
     const client = new O2Client({ network: Network.TESTNET });
     client.setSession(makeSession());
@@ -606,6 +640,52 @@ describe("O2Client bigint precision", () => {
         ],
       }),
     );
+  });
+
+  it("includes shared Spot orders in type-safe batches", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submit = vi.spyOn(client.api, "submitActions").mockResolvedValue({
+      tx_id: `0x${"bb".repeat(32)}`,
+    } as never);
+
+    await client.batchActions([
+      { market: MARKET, actions: [createSharedOrderAction("sell", "2", "0.1", "Spot")] },
+    ]);
+    expect(submit).toHaveBeenCalledWith(
+      OWNER,
+      expect.objectContaining({
+        actions: [
+          {
+            market_id: MARKET_ID,
+            actions: [
+              {
+                CreateSharedOrder: {
+                  side: "Sell",
+                  price: "2000000000",
+                  quantity: "100000000",
+                  order_type: "Spot",
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+
+  it("rejects unsupported shared order types before submitting", async () => {
+    const client = new O2Client({ network: Network.TESTNET });
+    client.setSession(makeSession());
+    vi.spyOn(client.api, "getMarkets").mockResolvedValue(MARKETS_RESPONSE);
+    const submit = vi.spyOn(client.api, "submitActions");
+    await expect(
+      client.createSharedOrder(MARKET, "buy", "2", "0.1", {
+        orderType: "Market" as "Spot",
+      }),
+    ).rejects.toThrow("Spot or PostOnly");
+    expect(submit).not.toHaveBeenCalled();
   });
 
   it("createOrder accepts bigint quantity at atomic-unit precision", async () => {

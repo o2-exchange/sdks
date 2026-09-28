@@ -183,7 +183,7 @@ Identifier usage:
 | `setSession(session)` / `clearSession()` | Restore or clear the active client session |
 | `createSession(wallet, markets, options?)` | Create and store a trading session (`{ turbo: true }` scopes it for margin) |
 | `createOrder(market, side, price, qty, options?)` | Place an order (`side`: `"buy"`/`"sell"`) |
-| `createSharedOrder(market, side, price, qty, options?)` | Place a shared PostOnly order |
+| `createSharedOrder(market, side, price, qty, options?)` | Place a shared Spot or PostOnly order |
 | `cancelOrder(orderId, market, session?)` | Cancel a specific order |
 | `cancelAllOrders(market, session?)` | Cancel all open orders |
 | `settleBalance(market, session?)` | Settle filled order proceeds |
@@ -212,14 +212,20 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 
 ### Shared orders
 
-Eligible accounts can place PostOnly orders that may also be available in Turbo markets:
+Eligible accounts can place Spot or PostOnly orders that may also be available
+in Turbo markets. PostOnly is the default:
 
 ```ts
 await client.createSharedOrder("fETH/fUSDC", "buy", "2000", "0.1");
 // In a batch: createSharedOrderAction("buy", "2000", "0.1")
+
+await client.createSharedOrder("fETH/fUSDC", "buy", "2000", "0.1", { orderType: "Spot" });
+// In a batch: createSharedOrderAction("buy", "2000", "0.1", "Spot")
 ```
 
-Use this only when the market and account are enabled for sharing. Otherwise the request may be rejected or placed as an ordinary PostOnly order. Existing `createOrder` calls remain unchanged.
+Use this only when the market and account are enabled for sharing. Otherwise
+the request may be rejected or placed as an ordinary order of the selected
+type. Existing `createOrder` calls remain unchanged.
 
 To execute against available Turbo orders using an existing resting order,
 provide its order ID and execution limits:

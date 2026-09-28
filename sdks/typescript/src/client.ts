@@ -162,6 +162,13 @@ export interface CreateOrderOptions {
   session?: SessionState;
 }
 
+function sharedOrderTypeField(orderType?: "Spot" | "PostOnly"): { order_type?: "Spot" } {
+  if (orderType !== undefined && orderType !== "Spot" && orderType !== "PostOnly") {
+    throw new O2Error("Shared order type must be Spot or PostOnly");
+  }
+  return orderType === "Spot" ? { order_type: "Spot" } : {};
+}
+
 /**
  * High-level client for the O2 Exchange.
  *
@@ -586,14 +593,15 @@ export class O2Client {
     return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
   }
 
-  /** Place a shared PostOnly order. */
+  /** Place a shared Spot or PostOnly order (default: PostOnly). */
   async createSharedOrder(
     market: MarketRef,
     side: "buy" | "sell",
     price: Numeric,
     quantity: Numeric,
-    options?: Omit<CreateOrderOptions, "orderType">,
+    options?: Omit<CreateOrderOptions, "orderType"> & { orderType?: "Spot" | "PostOnly" },
   ): Promise<SessionActionsResponse> {
+    const typeField = sharedOrderTypeField(options?.orderType);
     const session = options?.session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
     const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
@@ -613,6 +621,7 @@ export class O2Client {
         side: capitalizeSide(side),
         price: scaledPrice.toString(),
         quantity: scaledQuantity.toString(),
+        ...typeField,
       },
     });
     return this.submitBatch(
@@ -1664,6 +1673,7 @@ export class O2Client {
         };
       }
       case "createSharedOrder": {
+        const typeField = sharedOrderTypeField(action.orderType);
         const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
           market,
           action.price,
@@ -1676,6 +1686,7 @@ export class O2Client {
             side: capitalizeSide(action.side),
             price: scaledPrice.toString(),
             quantity: scaledQuantity.toString(),
+            ...typeField,
           },
         };
       }

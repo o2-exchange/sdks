@@ -28,7 +28,13 @@ export type Action =
       quantity: Numeric;
       orderType?: OrderType;
     }
-  | { type: "createSharedOrder"; side: Side; price: Numeric; quantity: Numeric }
+  | {
+      type: "createSharedOrder";
+      side: Side;
+      price: Numeric;
+      quantity: Numeric;
+      orderType?: "Spot" | "PostOnly";
+    }
   | {
       type: "executeTurboOrders";
       sourceOrderId: OrderId;
@@ -66,9 +72,14 @@ export function createOrderAction(
   return { type: "createOrder", side, price, quantity, orderType };
 }
 
-/** Create a shared PostOnly order action. */
-export function createSharedOrderAction(side: Side, price: Numeric, quantity: Numeric): Action {
-  return { type: "createSharedOrder", side, price, quantity };
+/** Create a shared Spot or PostOnly order action (default: PostOnly). */
+export function createSharedOrderAction(
+  side: Side,
+  price: Numeric,
+  quantity: Numeric,
+  orderType?: "Spot" | "PostOnly",
+): Action {
+  return { type: "createSharedOrder", side, price, quantity, orderType };
 }
 
 /** Execute a resting order against available Turbo orders. */

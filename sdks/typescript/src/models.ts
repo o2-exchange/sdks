@@ -915,12 +915,14 @@ export interface CreateOrderPayload {
   };
 }
 
-/** Payload for a shared PostOnly order. */
+/** Payload for a shared Spot or PostOnly order. */
 export interface CreateSharedOrderPayload {
   CreateSharedOrder: {
     side: string;
     price: string;
     quantity: string;
+    /** Omitted for the default PostOnly type. */
+    order_type?: "Spot";
   };
 }
 
