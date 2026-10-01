@@ -8,6 +8,7 @@
  * - **personalSign** — Fuel prefix + SHA-256 (for session creation)
  * - **rawSign** — Plain SHA-256 (for session actions)
  * - **evmPersonalSign** — Ethereum prefix + keccak-256 (for EVM owner sessions)
+ * - **evmSignDigest** — Raw digest to submit-ready EVM r || s || v hex
  *
  * @remarks
  * Uses `@noble/secp256k1` v3 with `prehash:false` since we pre-hash
@@ -206,6 +207,40 @@ export function fuelCompactSign(privateKey: Uint8Array, digest: Uint8Array): Uin
   result.set(r, 0);
   result.set(s, 32);
   return result;
+}
+
+/**
+ * Sign a raw 32-byte digest and return a submit-ready EVM signature.
+ *
+ * The digest is signed directly without personal-sign framing or additional
+ * hashing. The result is a `0x`-prefixed 65-byte `r || s || v` signature with
+ * `v` encoded as 27 or 28.
+ *
+ * @param privateKey - The 32-byte secp256k1 private key.
+ * @param digest - The raw 32-byte digest as bytes or a hex string.
+ * @returns A `0x`-prefixed EVM signature suitable for Fast Bridge submission.
+ */
+export function evmSignDigest(privateKey: Uint8Array, digest: Uint8Array | string): string {
+  let digestBytes: Uint8Array;
+  if (typeof digest === "string") {
+    const clean = digest.startsWith("0x") ? digest.slice(2) : digest;
+    if (!/^[0-9a-fA-F]{64}$/.test(clean)) {
+      throw new Error("digest must be a 32-byte hex string");
+    }
+    digestBytes = hexToBytes(clean);
+  } else {
+    if (digest.length !== 32) {
+      throw new Error(`digest must be 32 bytes, got ${digest.length}`);
+    }
+    digestBytes = digest;
+  }
+
+  const compact = fuelCompactSign(privateKey, digestBytes);
+  const signature = new Uint8Array(65);
+  signature.set(compact);
+  signature[64] = 27 + (compact[32] >>> 7);
+  signature[32] &= 0x7f;
+  return bytesToHex(signature);
 }
 
 /**

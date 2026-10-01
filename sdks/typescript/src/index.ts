@@ -57,6 +57,7 @@ export {
   type EvmWallet,
   ExternalEvmSigner,
   ExternalSigner,
+  evmSignDigest,
   type SignDigestFn,
   type Signer,
   type Wallet,

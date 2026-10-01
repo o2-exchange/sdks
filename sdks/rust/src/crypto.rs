@@ -7,6 +7,7 @@ use secp256k1::ecdsa::RecoverableSignature;
 /// - personalSign (Fuel prefix + SHA-256)
 /// - rawSign (plain SHA-256)
 /// - evm_personal_sign (Ethereum prefix + keccak256)
+/// - evm_sign_digest (raw digest to submit-ready EVM r || s || v hex)
 /// - fuel_compact_sign with low-s normalization and recovery ID in MSB of byte 32
 use secp256k1::{Message, PublicKey, Secp256k1, SecretKey};
 use sha2::{Digest as Sha256Digest, Sha256};
@@ -182,6 +183,21 @@ pub fn fuel_compact_sign(private_key: &[u8; 32], digest: &[u8; 32]) -> Result<[u
     result[0..32].copy_from_slice(&r);
     result[32..64].copy_from_slice(&s);
     Ok(result)
+}
+
+/// Sign a raw 32-byte digest and return a submit-ready EVM signature.
+///
+/// The digest is parsed from hex and signed directly without personal-sign
+/// framing or additional hashing. The result is a `0x`-prefixed 65-byte
+/// `r || s || v` signature with `v` encoded as 27 or 28.
+pub fn evm_sign_digest(private_key: &[u8; 32], digest: &str) -> Result<String, O2Error> {
+    let digest = parse_hex_32(digest)?;
+    let compact = fuel_compact_sign(private_key, &digest)?;
+    let recovery_id = compact[32] >> 7;
+    let mut signature = compact.to_vec();
+    signature[32] &= 0x7f;
+    signature.push(27 + recovery_id);
+    Ok(to_hex_string(&signature))
 }
 
 /// Sign using Fuel's personalSign format (for session creation).

@@ -17,6 +17,7 @@ use o2_sdk::bridge::{
     WithdrawPrepareRequest, WithdrawSubmitResponse,
 };
 use o2_sdk::crypto::{fuel_compact_sign, parse_hex_32, to_hex_string};
+use o2_sdk::evm_sign_digest;
 use std::{
     env,
     error::Error,
@@ -69,17 +70,13 @@ pub async fn deposit(
     check_expiry(&claims)?;
 
     // Sign the locally derived raw digest, not personal_sign/raw_sign (rehashes).
-    // Expand compact secp256k1 recovery bit into EVM r || s || v (65 bytes).
-    let mut signature =
-        fuel_compact_sign(private_key, &parse_hex_32(&tx.signing_digest)?)?.to_vec();
-    signature.push(27 + (signature[32] >> 7));
-    signature[32] &= 0x7f;
+    let signature = evm_sign_digest(private_key, &tx.signing_digest)?;
     // POST /v1/deposit/submit: exact unsigned bytes, proof, separate signature.
     let submitted = client
         .submit_deposit(&SubmitRequest {
             unsigned_transaction: prepared.unsigned_transaction,
             preparation_proof: prepared.preparation_proof,
-            signature: to_hex_string(&signature),
+            signature,
         })
         .await?;
     println!("Submitted (not confirmed): {submitted:#?}");

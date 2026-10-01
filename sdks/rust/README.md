@@ -136,10 +136,13 @@ Default network configs:
 Pass the bridge-specific URL explicitly:
 
 ```rust
-use o2_sdk::{FastBridgeClient, FAST_BRIDGE_TESTNET_URL};
+use o2_sdk::{evm_sign_digest, FastBridgeClient, FAST_BRIDGE_TESTNET_URL};
 
 let bridge = FastBridgeClient::new(FAST_BRIDGE_TESTNET_URL)?;
 let info = bridge.get_info().await?;
+
+// After inspecting a prepared EVM deposit transaction:
+let signature = evm_sign_digest(&evm_wallet.private_key, &inspection.signing_digest)?;
 ```
 
 For a custom deployment, pass its proxy root URL without `/v1` instead.

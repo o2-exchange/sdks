@@ -185,10 +185,13 @@ Default network configs:
 Pass the bridge-specific URL explicitly:
 
 ```python
-from o2_sdk import FAST_BRIDGE_TESTNET_URL, FastBridgeClient
+from o2_sdk import FAST_BRIDGE_TESTNET_URL, FastBridgeClient, evm_sign_digest
 
 async with FastBridgeClient(FAST_BRIDGE_TESTNET_URL) as bridge:
     info = await bridge.get_info()
+
+# After inspecting a prepared EVM deposit transaction:
+signature = evm_sign_digest(evm_wallet.private_key, inspection.signing_digest)
 ```
 
 For a custom deployment, pass its proxy root URL without `/v1` instead.

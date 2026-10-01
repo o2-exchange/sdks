@@ -15,6 +15,7 @@ import { pathToFileURL } from "node:url";
 import {
   BridgeApiError,
   type bridge,
+  evmSignDigest,
   FastBridgeClient,
   parseEvmUnsignedTransaction,
   parseFuelUnsignedTransaction,
@@ -62,12 +63,7 @@ export async function deposit(
   checkExpiry(claims);
 
   // Sign the locally computed raw digest, never personalSign/rawSign (rehashes).
-  // Expand the existing compact secp256k1 signature to EVM r || s || v (65 bytes).
-  const compact = fuelCompactSign(privateKey, hexToBytes(tx.signingDigest));
-  const signature = new Uint8Array(65);
-  signature.set(compact);
-  signature[64] = 27 + (compact[32] >>> 7);
-  signature[32] &= 0x7f;
+  const signature = evmSignDigest(privateKey, tx.signingDigest);
   // With ethers already installed, an alternative is Transaction.from(unsigned),
   // inspect, wallet.signTransaction(tx), then Transaction.from(signed).signature.
   // serialized. Do not submit a signed envelope or sign an API-supplied digest.
@@ -76,7 +72,7 @@ export async function deposit(
   const submitted = await client.submitDeposit({
     unsignedTransaction: prepared.unsignedTransaction,
     preparationProof: prepared.preparationProof,
-    signature: bytesToHex(signature),
+    signature,
   });
   console.log("Submitted (not confirmed):", submitted);
   // GET /v1/deposit/status: source inclusion/revert; fuel: unavailable is NOT mint.

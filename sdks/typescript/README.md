@@ -111,10 +111,13 @@ Default network configs:
 Pass the bridge-specific URL explicitly:
 
 ```ts
-import { FAST_BRIDGE_TESTNET_URL, FastBridgeClient } from "@o2exchange/sdk";
+import { evmSignDigest, FAST_BRIDGE_TESTNET_URL, FastBridgeClient } from "@o2exchange/sdk";
 
 const bridge = new FastBridgeClient({ baseUrl: FAST_BRIDGE_TESTNET_URL });
 const info = await bridge.getInfo();
+
+// After inspecting a prepared EVM deposit transaction:
+const signature = evmSignDigest(evmWallet.privateKey, inspection.signingDigest);
 ```
 
 For a custom deployment, pass its proxy root URL without `/v1` instead.

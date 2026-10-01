@@ -5,6 +5,7 @@ Implements:
 - personalSign (Fuel prefix: b"\\x19Fuel Signed Message:\\n" + len + message)
 - rawSign (sha256(message) then fuel_compact_sign)
 - evm_personal_sign (Ethereum prefix + keccak256)
+- evm_sign_digest (raw digest to submit-ready EVM r || s || v hex)
 - fuel_compact_sign with low-s normalization and recovery ID in MSB of byte 32
 - External signer support (hardware wallets, KMS, HSMs)
 """
@@ -260,6 +261,36 @@ def fuel_compact_sign(private_key_bytes: bytes, digest: bytes) -> bytes:
     s[0] = (recovery_id << 7) | (s[0] & 0x7F)
 
     return r + bytes(s)
+
+
+def evm_sign_digest(private_key_bytes: bytes, digest: bytes | str) -> str:
+    """Sign a raw 32-byte digest and return a submit-ready EVM signature.
+
+    The digest is signed directly without personal-sign framing or additional
+    hashing. The result is a ``0x``-prefixed 65-byte ``r || s || v`` signature
+    with ``v`` encoded as 27 or 28.
+
+    Args:
+        private_key_bytes: The 32-byte secp256k1 private key.
+        digest: The raw 32-byte digest as bytes or a hex string.
+
+    Returns:
+        A ``0x``-prefixed EVM signature suitable for Fast Bridge submission.
+    """
+    if isinstance(digest, str):
+        try:
+            digest_bytes = bytes.fromhex(digest.removeprefix("0x"))
+        except ValueError as exc:
+            raise ValueError("digest must be a 32-byte hex string") from exc
+    else:
+        digest_bytes = digest
+    if len(digest_bytes) != 32:
+        raise ValueError(f"digest must be 32 bytes, got {len(digest_bytes)}")
+
+    compact = bytearray(fuel_compact_sign(private_key_bytes, digest_bytes))
+    recovery_id = compact[32] >> 7
+    compact[32] &= 0x7F
+    return "0x" + (compact + bytes([27 + recovery_id])).hex()
 
 
 def fuel_personal_sign_digest(message: bytes) -> bytes:

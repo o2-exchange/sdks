@@ -10,6 +10,7 @@ from o2_sdk.crypto import (
     Signer,
     evm_personal_sign,
     evm_personal_sign_digest,
+    evm_sign_digest,
     fuel_compact_sign,
     fuel_personal_sign_digest,
     generate_evm_wallet,
@@ -101,6 +102,30 @@ class TestFuelCompactSign:
             s_bytes[0] = s_bytes[0] & 0x7F
             s = int.from_bytes(s_bytes, "big")
             assert s <= half_order, f"s value not normalized at iteration {i}"
+
+
+class TestEvmSignDigest:
+    def test_returns_submit_ready_signature(self):
+        digest = hashlib.sha256(b"evm transaction").digest()
+        signature = evm_sign_digest(TEST_PRIVATE_KEY, "0x" + digest.hex())
+
+        assert signature.startswith("0x")
+        assert len(signature) == 132
+        assert signature[-2:] in ("1b", "1c")
+
+    def test_accepts_digest_bytes_without_rehashing(self):
+        digest = hashlib.sha256(b"raw digest").digest()
+        assert evm_sign_digest(TEST_PRIVATE_KEY, digest) == evm_sign_digest(
+            TEST_PRIVATE_KEY, digest.hex()
+        )
+
+    def test_rejects_malformed_digest(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="digest must be 32 bytes, got 2"):
+            evm_sign_digest(TEST_PRIVATE_KEY, "0x1234")
+        with pytest.raises(ValueError, match="digest must be a 32-byte hex string"):
+            evm_sign_digest(TEST_PRIVATE_KEY, "0xzz")
 
 
 class TestFuelPersonalSignDigest:
