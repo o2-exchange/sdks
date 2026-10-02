@@ -75,6 +75,7 @@ These helpers are exported from the package root (`@o2exchange/sdk`).
 | `resolveMarket(markets, pairOrId)` | market list/response, string | `Market` | Resolve symbol pair or market ID |
 | `resolveMarketRef(markets, market)` | market list/response, `MarketRef` | `Market` | Resolve a `MarketRef` |
 | `resolveAsset(markets, symbolOrId)` | market list/response, string | `{ assetId, decimals }` | Resolve asset symbol or ID |
+| `evmSignDigest(privateKey, digest)` | key, 32-byte digest/hex | `string` | Sign a raw digest as submit-ready EVM `r || s || v` hex |
 
 ### Low-Level Modules
 
@@ -96,6 +97,7 @@ import { ... } from "@o2exchange/sdk/internals";
 | `personalSign(privKey, message)` | key, message | `Uint8Array(64)` | Fuel personalSign (session creation) |
 | `rawSign(privKey, message)` | key, message | `Uint8Array(64)` | Raw SHA-256 sign (session actions) |
 | `evmPersonalSign(privKey, message)` | key, message | `Uint8Array(64)` | EVM personalSign (EVM owner sessions) |
+| `evmSignDigest(privKey, digest)` | key, digest bytes/hex | `string` | Raw digest to submit-ready EVM `r || s || v` hex |
 | `fuelPersonalSignDigest(message)` | message bytes | `Uint8Array(32)` | Fuel personalSign digest (external signers) |
 | `evmPersonalSignDigest(message)` | message bytes | `Uint8Array(32)` | EVM personal_sign digest (external signers) |
 | `toFuelCompactSignature(r, s, v)` | 32B r, 32B s, 0\|1 | `Uint8Array(64)` | Convert `(r,s,v)` to Fuel compact format |
@@ -325,10 +327,11 @@ is expected, not guaranteed. `networkFee.maxFee` is in Fuel base-asset units.
 amounts and Variable recipients/assets are unsigned execution results.
 
 Before signing, compare chain/contracts, recipient/type, asset, amount, fee
-limits, expiry and all inputs/outputs against trusted expectations. Sign the
-locally computed raw digest using `fuelCompactSign`, not `personalSign` or
-`rawSign` (both rehash). Fuel uses compact 64-byte signatures; EVM needs 65-byte
-`r || s || v`. See [the complete example](examples/fast-bridge.ts).
+limits, expiry and all inputs/outputs against trusted expectations. Sign an EVM
+deposit's locally computed raw digest with root-exported `evmSignDigest`, which
+returns submit-ready 65-byte `r || s || v` hex. Do not use `personalSign` or
+`rawSign` because both rehash. Fuel uses compact 64-byte signatures via
+`fuelCompactSign`. See [the complete example](examples/fast-bridge.ts).
 
 `BridgeApiError extends O2Error` exposes `status`, string `bridgeCode`, `message`,
 and `details`. Transport errors retain native fetch/timeout error types; parser

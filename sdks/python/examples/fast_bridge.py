@@ -21,6 +21,7 @@ from typing import Any
 from o2_sdk import (
     BridgeApiError,
     FastBridgeClient,
+    evm_sign_digest,
     fuel_compact_sign,
     parse_evm_unsigned_transaction,
     parse_fuel_unsigned_transaction,
@@ -83,16 +84,13 @@ async def deposit(
     check_expiry(claims)
 
     # Sign the locally derived raw digest; personal_sign/raw_sign would rehash it.
-    # Expand compact secp256k1 recovery bit into EVM r || s || v (65 bytes).
-    signature = bytearray(fuel_compact_sign(private_key, bytes.fromhex(tx.signing_digest[2:])))
-    signature.append(27 + (signature[32] >> 7))
-    signature[32] &= 0x7F
+    signature = evm_sign_digest(private_key, tx.signing_digest)
     # POST /v1/deposit/submit: exact unsigned bytes, proof, and separate signature.
     submitted = await client.submit_deposit(
         SubmitRequest(
             unsigned_transaction=prepared.unsigned_transaction,
             preparation_proof=prepared.preparation_proof,
-            signature="0x" + signature.hex(),
+            signature=signature,
         )
     )
     print("Submitted (not confirmed):", submitted)

@@ -12,6 +12,7 @@
 export {
   evmPersonalSign,
   evmPersonalSignDigest,
+  evmSignDigest,
   evmWalletFromPrivateKey,
   fuelCompactSign,
   fuelPersonalSignDigest,

@@ -1,5 +1,6 @@
 use o2_sdk::bridge::*;
 use o2_sdk::crypto::{fuel_compact_sign, parse_hex_32};
+use o2_sdk::evm_sign_digest;
 use serde_json::{json, Value};
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -27,13 +28,10 @@ fn evm_oracle() {
                 .unwrap();
         assert_expected(&serde_json::to_value(&parsed).unwrap(), &vector["expected"]);
         assert_eq!(serde_json::to_value(&parsed).unwrap()["type"], 2);
-        let mut compact =
-            fuel_compact_sign(&[0x11; 32], &parse_hex_32(&parsed.signing_digest).unwrap()).unwrap();
-        let v = 27 + (compact[32] >> 7);
-        compact[32] &= 127;
-        let mut signature = compact.to_vec();
-        signature.push(v);
-        assert_eq!(format!("0x{}", hex::encode(signature)), vector["signature"]);
+        assert_eq!(
+            evm_sign_digest(&[0x11; 32], &parsed.signing_digest).unwrap(),
+            vector["signature"]
+        );
     }
 }
 #[test]

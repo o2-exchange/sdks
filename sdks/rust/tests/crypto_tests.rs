@@ -51,6 +51,23 @@ fn test_fuel_compact_sign_64_bytes() {
 }
 
 #[test]
+fn test_evm_sign_digest_submit_ready_signature() {
+    let private_key = [0x42u8; 32];
+    let digest: [u8; 32] = Sha256::digest(b"evm transaction").into();
+    let signature = evm_sign_digest(&private_key, &to_hex_string(&digest)).unwrap();
+
+    assert!(signature.starts_with("0x"));
+    assert_eq!(signature.len(), 132);
+    assert!(signature.ends_with("1b") || signature.ends_with("1c"));
+}
+
+#[test]
+fn test_evm_sign_digest_rejects_malformed_digest() {
+    let error = evm_sign_digest(&[0x42; 32], "0x1234").unwrap_err();
+    assert!(error.to_string().contains("Expected 32 bytes, got 2"));
+}
+
+#[test]
 fn test_recovery_id_in_msb() {
     // Sign multiple messages and verify the MSB of byte 32 is correctly set
     let wallet = generate_keypair().unwrap();

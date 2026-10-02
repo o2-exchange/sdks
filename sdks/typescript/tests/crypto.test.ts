@@ -6,6 +6,7 @@ import {
   ExternalSigner,
   evmPersonalSign,
   evmPersonalSignDigest,
+  evmSignDigest,
   evmWalletFromPrivateKey,
   fuelCompactSign,
   fuelPersonalSignDigest,
@@ -87,6 +88,32 @@ describe("Crypto Module", () => {
       const sig1 = fuelCompactSign(testKeyBytes, digest);
       const sig2 = fuelCompactSign(testKeyBytes, digest);
       expect(bytesToHex(sig1)).toBe(bytesToHex(sig2));
+    });
+  });
+
+  describe("EVM digest signing", () => {
+    it("returns a submit-ready r || s || v signature", () => {
+      const digest = sha256(new TextEncoder().encode("evm transaction"));
+      const signature = evmSignDigest(testKeyBytes, bytesToHex(digest));
+
+      expect(signature).toMatch(/^0x[0-9a-f]{130}$/);
+      expect(["1b", "1c"]).toContain(signature.slice(-2));
+    });
+
+    it("accepts digest bytes without rehashing", () => {
+      const digest = sha256(new TextEncoder().encode("raw digest"));
+      expect(evmSignDigest(testKeyBytes, digest)).toBe(
+        evmSignDigest(testKeyBytes, bytesToHex(digest)),
+      );
+    });
+
+    it("rejects malformed digests", () => {
+      expect(() => evmSignDigest(testKeyBytes, "0x1234")).toThrow(
+        "digest must be a 32-byte hex string",
+      );
+      expect(() => evmSignDigest(testKeyBytes, new Uint8Array(31))).toThrow(
+        "digest must be 32 bytes, got 31",
+      );
     });
   });
 

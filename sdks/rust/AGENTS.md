@@ -95,6 +95,7 @@ Note: `unsubscribe_orders` is currently connection-global in the backend API (no
 | `personal_sign(key, msg)` | `&[u8;32], &[u8]` | `Result<[u8;64]>` | Fuel prefix + SHA-256 |
 | `raw_sign(key, msg)` | `&[u8;32], &[u8]` | `Result<[u8;64]>` | Plain SHA-256 signing |
 | `evm_personal_sign(key, msg)` | `&[u8;32], &[u8]` | `Result<[u8;64]>` | Ethereum prefix + keccak256 |
+| `evm_sign_digest(key, digest)` | `&[u8;32], &str` | `Result<String>` | Raw digest to submit-ready EVM `r || s || v` hex |
 | `to_hex_string(bytes)` | `&[u8]` | `String` | "0x"-prefixed hex |
 | `parse_hex_32(s)` | `&str` | `Result<[u8;32]>` | Parse hex to 32 bytes |
 
@@ -294,10 +295,11 @@ independent of proof expiry. Change/Variable output amounts and Variable
 recipients/assets are unsigned execution results.
 
 Before signing, compare chain/contracts, recipient/type, asset, amount, fee
-limits, expiry and all inputs/outputs against trusted expectations. Sign the
-local raw digest with `crypto::fuel_compact_sign`, not `personal_sign`/`raw_sign`
-(both rehash). Fuel needs compact 64-byte signatures; EVM needs 65-byte
-`r || s || v`. See [the complete example](examples/fast_bridge.rs).
+limits, expiry and all inputs/outputs against trusted expectations. Sign an EVM
+deposit's local raw digest with root-exported `evm_sign_digest`, which returns
+submit-ready 65-byte `r || s || v` hex. Do not use `personal_sign`/`raw_sign`
+because both rehash. Fuel uses compact 64-byte signatures via
+`crypto::fuel_compact_sign`. See [the complete example](examples/fast_bridge.rs).
 
 `BridgeError::Api { status, code, message, details }` preserves HTTP errors with
 string proxy codes. `Transport` wraps reqwest errors, `Json` wraps JSON/model

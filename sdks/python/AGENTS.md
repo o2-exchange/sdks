@@ -130,6 +130,7 @@ High-level batch action models:
 | `personal_sign(pk_bytes, msg)` | 32B key, message | `bytes(64)` | Fuel personalSign (session creation) |
 | `raw_sign(pk_bytes, msg)` | 32B key, message | `bytes(64)` | Raw SHA-256 sign (session actions) |
 | `evm_personal_sign(pk_bytes, msg)` | 32B key, message | `bytes(64)` | Ethereum personal_sign + keccak256 |
+| `evm_sign_digest(pk_bytes, digest)` | 32B key, digest bytes/hex | `str` | Raw digest to submit-ready EVM `r || s || v` hex |
 
 #### Encoding (`o2_sdk.encoding`)
 
@@ -404,10 +405,11 @@ is expected, not guaranteed. `network_fee.max_fee` uses Fuel base-asset units.
 amounts and Variable recipients/assets are unsigned execution results.
 
 Before signing, compare chain/contracts, recipient/type, asset, amount, fee
-limits, expiry and every input/output against trusted expectations. Sign the
-local raw digest with `fuel_compact_sign` or a wallet `sign_digest`, not
-`personal_sign`/`raw_sign` (both rehash). Fuel needs compact 64-byte signatures;
-EVM needs 65-byte `r || s || v`. See [the complete example](examples/fast_bridge.py).
+limits, expiry and every input/output against trusted expectations. Sign an EVM
+deposit's local raw digest with root-exported `evm_sign_digest`, which returns
+submit-ready 65-byte `r || s || v` hex. Do not use `personal_sign`/`raw_sign`
+because both rehash. Fuel uses compact 64-byte signatures via
+`fuel_compact_sign` or a wallet `sign_digest`. See [the complete example](examples/fast_bridge.py).
 
 `BridgeApiError extends O2Error` exposes `status`, string `bridge_code`, the
 message via `str(error)`, and `details`. Native aiohttp/asyncio transport errors

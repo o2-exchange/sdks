@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { bytesToHex, fuelCompactSign, hexToBytes } from "../src/crypto.js";
 import {
+  evmSignDigest,
   FAST_BRIDGE_MAINNET_URL,
   FAST_BRIDGE_TESTNET_URL,
   FastBridgeClient,
@@ -49,15 +50,9 @@ describe("Fast Bridge offline inspection", () => {
     it(`parses ${vector.name} and derives the ethers signing digest`, () => {
       const result = parseEvmUnsignedTransaction(vector.unsignedTransaction);
       expect(normalize(result)).toMatchObject(vector.expected);
-      const compact = fuelCompactSign(
-        hexToBytes(`0x${"11".repeat(32)}`),
-        hexToBytes(result.signingDigest),
+      expect(evmSignDigest(hexToBytes(`0x${"11".repeat(32)}`), result.signingDigest)).toBe(
+        vector.signature,
       );
-      const signature65 = new Uint8Array(65);
-      signature65.set(compact);
-      signature65[64] = 27 + (compact[32] >>> 7);
-      signature65[32] &= 0x7f;
-      expect(bytesToHex(signature65)).toBe(vector.signature);
       if (vector.name === "depositWithPermit")
         expect(result.permit).toMatchObject({ deadline: 2000000000n, v: 27 });
     });

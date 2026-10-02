@@ -15,6 +15,7 @@ from o2_sdk import (
     FAST_BRIDGE_TESTNET_URL,
     BridgeApiError,
     FastBridgeClient,
+    evm_sign_digest,
     parse_evm_unsigned_transaction,
     parse_fuel_unsigned_transaction,
     parse_preparation_proof,
@@ -67,12 +68,7 @@ def assert_expected(result, expected):
 def test_evm_oracle(vector):
     result = parse_evm_unsigned_transaction(vector["unsignedTransaction"])
     assert_expected(normalize(asdict(result)), vector["expected"])
-    compact = bytearray(
-        fuel_compact_sign(bytes.fromhex("11" * 32), bytes.fromhex(result.signing_digest[2:]))
-    )
-    v = 27 + (compact[32] >> 7)
-    compact[32] &= 127
-    assert "0x" + (compact + bytes([v])).hex() == vector["signature"]
+    assert evm_sign_digest(bytes.fromhex("11" * 32), result.signing_digest) == vector["signature"]
 
 
 @pytest.mark.parametrize("vector", VECTORS["fuel"])

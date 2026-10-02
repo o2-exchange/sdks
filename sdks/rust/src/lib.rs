@@ -188,7 +188,7 @@ pub mod websocket;
 pub use bridge::{BridgeError, FastBridgeClient, FAST_BRIDGE_MAINNET_URL, FAST_BRIDGE_TESTNET_URL};
 pub use client::{IntoWithdrawDestination, MarketActionsBuilder, MetadataPolicy, O2Client};
 pub use config::{Network, NetworkConfig};
-pub use crypto::{EvmWallet, SignableWallet, Wallet};
+pub use crypto::{evm_sign_digest, EvmWallet, SignableWallet, Wallet};
 pub use decimal::UnsignedDecimal;
 pub use errors::O2Error;
 pub use models::*;
