@@ -13,6 +13,7 @@ import type { O2Api } from "../api.js";
 import type { ContractCall } from "../encoding.js";
 import type {
   Market,
+  MarketSelection,
   MarketsResponse,
   Numeric,
   SessionActionsResponse,
@@ -22,7 +23,7 @@ import type {
 export type { SessionState };
 
 /** One market's group of actions, as `/v1/session/actions` takes them. */
-export interface PreparedMarketActions {
+export interface PreparedMarketActions extends MarketSelection {
   market_id: string;
   actions: Record<string, unknown>[];
 }
@@ -78,7 +79,7 @@ export interface TurboHost {
   /** The active session, or a thrown {@link NoActiveSession}. */
   ensureSession(): SessionState;
   /** The markets payload, cached by the host. */
-  fetchMarkets(): Promise<MarketsResponse>;
+  fetchMarkets(selection?: MarketSelection): Promise<MarketsResponse>;
   /** Resolve a `"BASE/QUOTE"` pair to a market. */
   resolveMarket(data: MarketsResponse, symbolPair: string): Market;
   /** Scale dual-mode price/quantity values against a market. */

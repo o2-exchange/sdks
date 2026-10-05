@@ -23,7 +23,8 @@
 
 import type { ContractCall } from "../encoding.js";
 import { adjustQuantityForPrices, validateFractionalPrice } from "../encoding.js";
-import { O2Error } from "../errors.js";
+import { O2Error, TurboDiscoveryUnavailable } from "../errors.js";
+import { selectionParams } from "../market-selection.js";
 import type {
   Identity,
   Market,
@@ -84,6 +85,7 @@ import type {
   TurboReferralStatus,
 } from "./referral.js";
 import { buildSignedReferralEnvelope } from "./referral.js";
+import { isPerpetualTerm } from "./terms.js";
 import type {
   Hex,
   MarginStateWire,
@@ -91,6 +93,7 @@ import type {
   NextMarginAccount,
   OrderBookCleanup,
   ProlongPeriod,
+  TurboVolumeWire,
 } from "./wire.js";
 import {
   marginSession,
@@ -222,7 +225,9 @@ export type TurboSize =
 export interface TurboOpenResult {
   marginAccountId: Hex;
   index: number;
-  /** The tx that registered the account; null when an existing one was adopted. */
+  /**
+   * The tx that registered the account; null when an existing one was adopted.
+   */
   registerTxId: string | null;
   /** The tx that started the session; null when it was already live. */
   startTxId: string | null;
@@ -556,6 +561,9 @@ export class TurboClient {
   sellablePeriods(tier: MarginTierWire): ProlongPeriod[] {
     const term = tier.turbo?.term_seconds;
     if (term === undefined) return [...PROLONG_PERIODS];
+    // The opening transaction requires a period even for perpetual sessions;
+    // Week does not add an expiry.
+    if (isPerpetualTerm(term)) return ["Week"];
     const period = periodForSeconds(term);
     // A term that matches no period is not something to guess about.
     return period ? [period] : [];
@@ -593,9 +601,85 @@ export class TurboClient {
     );
   }
 
+  /** Discovery falls back only when the deployment has no Turbo catalog. */
+  private async knownMarkets(): Promise<Market[]> {
+    const publicCatalog = await this.host.fetchMarkets();
+    try {
+      return [...publicCatalog.markets, ...(await this.host.fetchMarkets({ turbo: true })).markets];
+    } catch (error) {
+      if (!(error instanceof TurboDiscoveryUnavailable)) throw error;
+      return publicCatalog.markets;
+    }
+  }
+
+  /**
+   * Markets granted by the pinned tier, including public order books supported
+   * by older deployments.
+   */
+  private async tradingMarkets(wire: MarginStateWire): Promise<Market[]> {
+    const allowed = wire.tier?.books ?? [];
+    return [
+      ...new Map(
+        (await this.knownMarkets())
+          .filter((market) => allowed.some((book) => sameHex(book, market.contract_id)))
+          .map((market) => [normaliseHex(market.contract_id), market]),
+      ).values(),
+    ];
+  }
+
+  private async tradingMarket(market: string | Market, wire: MarginStateWire): Promise<Market> {
+    const candidates = await this.tradingMarkets(wire);
+    candidates.sort((a, b) => Number(!!b.turbo) - Number(!!a.turbo));
+    const selected = candidates.find((candidate) =>
+      typeof market === "string"
+        ? sameHex(candidate.market_id, market) ||
+          candidate.pair === market ||
+          `${candidate.base.symbol}/${candidate.quote.symbol}` === market
+        : sameHex(candidate.contract_id, market.contract_id),
+    );
+    if (!selected)
+      throw new O2Error(
+        typeof market === "string"
+          ? `No allowed Turbo trading market for ${market}`
+          : "This order book is not allowed by the Turbo session's tier",
+      );
+    if (selected.turbo && (selected.connected === false || selected.paused === true)) {
+      throw new O2Error("The Turbo order book is disconnected or paused");
+    }
+    return selected;
+  }
+
+  /**
+   * Resolve cleanup contracts once, including books outside the current tier.
+   */
+  private async cleanupBooks(id: Hex): Promise<Market[]> {
+    const cleanups = await this.host.api.getMarginCloseCleanups(id);
+    const markets = await this.knownMarkets();
+    return cleanups.map((cleanup) => {
+      const market = markets.find((candidate) =>
+        sameHex(candidate.contract_id, cleanup.order_book_id),
+      );
+      if (!market) throw new O2Error(`Unknown cleanup order book ${cleanup.order_book_id}`);
+      return market;
+    });
+  }
+
   /** The live state of the margin account. */
   async state(marginAccountId?: Hex): Promise<MarginStateWire> {
     return this.host.api.getMarginState(marginAccountId ?? (await this.marginAccountId()));
+  }
+
+  /** Rolling executed volume for this account, in raw collateral units. */
+  async volume(
+    marginAccountId?: Hex,
+    sessionId?: string | number | bigint,
+  ): Promise<TurboVolumeWire> {
+    const id = normaliseHex(marginAccountId ?? (await this.marginAccountId()));
+    const selectedSession = sessionId ?? marginSession(await this.state(id))?.session_id;
+    if (selectedSession === undefined) {
+      throw new O2Error("No live Turbo session; pass a sessionId to read historical volume");
+    }
+    return this.host.api.getTurboVolume(`${id}:${selectedSession}`);
   }
 
   /** The pool's collateral float and per-asset inventory. */
@@ -642,7 +726,10 @@ export class TurboClient {
       wiring.collateralAssetId,
     );
     const session = marginSession(wire);
-    const expiresAt = session?.expires_at === undefined ? null : Number(session.expires_at);
+    const expiresAt =
+      session?.expires_at === undefined || isPerpetualTerm(session.expires_at)
+        ? null
+        : Number(session.expires_at);
 
     // BOTH FLAGS COME FROM THE GATE STACK, not from arithmetic here.
     //
@@ -677,10 +764,8 @@ export class TurboClient {
    */
   async positions(marginAccountId?: Hex): Promise<TurboPosition[]> {
     const wiring = await this.wiring();
-    const [wire, markets] = await Promise.all([
-      this.state(marginAccountId),
-      this.host.fetchMarkets(),
-    ]);
+    const wire = await this.state(marginAccountId);
+    const markets = await this.tradingMarkets(wire);
     const out: TurboPosition[] = [];
     for (const row of wire.balances) {
       if (sameHex(row.asset_id, wiring.collateralAssetId)) continue;
@@ -688,7 +773,9 @@ export class TurboClient {
       const debt = big(row.debt);
       const quantity = held - debt;
       if (quantity === 0n) continue;
-      const market = markets.markets.find((m) => sameHex(m.base.asset, row.asset_id));
+      const market =
+        markets.find((m) => m.turbo && sameHex(m.base.asset, row.asset_id)) ??
+        markets.find((m) => sameHex(m.base.asset, row.asset_id));
       if (!market) continue;
       const price = wire.prices.find((p) => sameHex(p.asset_id, row.asset_id));
       const mark = price ? (quantity >= 0n ? big(price.bid) : big(price.ask)) : 0n;
@@ -900,8 +987,9 @@ export class TurboClient {
   ): Promise<Hex[]> {
     const id = options.marginAccountId ?? (await this.marginAccountId());
     const wiring = await this.wiring();
-    const markets = await this.host.fetchMarkets();
     const wire = await this.state(id);
+    const markets = await this.tradingMarkets(wire);
+    const cleanupBooks = await this.cleanupBooks(id);
     const stillOwed: Hex[] = [];
 
     for (const row of wire.balances) {
@@ -918,7 +1006,9 @@ export class TurboClient {
       // therefore repaid NOTHING and fell through to collateral netting,
       // which the pool refuses when the collateral is worth less than the
       // debt. `Repay` forwards coins, so they have to be home first.
-      const market = markets.markets.find((m) => sameHex(m.base.asset, assetId));
+      const market =
+        markets.find((m) => m.turbo && sameHex(m.base.asset, assetId)) ??
+        markets.find((m) => sameHex(m.base.asset, assetId));
       const held = big(row.on_account) + (market ? big(row.settled) : 0n);
       const payable = min(owed, held);
       let remaining = owed;
@@ -926,12 +1016,25 @@ export class TurboClient {
       if (payable > 0n) {
         try {
           if (market && big(row.settled) > 0n) {
+            const books = cleanupBooks.filter(
+              (book) => sameHex(book.base.asset, assetId) || sameHex(book.quote.asset, assetId),
+            );
+            const sweepBooks = books.length ? books : [market];
+            for (const book of sweepBooks.slice(0, -1)) {
+              await this.submitMixed(
+                [{ SettleBalance: { to: { ContractId: id } } }],
+                book,
+                id,
+                wiring,
+                {},
+              );
+            }
             await this.submitMixed(
               [
                 { SettleBalance: { to: { ContractId: id } } },
                 { Repay: { asset_id: assetId, amount: payable.toString() } },
               ],
-              market,
+              sweepBooks[sweepBooks.length - 1],
               id,
               wiring,
               {},
@@ -1004,6 +1107,8 @@ export class TurboClient {
     // the only exit that moves no coins.
     //
     // Opt out with `settleDrawnQuote: false` to drive the sequence by hand.
+    // Preparatory cleanup is best-effort; the pool remains the final arbiter of
+    // closure.
     if (options.settleDrawnQuote !== false) {
       // RESTING ORDERS FIRST OF ALL. A trigger or a limit order left on
       // the child LOCKS the very base a repay needs to forward, so the
@@ -1065,16 +1170,17 @@ export class TurboClient {
    * Runs as the CHILD, one batch per market, five ids at a time.
    */
   private async cancelChildOrders(marginAccountId: Hex): Promise<void> {
-    const markets = await this.host.fetchMarkets();
     const wiring = await this.wiring();
+    const markets = await this.cleanupBooks(marginAccountId);
 
-    for (const market of markets.markets) {
+    for (const market of markets) {
       const active = await this.host.api
         .getActiveOrders(
           market.market_id,
           marginAccountId as unknown as TradeAccountId,
           "desc",
           200,
+          market,
         )
         .catch(() => null);
       if (!active?.entries?.length) continue;
@@ -1152,6 +1258,48 @@ export class TurboClient {
     return big(marginSession(await this.state(marginAccountId).catch(() => null))?.drawn_quote);
   }
 
+  /** Cancel a spot order as the margin child, using its parallel nonce. */
+  async cancelOrder(
+    orderId: string,
+    market: string | Market,
+    marginAccountId?: Hex,
+  ): Promise<SessionActionsResponse> {
+    return this.submitBookAction({ CancelOrder: { order_id: orderId } }, market, marginAccountId);
+  }
+
+  /** Cancel a TP/SL trigger as the margin child, using its parallel nonce. */
+  async cancelTriggerOrder(
+    orderId: string,
+    market: string | Market,
+    marginAccountId?: Hex,
+  ): Promise<SessionActionsResponse> {
+    return this.submitBookAction(
+      { CancelTriggerOrder: { order_id: orderId } },
+      market,
+      marginAccountId,
+    );
+  }
+
+  /** Sweep this book's settled balances back to the margin child. */
+  async settleBalance(
+    market: string | Market,
+    marginAccountId?: Hex,
+  ): Promise<SessionActionsResponse> {
+    const id = marginAccountId ?? (await this.marginAccountId());
+    return this.submitBookAction({ SettleBalance: { to: { ContractId: id } } }, market, id);
+  }
+
+  private async submitBookAction(
+    action: Record<string, unknown>,
+    market: string | Market,
+    marginAccountId?: Hex,
+  ): Promise<SessionActionsResponse> {
+    const id = marginAccountId ?? (await this.marginAccountId());
+    const wire = await this.state(id);
+    const resolved = await this.tradingMarket(market, wire);
+    return this.submitMixed([action], resolved, id, await this.wiring(), {});
+  }
+
   // ── Trading ─────────────────────────────────────────────────────
 
   /**
@@ -1217,8 +1365,8 @@ export class TurboClient {
     market: string | Market,
     options: TurboOrderOptions & { quantity?: Numeric; marginAccountId?: Hex } = {},
   ): Promise<SessionActionsResponse> {
-    const markets = await this.host.fetchMarkets();
-    const resolved = typeof market === "string" ? this.host.resolveMarket(markets, market) : market;
+    const wire = await this.state(options.marginAccountId);
+    const resolved = await this.tradingMarket(market, wire);
     const positions = await this.positions(options.marginAccountId);
     const position = positions.find((p) => p.market.market_id === resolved.market_id);
     if (!position) {
@@ -1568,10 +1716,15 @@ export class TurboClient {
     // that is not this client's default, and trading the default one
     // instead would close a position the caller never asked about.
     const marginAccountId = options.marginAccountId ?? (await this.marginAccountId());
-    const markets = await this.host.fetchMarkets();
-    const resolved = typeof market === "string" ? this.host.resolveMarket(markets, market) : market;
-
     const [wire, pool] = await Promise.all([this.state(marginAccountId), this.poolInventory()]);
+    if (
+      side === "sell" &&
+      typeof market !== "string" &&
+      sameHex(market.base.asset, wiring.collateralAssetId)
+    ) {
+      throw new O2Error("The collateral asset is drawn, never borrowed — it cannot be shorted.");
+    }
+    const resolved = await this.tradingMarket(market, wire);
     const limits = marginLimits(
       wire,
       pool.float,
@@ -1774,7 +1927,7 @@ export class TurboClient {
       if (options.reducing && lockedBase > 0n && orderQuantity > onHand) {
         throw new O2Error(
           `Cannot close: ${lockedBase} of ${resolved.base.symbol} is locked in resting orders on this market. ` +
-            "Cancel them first (client.cancelAllOrders / cancelAllTriggerOrders) — closing around them would " +
+            "Cancel them first (turbo.cancelOrder / turbo.cancelTriggerOrder) — closing around them would " +
             "borrow the locked amount and sell it twice, flipping the position short.",
         );
       }
@@ -1889,7 +2042,7 @@ export class TurboClient {
 
   /** The book's own top on the side this order will take. */
   private async bookTop(market: Market, side: "buy" | "sell"): Promise<bigint> {
-    const depth = await this.host.api.getDepth(market.market_id, 10, 1);
+    const depth = await this.host.api.getDepth(market.market_id, 10, 1, market);
     const level = side === "buy" ? depth.asks?.[0] : depth.bids?.[0];
     if (!level) {
       throw new O2Error(
@@ -1986,7 +2139,7 @@ export class TurboClient {
 
     return this.submitWithNonceRetry(marginAccountId, (parallelNonce) =>
       this.host.submitPrepared({
-        marketActions: [{ market_id: market.market_id, actions }],
+        marketActions: [{ market_id: market.market_id, ...selectionParams(market), actions }],
         calls,
         // Trading runs AS the margin child: balances live there, so a
         // settle to the parent would move the session's money out of the

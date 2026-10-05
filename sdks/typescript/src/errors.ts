@@ -50,6 +50,22 @@ export class O2Error extends Error {
   }
 }
 
+/** The API does not support Turbo market discovery. */
+export class TurboDiscoveryUnavailable extends O2Error {
+  constructor() {
+    super("Turbo market discovery is unavailable on this API");
+    this.name = "TurboDiscoveryUnavailable";
+  }
+}
+
+/** The stream requires a fresh snapshot before it can be subscribed again. */
+export class StreamResyncRequired extends O2Error {
+  constructor(message = "Stream interrupted; refresh the snapshot and resubscribe") {
+    super(message);
+    this.name = "StreamResyncRequired";
+  }
+}
+
 // ── General (1xxx) ──────────────────────────────────────────────────
 
 /** Unexpected server error (code 1000). Retry with exponential backoff. */

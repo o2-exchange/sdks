@@ -17,6 +17,7 @@ export * from "./client.js";
 export * from "./encoding.js";
 export * from "./formulas.js";
 export type { PreparedBatch, PreparedMarketActions, TurboHost } from "./host.js";
+export * from "./identity.js";
 export * from "./limits.js";
 export * from "./parallelNonce.js";
 export * from "./referral.js";
