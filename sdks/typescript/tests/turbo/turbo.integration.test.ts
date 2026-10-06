@@ -17,9 +17,19 @@
  * `O2_TURBO_MARKET` to pick the market.
  */
 
-import { beforeAll, describe, expect, it } from "vitest";
-import { Network, O2Client, stopLimit, triggerLeg, triggerQuantity } from "../../src/index.js";
-import type { WalletState } from "../../src/models.js";
+import { writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { bytesToHex } from "../../src/encoding.js";
+import {
+  boundedMarketFromSlippage,
+  marginSession,
+  Network,
+  O2Client,
+  stopLimit,
+  triggerLeg,
+  triggerQuantity,
+} from "../../src/index.js";
+import type { SessionActionsResponse, WalletState } from "../../src/models.js";
 import type { MarginTierWire } from "../../src/turbo/wire.js";
 
 const RUN = process.env.O2_INTEGRATION === "1";
@@ -50,6 +60,11 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     client = new O2Client({ network: Network.TESTNET });
     wallet = PRIVATE_KEY ? O2Client.loadWallet(PRIVATE_KEY) : O2Client.generateWallet();
 
+    if (!PRIVATE_KEY && process.env.O2_TURBO_TEST_WALLET_FILE) {
+      writeFileSync(process.env.O2_TURBO_TEST_WALLET_FILE, bytesToHex(wallet.privateKey), {
+        mode: 0o600,
+      });
+    }
     await client.setupAccount(wallet);
 
     // THE SCOPE MUST BE SIGNED UP FRONT. A session created without
@@ -64,6 +79,8 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     expect(cheapest).not.toBeNull();
     tier = cheapest as MarginTierWire;
   }, 120_000);
+
+  afterAll(() => client?.close());
 
   it("resolves the deployment's margin wiring", async () => {
     const wiring = await client.turbo.wiring();
@@ -81,6 +98,28 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     expect(session.contractIds.map((id) => id.toLowerCase())).toContain(wiring.poolId);
   });
 
+  it("reads Turbo REST data and a WebSocket depth snapshot", async () => {
+    const market = await client.getMarket(MARKET, { turbo: true });
+    const now = Date.now();
+    const [depth, trades, bars, ticker] = await Promise.all([
+      client.getDepth(market, 1, 2),
+      client.getTrades(market, 3),
+      client.getBars(market, "1m", now - 300_000, now),
+      client.getTicker(market),
+    ]);
+    expect(depth.turbo).toBe(true);
+    expect(depth.bids.length + depth.asks.length).toBeGreaterThan(0);
+    expect(trades.length).toBeGreaterThan(0);
+    expect(bars.length).toBeGreaterThan(0);
+    expect(ticker.turbo).toBe(true);
+    const stream = await client.streamDepth(market);
+    const update = await stream.next();
+    expect(update.value).toMatchObject({ market_id: market.market_id, turbo: true });
+    expect(update.value?.view).toBeDefined();
+    await stream.return(undefined as never);
+    client.disconnectWs();
+  });
+
   it("opens an account, then trades both ways and closes", async () => {
     // Margin PLUS premium — `required_collateral` is only the floor.
     const collateral = client.turbo.openingCost(tier);
@@ -93,12 +132,12 @@ describe.skipIf(!RUN)("Turbo integration", () => {
       contract: (await client.api.getAccount({ owner: wallet.b256Address })).trade_account_id,
     });
     if (balance.trading_account_balance < collateral) {
-      console.warn(
-        `[turbo] skipping: need ${collateral} of collateral, account holds ${balance.trading_account_balance}`,
+      throw new Error(
+        `Insufficient testnet funding: need ${collateral}, have ${balance.trading_account_balance}`,
       );
-      return;
     }
 
+    const submitted = vi.spyOn(client.api, "submitActions");
     const opened = await client.turbo.open({
       tierId: tier.tier_id,
       collateral,
@@ -113,12 +152,76 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     expect(snapshot.frozen).toBe(false);
 
     // LONG — one batch: sweep, draw, buy.
-    const long = await client.turbo.long(MARKET, { notional: "10" });
-    expect(long.success ?? true).toBeTruthy();
+    const selected = await client.getMarket(MARKET, { turbo: true });
+    expect(selected.turbo).toBe(true);
+    expect(client.session!.contractIds).toContain(selected.contract_id);
+    const depth = await client.getDepth(selected, 1, 1);
+    const ask = depth.asks[0]?.price;
+    if (!ask) throw new Error("Turbo book has no ask");
+    const tick = 10n ** BigInt(selected.quote.decimals - selected.quote.max_precision);
+    const align = (price: bigint) => (price / tick) * tick;
+    const long = await client.turbo.long(
+      MARKET,
+      { notional: "10" },
+      {
+        // Allow a small price move while signing so this fill assertion does not rest at an old ask.
+        orderType: boundedMarketFromSlippage(ask, 50, tick),
+        takeProfit: {
+          triggerPrice: align((ask * 110n) / 100n),
+          limitPrice: align((ask * 109n) / 100n),
+        },
+        stopLoss: {
+          triggerPrice: align((ask * 90n) / 100n),
+          limitPrice: align((ask * 89n) / 100n),
+        },
+      },
+    );
+    expect(long.success, long.message ?? long.reason ?? "long failed").toBe(true);
+    expect(submitted.mock.calls.at(-1)![1].actions[0]).toMatchObject({
+      market_id: selected.market_id,
+      turbo: true,
+    });
 
     expect(await waitForPosition(client.turbo, "long")).toBe(true);
 
-    await client.turbo.closePosition(MARKET);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const active = await client.api.getActiveOrders(
+      selected.market_id,
+      opened.marginAccountId as never,
+      "desc",
+      200,
+      selected,
+    );
+    expect(active.entries.some((entry) => entry.kind === "trigger")).toBe(true);
+    for (const entry of active.entries) {
+      if (entry.kind !== "trigger") continue;
+      const cancelled = await client.turbo.cancelTriggerOrder(entry.order_id, selected);
+      expect(
+        cancelled.success,
+        cancelled.message ?? cancelled.reason ?? "trigger cancel failed",
+      ).toBe(true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const afterCancel = await client.api.getActiveOrders(
+      selected.market_id,
+      opened.marginAccountId as never,
+      "desc",
+      200,
+      selected,
+    );
+    expect(afterCancel.entries.filter((entry) => entry.kind === "trigger")).toHaveLength(0);
+    const swept = await client.turbo.settleBalance(selected);
+    expect(swept.success).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
+    const closeBid = (await client.getDepth(selected, 1, 1)).bids[0]?.price;
+    if (!closeBid) throw new Error("Turbo book has no bid");
+    const closeLong = await client.turbo.closePosition(MARKET, {
+      orderType: boundedMarketFromSlippage(closeBid, 50, tick),
+    });
+    expect(closeLong.success, closeLong.message ?? closeLong.reason ?? "close long failed").toBe(
+      true,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 3_000));
     await client.turbo.repayDrawn();
 
     // SHORT — one batch: sweep, borrow, sell.
@@ -132,8 +235,7 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     // borrow, not a promise the coins exist. Where the pool lends none,
     // the market is long-only and skipping is the correct outcome, not a
     // failure.
-    const markets = await client.getMarkets();
-    const market = markets.find((m) => `${m.base.symbol}/${m.quote.symbol}` === MARKET);
+    const market = selected;
     const maxSell = market ? await client.turbo.maxSell(market.base.asset as never) : 0n;
     console.log(`[turbo] max sellable ${market?.base.symbol}: ${maxSell}`);
 
@@ -142,7 +244,7 @@ describe.skipIf(!RUN)("Turbo integration", () => {
     // dip rather than on anything the SDK did. Take the smallest quantity
     // whose notional clears the minimum, with headroom for the price
     // moving between this read and the submission.
-    const shortDepth = market ? await client.api.getDepth(market.market_id, 10, 1) : null;
+    const shortDepth = market ? await client.api.getDepth(market.market_id, 10, 1, market) : null;
     const shortBid = shortDepth?.bids?.length ? BigInt(shortDepth.bids[0].price) : 0n;
     const minOrder = market ? BigInt((market as unknown as { min_order: bigint }).min_order) : 0n;
     const baseUnit = market ? 10n ** BigInt(market.base.decimals) : 1n;
@@ -157,13 +259,24 @@ describe.skipIf(!RUN)("Turbo integration", () => {
       // account is genuinely flat (holdings and debt cancel) until it
       // fills. On a thin testnet book that is the normal outcome, and
       // failing on it would test liquidity rather than the SDK.
-      const short = await client.turbo.short(MARKET, { quantity: shortQty });
-      expect(short.txId ?? short.success ?? true).toBeTruthy();
+      const short = await client.turbo.short(
+        MARKET,
+        { quantity: shortQty },
+        {
+          orderType: boundedMarketFromSlippage(shortBid, 50, tick),
+        },
+      );
+      expect(short.success, short.message ?? short.reason ?? "short failed").toBe(true);
       if (await waitForPosition(client.turbo, "short")) {
-        await client.turbo.closePosition(MARKET);
+        const closeAsk = (await client.getDepth(selected, 1, 1)).asks[0]?.price;
+        if (!closeAsk) throw new Error("Turbo book has no ask");
+        const closeShort = await client.turbo.closePosition(MARKET, {
+          orderType: boundedMarketFromSlippage(closeAsk, 50, tick),
+        });
+        expect(closeShort.success, closeShort.message ?? closeShort.reason).toBe(true);
       } else {
         console.warn("[turbo] short did not fill on this book; cancelling instead");
-        await client.cancelAllOrders(MARKET).catch(() => null);
+        // closeAccount below cancels the child's orders with its parallel nonce.
       }
     }
 
@@ -175,26 +288,40 @@ describe.skipIf(!RUN)("Turbo integration", () => {
       client.turbo.long(MARKET, { notional: "5" }, { takeProfit: { triggerPrice: "2600" } }),
     ).rejects.toThrow(/must be priced/);
 
+    const volumeSession = marginSession(await client.turbo.state())!.session_id;
+    const volume = await client.turbo.volume();
+    expect(volume.turbo_account_id).toBe(`${opened.marginAccountId}:${volumeSession}`);
+    expect(volume.window_days).toBe(30);
+    expect(volume.volume).toMatch(/^\d+$/);
+
     // A clean close needs no in-kind debts and `drawn_quote == 0`.
     // `closeAccount` cancels resting orders, flattens positions and
     // retires in-kind debts before closing, which is enough for an
     // ordinary account.
     //
-    // What it cannot do is conjure funds: an account whose draw is tied up
-    // in a position it cannot afford to buy back has no self-serve exit,
-    // and the remedy is to add margin first. Attempted here in that order,
-    // and reported rather than asserted, because whether this account ends
-    // up in that state depends on how the book filled.
+    // Fees and spread may require a margin topup. Both that topup and the
+    // final on-chain close are asserted; failures are never silently passed.
+    let closed: SessionActionsResponse;
     try {
-      await client.turbo.closeAccount();
+      closed = await client.turbo.closeAccount();
     } catch (error) {
-      console.warn(`[turbo] close needed margin first: ${String(error).slice(0, 160)}`);
-      await client.turbo.addMargin(25_000_000_000n).catch(() => null);
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
-      await client.turbo
-        .closeAccount()
-        .catch((e) => console.warn(`[turbo] close still refused: ${String(e).slice(0, 160)}`));
+      if (!/still owes .*drawn quote/.test(String(error))) throw error;
+      // Fees/spread can leave a small draw after flattening. Fund that loss with test tokens.
+      const added = await client.turbo.addMargin(25_000_000_000n);
+      expect(added.success, added.message ?? added.reason ?? "test margin topup failed").toBe(true);
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      closed = await client.turbo.closeAccount();
+      console.log("[turbo] account close required test margin for trading loss");
     }
+    expect(closed.success, closed.message ?? closed.reason ?? "account close failed").toBe(true);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if ((await client.turbo.snapshot()).creditLine === 0n) break;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    expect((await client.turbo.snapshot()).creditLine).toBe(0n);
+    const historicalVolume = await client.turbo.volume(opened.marginAccountId, volumeSession);
+    expect(historicalVolume.turbo_account_id).toBe(volume.turbo_account_id);
+    console.log("[turbo] protected long, short and account cleanup completed");
   }, 900_000);
 
   it("places, lists and cancels spot take-profit / stop-loss orders", async () => {

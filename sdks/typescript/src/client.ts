@@ -53,7 +53,8 @@ import {
   validateFractionalPrice,
   validateMinOrder,
 } from "./encoding.js";
-import { O2Error, SessionExpired } from "./errors.js";
+import { O2Error, SessionExpired, TurboDiscoveryUnavailable } from "./errors.js";
+import { selectionParams } from "./market-selection.js";
 import type {
   ActionPayload,
   AssetId,
@@ -68,6 +69,7 @@ import type {
   Market,
   MarketActions,
   MarketRef,
+  MarketSelection,
   MarketsResponse,
   NonceUpdate,
   Order,
@@ -197,6 +199,11 @@ function validateDepthPrecision(precision: number | string): void {
   }
 }
 
+interface ResolvedMarketActions {
+  market: Market;
+  actions: ActionPayload[];
+}
+
 /** Options for {@link O2Client.createSession}. */
 export interface CreateSessionOptions {
   /** Session expiry in days. Defaults to 30. */
@@ -246,9 +253,14 @@ export class O2Client {
   protected wsClient: O2WebSocket | null = null;
   /** Network endpoint and contract configuration used by this client. */
   public readonly config: NetworkConfig;
-  protected marketsCache: MarketsResponse | null = null;
-  protected marketsCacheTime = 0;
-  protected marketsRefreshPromise: Promise<MarketsResponse> | null = null;
+  private readonly marketCatalogs = new Map<
+    boolean,
+    {
+      data?: MarketsResponse;
+      updatedAt: number;
+      pending?: Promise<MarketsResponse>;
+    }
+  >();
   protected readonly marketsCacheTtlMs: number;
   protected readonly webSocketFactory?: (url: string) => WebSocket;
   protected _session: SessionState | null = null;
@@ -464,9 +476,18 @@ export class O2Client {
     // `(oracle, parent, index)`, which is what makes scoping an account
     // the trader has not opened yet possible at all.
     //
-    // Best effort: margin may not be wired on this deployment, and that
-    // must not stop an ordinary session being created.
+    // Legacy deployments may have no Turbo discovery. Transport failures
+    // must propagate so a session is never signed with an incomplete scope.
     if (opts.turbo) {
+      const turboCatalog = await this.fetchMarkets({ turbo: true }).catch((error) => {
+        if (!(error instanceof TurboDiscoveryUnavailable)) throw error;
+        return { markets: [] as Market[] };
+      });
+      for (const market of resolvedMarkets) {
+        const selected = turboCatalog.markets.find((m) => m.market_id === market.market_id);
+        if (selected && !contractIds.includes(selected.contract_id))
+          contractIds.push(selected.contract_id);
+      }
       const scope = await TurboClient.sessionScope(this.api, wallet.b256Address);
       for (const id of scope) {
         if (!contractIds.some((existing) => existing.toLowerCase() === id.toLowerCase())) {
@@ -561,7 +582,7 @@ export class O2Client {
     const collectOrders = options?.collectOrders ?? true;
 
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
     const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
       resolved,
       price,
@@ -590,7 +611,7 @@ export class O2Client {
       },
     });
 
-    return this.submitBatch([{ market_id: resolved.market_id, actions }], collectOrders, session);
+    return this.submitBatch([{ market: resolved, actions }], collectOrders, session);
   }
 
   /** Place a shared Spot or PostOnly order (default: PostOnly). */
@@ -604,7 +625,7 @@ export class O2Client {
     const typeField = sharedOrderTypeField(options?.orderType);
     const session = options?.session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
     const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
       resolved,
       price,
@@ -625,7 +646,7 @@ export class O2Client {
       },
     });
     return this.submitBatch(
-      [{ market_id: resolved.market_id, actions }],
+      [{ market: resolved, actions }],
       options?.collectOrders ?? true,
       session,
     );
@@ -641,12 +662,12 @@ export class O2Client {
   ): Promise<SessionActionsResponse> {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
     const bounds = this.normalizeTurboExecution(resolved, maxBaseQuantity, maxFills);
     return this.submitBatch(
       [
         {
-          market_id: resolved.market_id,
+          market: resolved,
           actions: [
             {
               ExecuteTurboOrders: {
@@ -713,7 +734,7 @@ export class O2Client {
     }
 
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
     const { scaledPrice, scaledQuantity } = this.normalizeCreateOrderValues(
       resolved,
       price,
@@ -784,7 +805,7 @@ export class O2Client {
     } as unknown as ActionPayload);
 
     return this.submitBatch(
-      [{ market_id: resolved.market_id, actions }],
+      [{ market: resolved, actions }],
       options.collectOrders ?? true,
       session,
     );
@@ -814,7 +835,7 @@ export class O2Client {
   ): Promise<SessionActionsResponse> {
     const session = options.session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
 
     const actions: ActionPayload[] = [];
     if (options.settleFirst ?? true) {
@@ -835,7 +856,7 @@ export class O2Client {
     } as unknown as ActionPayload);
 
     return this.submitBatch(
-      [{ market_id: resolved.market_id, actions }],
+      [{ market: resolved, actions }],
       options.collectOrders ?? true,
       session,
     );
@@ -862,7 +883,7 @@ export class O2Client {
   ): Promise<SessionActionsResponse> {
     const session = options.session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
     if (first.trigger_price === second.trigger_price) {
       throw new O2Error(
         "An OCO pair needs two different trigger prices — the chain refuses a pair that would fire together.",
@@ -899,7 +920,7 @@ export class O2Client {
     } as unknown as ActionPayload);
 
     return this.submitBatch(
-      [{ market_id: resolved.market_id, actions }],
+      [{ market: resolved, actions }],
       options.collectOrders ?? true,
       session,
     );
@@ -913,11 +934,11 @@ export class O2Client {
   ): Promise<SessionActionsResponse> {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
     return this.submitBatch(
       [
         {
-          market_id: resolved.market_id,
+          market: resolved,
           actions: [{ CancelTriggerOrder: { order_id: orderId } } as unknown as ActionPayload],
         },
       ],
@@ -938,13 +959,14 @@ export class O2Client {
   ): Promise<SessionActionsResponse[] | null> {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
 
     const active = await this.api.getActiveOrders(
       resolved.market_id,
       activeSession.tradeAccountId,
       "desc",
       200,
+      resolved,
     );
     const ids = activeTriggerIds(active);
     if (ids.length === 0) return null;
@@ -955,7 +977,7 @@ export class O2Client {
         await this.submitBatch(
           [
             {
-              market_id: resolved.market_id,
+              market: resolved,
               actions: ids
                 .slice(i, i + 5)
                 .map(
@@ -979,15 +1001,10 @@ export class O2Client {
   ): Promise<SessionActionsResponse> {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
 
     return this.submitBatch(
-      [
-        {
-          market_id: resolved.market_id,
-          actions: [{ CancelOrder: { order_id: orderId } }],
-        },
-      ],
+      [{ market: resolved, actions: [{ CancelOrder: { order_id: orderId } }] }],
       false,
       activeSession,
     );
@@ -1002,7 +1019,7 @@ export class O2Client {
   ): Promise<SessionActionsResponse[] | null> {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
 
     const orders = await this.api.getOrders(
       resolved.market_id,
@@ -1010,6 +1027,9 @@ export class O2Client {
       "desc",
       200,
       true,
+      undefined,
+      undefined,
+      resolved,
     );
 
     if (orders.orders.length === 0) return null;
@@ -1024,7 +1044,7 @@ export class O2Client {
       }));
 
       const result = await this.submitBatch(
-        [{ market_id: resolved.market_id, actions: cancelActions }],
+        [{ market: resolved, actions: cancelActions }],
         false,
         activeSession,
       );
@@ -1038,12 +1058,12 @@ export class O2Client {
   async settleBalance(market: MarketRef, session?: SessionState): Promise<SessionActionsResponse> {
     const activeSession = session ?? this.ensureSession();
     const marketsData = await this.fetchMarkets();
-    const resolved = typeof market === "string" ? this.resolveMarket(marketsData, market) : market;
+    const resolved = await this.resolveTradingMarket(marketsData, market);
 
     return this.submitBatch(
       [
         {
-          market_id: resolved.market_id,
+          market: resolved,
           actions: [
             {
               SettleBalance: {
@@ -1092,23 +1112,17 @@ export class O2Client {
     const marketsData = await this.fetchMarkets();
 
     // Convert type-safe actions to wire format
-    const wireGroups: MarketActions[] = [];
+    const wireGroups: ResolvedMarketActions[] = [];
 
     for (const group of marketActions) {
-      const resolved =
-        typeof group.market === "string"
-          ? this.resolveMarket(marketsData, group.market)
-          : group.market;
+      const resolved = await this.resolveTradingMarket(marketsData, group.market);
 
       const wireActions: ActionPayload[] = [];
       for (const action of group.actions) {
         wireActions.push(this.actionToPayload(action, resolved, activeSession));
       }
 
-      wireGroups.push({
-        market_id: resolved.market_id,
-        actions: wireActions,
-      });
+      wireGroups.push({ market: resolved, actions: wireActions });
     }
 
     if (wireGroups.length === 0) {
@@ -1121,8 +1135,8 @@ export class O2Client {
   // ── Market data ─────────────────────────────────────────────────
 
   /** Fetch all available markets. Results are cached with stale-while-revalidate. */
-  async getMarkets(): Promise<Market[]> {
-    const data = await this.fetchMarkets();
+  async getMarkets(selection: MarketSelection = {}): Promise<Market[]> {
+    const data = await this.fetchMarkets(selection);
     return data.markets;
   }
 
@@ -1132,8 +1146,8 @@ export class O2Client {
    * @param symbolPair - The market pair or hex ID.
    * @throws {@link O2Error} if the market is not found.
    */
-  async getMarket(symbolPair: string): Promise<Market> {
-    const data = await this.fetchMarkets();
+  async getMarket(symbolPair: string, selection: MarketSelection = {}): Promise<Market> {
+    const data = await this.fetchMarkets(selection);
     return this.resolveMarket(data, symbolPair);
   }
 
@@ -1153,9 +1167,9 @@ export class O2Client {
   async getDepth(market: MarketRef, precision = 1, limit?: number): Promise<DepthSnapshot> {
     validateDepthPrecision(precision);
     const wirePrecision = 10 ** precision;
-    const marketId =
-      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return this.api.getDepth(marketId, wirePrecision, limit);
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
+    const marketId = resolved.market_id;
+    return this.api.getDepth(marketId, wirePrecision, limit, resolved);
   }
 
   /**
@@ -1173,8 +1187,8 @@ export class O2Client {
     account?: string | TradeAccountId,
     cursor?: { startTimestamp: number; startTradeId: string },
   ) {
-    const marketId =
-      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
+    const marketId = resolved.market_id;
     if (account) {
       const validAccount = tradeAccountId(account);
       return this.api.getTradesByAccount(
@@ -1184,6 +1198,7 @@ export class O2Client {
         count,
         cursor?.startTimestamp,
         cursor?.startTradeId,
+        resolved,
       );
     }
     return this.api.getTrades(
@@ -1192,6 +1207,8 @@ export class O2Client {
       count,
       cursor?.startTimestamp,
       cursor?.startTradeId,
+      undefined,
+      resolved,
     );
   }
 
@@ -1204,9 +1221,9 @@ export class O2Client {
    * @param to - End time in **milliseconds** (not seconds).
    */
   async getBars(market: MarketRef, resolution: string, from: number, to: number): Promise<Bar[]> {
-    const marketId =
-      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return this.api.getBars(marketId, from, to, resolution);
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
+    const marketId = resolved.market_id;
+    return this.api.getBars(marketId, from, to, resolution, resolved);
   }
 
   /**
@@ -1215,9 +1232,9 @@ export class O2Client {
    * @param market - Market pair string or {@link Market} object.
    */
   async getTicker(market: MarketRef) {
-    const marketId =
-      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return this.api.getMarketTicker(marketId);
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
+    const marketId = resolved.market_id;
+    return this.api.getMarketTicker(marketId, resolved);
   }
 
   // ── Account data ────────────────────────────────────────────────
@@ -1276,6 +1293,7 @@ export class O2Client {
       isOpen,
       cursor?.startTimestamp,
       cursor?.startOrderId as OrderId | undefined,
+      resolved,
     );
     return resp.orders;
   }
@@ -1288,7 +1306,7 @@ export class O2Client {
    */
   async getOrder(market: MarketRef, orderId: OrderId): Promise<Order> {
     const resolved = typeof market === "string" ? await this.getMarket(market) : market;
-    return this.api.getOrder(resolved.market_id, orderId);
+    return this.api.getOrder(resolved.market_id, orderId, resolved);
   }
 
   // ── WebSocket streaming ─────────────────────────────────────────
@@ -1346,9 +1364,9 @@ export class O2Client {
   async streamDepth(market: MarketRef, precision = 1): Promise<AsyncGenerator<DepthUpdate>> {
     const dp = depthPrecision(precision);
     const ws = await this.ensureWs();
-    const marketId =
-      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return ws.streamDepth(marketId, dp);
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
+    const marketId = resolved.market_id;
+    return ws.streamDepth(marketId, dp, resolved);
   }
 
   /**
@@ -1357,9 +1375,12 @@ export class O2Client {
    * @param tradeAccountId - The trade account contract ID.
    * @returns An async generator yielding {@link OrderUpdate} messages.
    */
-  async streamOrders(tradeAccountId: TradeAccountId): Promise<AsyncGenerator<OrderUpdate>> {
+  async streamOrders(
+    tradeAccountId: TradeAccountId,
+    selection: MarketSelection = {},
+  ): Promise<AsyncGenerator<OrderUpdate>> {
     const ws = await this.ensureWs();
-    return ws.streamOrders([{ ContractId: tradeAccountId }]);
+    return ws.streamOrders([{ ContractId: tradeAccountId }], selection);
   }
 
   /**
@@ -1370,9 +1391,9 @@ export class O2Client {
    */
   async streamTrades(market: MarketRef): Promise<AsyncGenerator<TradeUpdate>> {
     const ws = await this.ensureWs();
-    const marketId =
-      typeof market === "string" ? (await this.getMarket(market)).market_id : market.market_id;
-    return ws.streamTrades(marketId);
+    const resolved = typeof market === "string" ? await this.getMarket(market) : market;
+    const marketId = resolved.market_id;
+    return ws.streamTrades(marketId, resolved);
   }
 
   /**
@@ -1408,8 +1429,7 @@ export class O2Client {
   /** Close all connections and release resources. */
   close(): void {
     this.disconnectWs();
-    this.marketsCache = null;
-    this.marketsRefreshPromise = null;
+    this.marketCatalogs.clear();
   }
 
   /** Enables `await using client = new O2Client(...)`. */
@@ -1522,33 +1542,46 @@ export class O2Client {
 
   // ── Internal helpers ────────────────────────────────────────────
 
-  protected async fetchMarkets(): Promise<MarketsResponse> {
-    const now = Date.now();
-    if (this.marketsCache && now - this.marketsCacheTime < this.marketsCacheTtlMs) {
-      return this.marketsCache;
+  protected async fetchMarkets(selection: MarketSelection = {}): Promise<MarketsResponse> {
+    const turbo = !!selection.turbo;
+    let entry = this.marketCatalogs.get(turbo);
+    if (!entry) {
+      entry = { updatedAt: 0 };
+      this.marketCatalogs.set(turbo, entry);
     }
-    if (this.marketsCache) {
-      // Stale — return immediately, refresh in background
-      if (!this.marketsRefreshPromise) {
-        this.marketsRefreshPromise = this.api.getMarkets().then(
-          (data) => {
-            this.marketsCache = data;
-            this.marketsCacheTime = Date.now();
-            this.marketsRefreshPromise = null;
-            return data;
-          },
-          () => {
-            this.marketsRefreshPromise = null;
-            return this.marketsCache!;
-          },
-        );
-      }
-      return this.marketsCache;
+    if (entry.data && Date.now() - entry.updatedAt < this.marketsCacheTtlMs) return entry.data;
+    if (!entry.pending) {
+      const cached = entry;
+      cached.pending = this.api
+        .getMarkets(selection)
+        .then((data) => {
+          cached.data = data;
+          cached.updatedAt = Date.now();
+          return data;
+        })
+        .finally(() => {
+          cached.pending = undefined;
+        });
     }
-    // No cache — must block
-    this.marketsCache = await this.api.getMarkets();
-    this.marketsCacheTime = Date.now();
-    return this.marketsCache;
+    const pending = entry.pending!;
+    if (entry.data) {
+      // Serve the last good catalog while refreshing; cold-read failures propagate.
+      void pending.catch(() => {});
+      return entry.data;
+    }
+    return pending;
+  }
+
+  private async resolveTradingMarket(data: MarketsResponse, ref: MarketRef): Promise<Market> {
+    if (typeof ref === "string") return this.resolveMarket(data, ref);
+    const catalog = ref.turbo ? await this.fetchMarkets(ref) : data;
+    const selected = catalog.markets.find(
+      (market) =>
+        market.market_id === ref.market_id &&
+        market.contract_id.toLowerCase() === ref.contract_id.toLowerCase(),
+    );
+    if (!selected) throw new O2Error("Trading market unavailable; refresh before submitting");
+    return selected;
   }
 
   protected resolveMarket(data: MarketsResponse, symbolPair: string): Market {
@@ -1746,7 +1779,7 @@ export class O2Client {
       const host: TurboHost = {
         api: this.api,
         ensureSession: () => this.ensureSession(),
-        fetchMarkets: () => this.fetchMarkets(),
+        fetchMarkets: (selection) => this.fetchMarkets(selection),
         resolveMarket: (data, pair) => this.resolveMarket(data, pair),
         normalizeCreateOrderValues: (market, price, quantity, pf, qf) =>
           this.normalizeCreateOrderValues(market, price, quantity, pf, qf),
@@ -1754,7 +1787,7 @@ export class O2Client {
           actionToCall(
             action as unknown as ActionJSON,
             toMarketInfo(market),
-            this.marketsCache?.accounts_registry_id,
+            this.marketCatalogs.get(false)?.data?.accounts_registry_id,
           ),
         submitPrepared: (batch: PreparedBatch) => this.submitPrepared(batch),
       };
@@ -1764,7 +1797,7 @@ export class O2Client {
   }
 
   protected async submitBatch(
-    marketActions: MarketActions[],
+    marketActions: ResolvedMarketActions[],
     collectOrders = false,
     session?: SessionState,
   ): Promise<SessionActionsResponse> {
@@ -1774,20 +1807,21 @@ export class O2Client {
       throw new SessionExpired();
     }
 
-    // Look up market metadata per-group from the cache (always populated by callers).
-    const cache = this.marketsCache!;
+    const catalog = await this.fetchMarkets();
     const calls: ContractCall[] = [];
-    for (const group of marketActions) {
-      const market = cache.markets.find((m) => m.market_id === group.market_id);
-      if (!market) throw new O2Error(`Market ${group.market_id} not found in cache`);
+    for (const { market, actions } of marketActions) {
       const marketInfo = toMarketInfo(market);
-      for (const action of group.actions) {
-        calls.push(actionToCall(action as ActionJSON, marketInfo, cache.accounts_registry_id));
+      for (const action of actions) {
+        calls.push(actionToCall(action as ActionJSON, marketInfo, catalog.accounts_registry_id));
       }
     }
 
     return this.submitPrepared({
-      marketActions: marketActions as unknown as PreparedMarketActions[],
+      marketActions: marketActions.map(({ market, actions }) => ({
+        market_id: market.market_id,
+        ...selectionParams(market),
+        actions: actions.map((action) => ({ ...action })),
+      })),
       calls,
       tradeAccountId: activeSession.tradeAccountId,
       collectOrders,

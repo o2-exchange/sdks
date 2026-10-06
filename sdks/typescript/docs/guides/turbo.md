@@ -319,3 +319,45 @@ it is per-deployment.
 
 `long`/`short` accept human decimal strings and scale them for you; the read
 methods return raw `bigint`s.
+
+## Turbo 3.0
+
+Enable Turbo when creating your trading session. Use `client.turbo` to open an account, trade long or short, manage positions, and close the account. The SDK handles funding and settlement for you.
+
+```ts
+await client.createSession(wallet, ["fETH/fUSDC"], { turbo: true });
+
+await client.turbo.open({ tierId });
+await client.turbo.long("fETH/fUSDC", { notional: "10" });
+const positions = await client.turbo.positions();
+await client.turbo.closePosition("fETH/fUSDC");
+```
+
+To read Turbo prices, trades, candles, or live updates, select the market with `{ turbo: true }` and pass it to the data methods:
+
+```ts
+const market = await client.getMarket("fETH/fUSDC", { turbo: true });
+const depth = await client.getDepth(market);
+const bars = await client.getBars(market, "1m", fromMs, toMs);
+const trades = await client.getTrades(market);
+const updates = await client.streamDepth(market);
+const orders = await client.streamOrders(marginAccountId, { turbo: true });
+```
+
+Existing calls keep their standard trading defaults. `client.turbo` chooses the markets available to your account automatically. If you have an existing session, create a new one with `{ turbo: true }` before using Turbo.
+
+Perpetual sessions have no expiry countdown: `snapshot().secondsRemaining` is `null`.
+
+```ts
+const volume = await client.turbo.volume();
+console.log(volume.volume, volume.collateral_decimals);
+
+// Read a previous session's volume.
+const historicalVolume = await client.turbo.volume(marginAccountId, sessionId);
+```
+
+Volume reports executed trading activity over a rolling 30-day window. Its amount is a decimal integer string; use `collateral_decimals` to display it in human units. It is informational and does not enforce a trading target. Standard and Turbo candle volumes overlap, so do not add them together.
+
+Use `client.turbo.cancelOrder`, `cancelTriggerOrder`, and `settleBalance` to manage Turbo orders and balances. Cancel protective orders and wait for the updates to appear before manually closing the protected position.
+
+If a Turbo trade stream throws `StreamResyncRequired`, refresh your data and start a new stream. Other streams remain active.

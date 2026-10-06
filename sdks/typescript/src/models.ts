@@ -246,6 +246,12 @@ export interface MarketAsset {
   max_precision: number;
 }
 
+/** Choose Turbo or standard trading. Omitted means standard trading. */
+export interface MarketSelection {
+  /** Use Turbo for this request. Defaults to false. */
+  turbo?: boolean;
+}
+
 /**
  * Full market configuration as returned by the O2 Exchange API.
  *
@@ -260,8 +266,14 @@ export interface MarketAsset {
  * console.log(market.quote.symbol);   // "fUSDC"
  * ```
  */
-export interface Market {
-  /** On-chain contract ID for this order book. */
+export interface Market extends MarketSelection {
+  /** Contract used for standard trading on this market. */
+  canonical_contract_id?: ContractId;
+  /** Whether Turbo trading is currently connected. */
+  connected?: boolean;
+  /** Whether trading on this market is paused. */
+  paused?: boolean;
+  /** On-chain contract ID for this market. */
   contract_id: ContractId;
   /** Unique market identifier (0x-prefixed hex). */
   market_id: MarketId;
@@ -323,7 +335,7 @@ export interface MarketsResponse {
 /**
  * Summary statistics for a market over the last 24 hours.
  */
-export interface MarketSummary {
+export interface MarketSummary extends MarketSelection {
   /** Market identifier. */
   market_id: MarketId;
   /** Current price. */
@@ -343,7 +355,7 @@ export interface MarketSummary {
 /**
  * Real-time ticker data for a market.
  */
-export interface MarketTicker {
+export interface MarketTicker extends MarketSelection {
   /** Market identifier. */
   market_id: MarketId;
   /** Last traded price. */
@@ -400,7 +412,7 @@ export interface DepthChange {
  * console.log(`Best ask: ${depth.asks[0]?.price}`);
  * ```
  */
-export interface DepthSnapshot {
+export interface DepthSnapshot extends MarketSelection {
   /** Bid side of the order book, sorted by price descending. */
   bids: DepthLevel[];
   /** Ask side of the order book, sorted by price ascending. */
@@ -417,7 +429,7 @@ export interface DepthSnapshot {
  * quantity and drop the level when the sum reaches zero. {@link DepthBook}
  * maintains a book with these semantics.
  */
-export interface DepthUpdate {
+export interface DepthUpdate extends MarketSelection {
   /** The action type (`"subscribe_depth"` or `"subscribe_depth_update"`). */
   action: string;
   /** Signed incremental changes (present on updates). */
@@ -688,7 +700,7 @@ export type DesiredQuantity =
  * }
  * ```
  */
-export interface Order {
+export interface Order extends MarketSelection {
   /** Unique order identifier. */
   order_id: OrderId;
   /** Order side. */
@@ -734,7 +746,7 @@ export interface Order {
 /**
  * Response from the orders endpoint.
  */
-export interface OrdersResponse {
+export interface OrdersResponse extends MarketSelection {
   /** The account identity. */
   identity: Identity;
   /** The market identifier. */
@@ -892,7 +904,7 @@ export interface Bar {
 /**
  * A batch of actions targeting a specific market (wire format).
  */
-export interface MarketActions {
+export interface MarketActions extends MarketSelection {
   /** The target market identifier. */
   market_id: MarketId;
   /** The actions to execute on this market. */
@@ -1269,7 +1281,7 @@ export interface PairTicker {
  *
  * Received when orders are created, updated, or cancelled for a subscribed account.
  */
-export interface OrderUpdate {
+export interface OrderUpdate extends MarketSelection {
   /** The subscription action type. */
   action: string;
   /** Updated orders. */
@@ -1285,7 +1297,7 @@ export interface OrderUpdate {
  *
  * Received when new trades occur on a subscribed market.
  */
-export interface TradeUpdate {
+export interface TradeUpdate extends MarketSelection {
   /** The subscription action type. */
   action: string;
   /** New trades. */
@@ -1663,6 +1675,9 @@ export function parseMarket(raw: Record<string, unknown>): Market {
     ...(raw as unknown as Market),
     contract_id: hexIdTrusted<"ContractId">(raw.contract_id as string),
     market_id: hexIdTrusted<"MarketId">(raw.market_id as string),
+    ...(raw.canonical_contract_id
+      ? { canonical_contract_id: hexIdTrusted<"ContractId">(raw.canonical_contract_id as string) }
+      : {}),
     pair: `${baseAsset.symbol}/${quoteAsset.symbol}`,
     maker_fee: parseBigInt(raw.maker_fee),
     taker_fee: parseBigInt(raw.taker_fee),
@@ -1742,7 +1757,12 @@ export function parseOrderUpdate(raw: Record<string, unknown>): OrderUpdate {
   const rawOrders = (raw.orders ?? []) as Record<string, unknown>[];
   return {
     ...(raw as unknown as OrderUpdate),
-    orders: rawOrders.map(parseOrder),
+    orders: rawOrders.map((order) =>
+      parseOrder({
+        ...order,
+        ...(raw.turbo !== undefined ? { turbo: raw.turbo } : {}),
+      }),
+    ),
   };
 }
 

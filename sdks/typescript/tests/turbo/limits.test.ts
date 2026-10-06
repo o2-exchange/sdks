@@ -13,6 +13,7 @@ import {
   marginShortableBase,
 } from "../../src/turbo/limits.js";
 import type { Hex, MarginStateWire } from "../../src/turbo/wire.js";
+import { marginSession } from "../../src/turbo/wire.js";
 
 const COLLATERAL = "0xcccc000000000000000000000000000000000000000000000000000000000000" as Hex;
 const ETH = "0xeeee000000000000000000000000000000000000000000000000000000000000" as Hex;
@@ -332,5 +333,26 @@ describe("scaleDecimalString", () => {
     for (const bad of ["", ".", "abc", "1e6", "1,000", "0x10"]) {
       expect(() => scaleDecimalString(bad, 6)).toThrow(/Not a decimal number/);
     }
+  });
+});
+
+describe("perpetual tiers without rollover", () => {
+  it("applies static drawdown instead of freezing a newly opened prepaid session", () => {
+    const state = wire();
+    state.tier!.k = "4900000000";
+    state.tier!.threshold = "5050000000";
+    state.tier!.turbo = {
+      term_seconds: "18446744073709551615",
+      max_loss_bps: ["150", "150", "150", "150"],
+      rollover_profit_bps: "0",
+      max_rollovers: "0",
+    };
+    marginSession(state)!.collateral = "100000000";
+    state.balances = [];
+    delete state.rollover;
+    const limits = marginLimits(state, null, 0, COLLATERAL)!;
+    expect(limits.markToMarket).toBe(5000000000n);
+    expect(limits.liquidationThreshold).toBe(4925000000n);
+    expect(limits.stressFrozen).toBe(false);
   });
 });

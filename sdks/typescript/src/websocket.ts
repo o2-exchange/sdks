@@ -16,11 +16,15 @@
  */
 
 import type { NetworkConfig } from "./config.js";
+import { StreamResyncRequired } from "./errors.js";
+import { sameHex } from "./hex.js";
+import { selectionParams } from "./market-selection.js";
 import type {
   BalanceUpdate,
   DepthPrecision,
   DepthUpdate,
   Identity,
+  MarketSelection,
   NonceUpdate,
   OrderUpdate,
   TradeUpdate,
@@ -344,9 +348,14 @@ export class O2WebSocket {
    *   {@link O2Client.streamDepth} creates this automatically from a plain number.
    * @returns An async generator yielding {@link DepthUpdate} messages.
    */
-  async *streamDepth(marketId: string, precision: DepthPrecision): AsyncGenerator<DepthUpdate> {
+  async *streamDepth(
+    marketId: string,
+    precision: DepthPrecision,
+    selection: MarketSelection = {},
+  ): AsyncGenerator<DepthUpdate> {
     const sub = {
       action: "subscribe_depth",
+      ...selectionParams(selection),
       market_id: marketId,
       precision: precision as string,
     };
@@ -361,8 +370,15 @@ export class O2WebSocket {
    * Subscribe to order updates.
    * Returns an AsyncGenerator yielding OrderUpdate messages.
    */
-  async *streamOrders(identities: Identity[]): AsyncGenerator<OrderUpdate> {
-    const sub = { action: "subscribe_orders", identities };
+  async *streamOrders(
+    identities: Identity[],
+    selection: MarketSelection = {},
+  ): AsyncGenerator<OrderUpdate> {
+    const sub = {
+      action: "subscribe_orders",
+      identities,
+      ...selectionParams(selection),
+    };
     yield* this.subscribe<OrderUpdate>(sub, ["subscribe_orders"], parseOrderUpdate);
   }
 
@@ -370,8 +386,11 @@ export class O2WebSocket {
    * Subscribe to trade updates.
    * Returns an AsyncGenerator yielding TradeUpdate messages.
    */
-  async *streamTrades(marketId: string): AsyncGenerator<TradeUpdate> {
-    const sub = { action: "subscribe_trades", market_id: marketId };
+  async *streamTrades(
+    marketId: string,
+    selection: MarketSelection = {},
+  ): AsyncGenerator<TradeUpdate> {
+    const sub = { action: "subscribe_trades", market_id: marketId, ...selectionParams(selection) };
     yield* this.subscribe<TradeUpdate>(sub, ["subscribe_trades", "trades"], parseTradeUpdate);
   }
 
@@ -396,21 +415,24 @@ export class O2WebSocket {
   // ── Unsubscribe ─────────────────────────────────────────────────
 
   /** Unsubscribe from depth updates for a market. */
-  unsubscribeDepth(marketId: string): void {
-    this.send({ action: "unsubscribe_depth", market_id: marketId });
-    this.removePendingSub("subscribe_depth", marketId);
+  unsubscribeDepth(marketId: string, selection: MarketSelection = {}): void {
+    this.send({ action: "unsubscribe_depth", market_id: marketId, ...selectionParams(selection) });
+    this.removePendingSub("subscribe_depth", marketId, selection);
   }
 
   /** Unsubscribe from order updates. */
-  unsubscribeOrders(): void {
-    this.send({ action: "unsubscribe_orders" });
-    this.removePendingSub("subscribe_orders");
+  unsubscribeOrders(selection: MarketSelection = {}): void {
+    this.send({
+      action: "unsubscribe_orders",
+      ...selectionParams(selection),
+    });
+    this.removePendingSub("subscribe_orders", undefined, selection);
   }
 
   /** Unsubscribe from trade updates for a market. */
-  unsubscribeTrades(marketId: string): void {
-    this.send({ action: "unsubscribe_trades", market_id: marketId });
-    this.removePendingSub("subscribe_trades", marketId);
+  unsubscribeTrades(marketId: string, selection: MarketSelection = {}): void {
+    this.send({ action: "unsubscribe_trades", market_id: marketId, ...selectionParams(selection) });
+    this.removePendingSub("subscribe_trades", marketId, selection);
   }
 
   /** Unsubscribe from balance updates. */
@@ -460,7 +482,40 @@ export class O2WebSocket {
     let resolve: (() => void) | null = null;
     let done = false;
 
+    let failure: StreamResyncRequired | null = null;
+    const errorHandler = (msg: Record<string, unknown>) => {
+      if (
+        subscription.action !== "subscribe_trades" ||
+        subscription.turbo !== true ||
+        msg.turbo !== true ||
+        msg.resync_required !== true ||
+        typeof msg.market_id !== "string" ||
+        typeof subscription.market_id !== "string" ||
+        !sameHex(msg.market_id, subscription.market_id)
+      )
+        return;
+      failure = new StreamResyncRequired();
+      done = true;
+      queue.length = 0;
+      this.pendingSubscriptions = this.pendingSubscriptions.filter(
+        (s) => JSON.stringify(s) !== subKey,
+      );
+      resolve?.();
+      resolve = null;
+    };
+    let errorHandlers = this.handlers.get("error");
+    if (!errorHandlers) {
+      errorHandlers = new Set();
+      this.handlers.set("error", errorHandlers);
+    }
+    errorHandlers.add(errorHandler);
+
     const handler = (msg: Record<string, unknown>) => {
+      if (subscription.market_id && !sameHex(String(msg.market_id), String(subscription.market_id)))
+        return;
+      const venueScoped =
+        subscription.market_id !== undefined || subscription.action === "subscribe_orders";
+      if (venueScoped && !!msg.turbo !== !!subscription.turbo) return;
       let parsed: T;
       try {
         parsed = transform ? transform(msg) : (msg as T);
@@ -513,11 +568,14 @@ export class O2WebSocket {
           });
         }
       }
+      if (failure) throw failure;
       // Drain data queued before close handler set done=true.
       while (queue.length > 0) {
         yield queue.shift()!;
       }
     } finally {
+      errorHandlers.delete(errorHandler);
+      if (errorHandlers.size === 0) this.handlers.delete("error");
       // Clean up handlers
       for (const action of actions) {
         const handlers = this.handlers.get(action);
@@ -601,10 +659,15 @@ export class O2WebSocket {
     }, delay);
   }
 
-  protected removePendingSub(action: string, marketId?: string): void {
+  protected removePendingSub(
+    action: string,
+    marketId?: string,
+    selection: MarketSelection = {},
+  ): void {
     this.pendingSubscriptions = this.pendingSubscriptions.filter((s) => {
       if (s.action !== action) return true;
-      if (marketId && s.market_id !== marketId) return true;
+      if (marketId && !sameHex(String(s.market_id), marketId)) return true;
+      if (!!s.turbo !== !!selection.turbo) return true;
       return false;
     });
   }

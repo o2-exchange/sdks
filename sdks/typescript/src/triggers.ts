@@ -16,7 +16,7 @@
  * @module
  */
 
-import type { Numeric, OrderType, Side } from "./models.js";
+import type { MarketSelection, Numeric, OrderType, Side } from "./models.js";
 
 /** What a trigger becomes once it fires. */
 export type TriggerOrderKind =
@@ -396,7 +396,7 @@ export function boundedMarketFromSlippage(
 // ── Active orders ───────────────────────────────────────────────────
 
 /** One live trigger order, as `/v1/orders/active` reports it. */
-export interface ActiveTriggerOrder {
+export interface ActiveTriggerOrder extends MarketSelection {
   kind: "trigger";
   order_id: string;
   market_id?: string;
@@ -417,7 +417,7 @@ export interface ActiveSpotOrder {
 export type ActiveOrderEntry = ActiveSpotOrder | ActiveTriggerOrder;
 
 /** The `/v1/orders/active` payload. */
-export interface ActiveOrdersResponse {
+export interface ActiveOrdersResponse extends MarketSelection {
   identity: { ContractId: string };
   market_id: string;
   entries: ActiveOrderEntry[];

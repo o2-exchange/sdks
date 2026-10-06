@@ -8,10 +8,13 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
+import { MarketPaused, TurboDiscoveryUnavailable } from "../../src/errors.js";
+import type { Market } from "../../src/models.js";
 import { boundedMarket } from "../../src/triggers.js";
 import { TurboClient } from "../../src/turbo/client.js";
 import type { PreparedBatch, TurboHost } from "../../src/turbo/host.js";
 import type { Hex, MarginStateWire } from "../../src/turbo/wire.js";
+import { marginSession } from "../../src/turbo/wire.js";
 
 const POOL = "0xa000000000000000000000000000000000000000000000000000000000000001" as Hex;
 const REGISTRY = "0xa000000000000000000000000000000000000000000000000000000000000002" as Hex;
@@ -397,6 +400,33 @@ describe("lifecycle routing", () => {
     // Fetched at call time: the chain re-verifies the list, so a stale one
     // reverts rather than stranding value.
     expect(api.getMarginCloseCleanups).toHaveBeenCalledWith(CHILD);
+  });
+
+  it("still submits the pool close when a cleanup book is absent from discovery", async () => {
+    const { host, api, submitted } = makeHost();
+    const cleanups = [{ order_book_id: `0x${"99".repeat(32)}`, order_ids: [] }];
+    api.getMarginCloseCleanups.mockResolvedValue(cleanups);
+    await new TurboClient(host).use(CHILD).closeAccount(undefined, { flattenPositions: false });
+    expect(kindsOf(submitted.at(-1)!)).toEqual(["CloseMarginSession"]);
+    expect(submitted.at(-1)!.marketActions[0].actions[0]).toEqual({
+      CloseMarginSession: { margin_account_id: CHILD, cleanups },
+    });
+  });
+
+  it("keeps closure best-effort when cancellation, positions and repayment discovery fails", async () => {
+    const { host, submitted } = makeHost();
+    const fetch = host.fetchMarkets;
+    host.fetchMarkets = async (selection) => {
+      if (selection?.turbo) throw new Error("temporary discovery failure");
+      return fetch();
+    };
+    const client = new TurboClient(host).use(CHILD);
+    const positions = vi.spyOn(client, "positions");
+    const repayment = vi.spyOn(client, "repayInKind");
+    await client.closeAccount();
+    expect(positions).toHaveBeenCalled();
+    expect(repayment).toHaveBeenCalled();
+    expect(kindsOf(submitted.at(-1)!)).toEqual(["CloseMarginSession"]);
   });
 });
 
@@ -900,8 +930,9 @@ describe("regression: repayInKind sweeps before it repays", () => {
     });
 
   it("settles the book in the same batch as the repay", async () => {
-    const { host, submitted } = makeHost({ wire: withDebt() });
+    const { host, submitted, api } = makeHost({ wire: withDebt() });
     await new TurboClient(host).use(CHILD).repayInKind({ marginAccountId: CHILD });
+    expect(api.getMarginCloseCleanups).toHaveBeenCalledTimes(1);
     expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "Repay"]);
     const repay = submitted[0].marketActions[0].actions[1] as {
       Repay: { asset_id: string; amount: string };
@@ -909,6 +940,41 @@ describe("regression: repayInKind sweeps before it repays", () => {
     // Repays the SETTLED coins, which `on_account` alone could not see.
     expect(repay.Repay.amount).toBe("3999600");
     expect(repay.Repay.asset_id).toBe(ETH);
+  });
+
+  it.each([
+    { assetSide: "base", onAccount: "0", repaid: "3999600" },
+    { assetSide: "base", onAccount: "400", repaid: "4000000" },
+    { assetSide: "quote", onAccount: "0", repaid: "3999600" },
+    { assetSide: "quote", onAccount: "400", repaid: "4000000" },
+  ])("repays settled funds outside the tier ($assetSide, on account $onAccount)", async ({
+    assetSide,
+    onAccount,
+    repaid,
+  }) => {
+    const wire = withDebt();
+    wire.tier!.books = [];
+    wire.balances[1].on_account = onAccount;
+    const { host, submitted, api } = makeHost({ wire });
+    const market = MARKET as Market;
+    const cleanupMarket =
+      assetSide === "base" ? market : { ...market, base: market.quote, quote: market.base };
+    const fetch = host.fetchMarkets;
+    host.fetchMarkets = async () => ({ ...(await fetch()), markets: [cleanupMarket] });
+    api.getMarginCloseCleanups.mockResolvedValue([{ order_book_id: BOOK, order_ids: [] }]);
+
+    expect(await new TurboClient(host).use(CHILD).repayInKind()).toEqual([]);
+    expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "Repay"]);
+    expect(submitted[0].marketActions[0].actions[1]).toEqual({
+      Repay: { asset_id: ETH, amount: repaid },
+    });
+    if (onAccount === "400") {
+      expect(submitted).toHaveLength(1);
+    } else {
+      expect(submitted[1].marketActions[0].actions[0]).toEqual({
+        RepayBaseFromCollateral: { asset_id: ETH, amount: "400" },
+      });
+    }
   });
 
   it("converts the remainder out of collateral", async () => {
@@ -1343,5 +1409,227 @@ describe("regression: a clamped bounded close divides by the FUNDING price", () 
     // against, must not exceed what was actually drawn.
     const escrowAtBound = (2_100_000_000n * quantity) / 10n ** 9n;
     expect(escrowAtBound).toBeLessThanOrEqual(draw);
+  });
+});
+
+describe("Turbo 3.0 order book composition", () => {
+  const TURBO_BOOK = "0xbb00000000000000000000000000000000000000000000000000000000000001" as Hex;
+
+  function turboMarketHost() {
+    const wire = state();
+    wire.tier!.books = [TURBO_BOOK];
+    const { host, api, submitted } = makeHost({ wire });
+    const fetch = host.fetchMarkets;
+    const selected = {
+      ...(MARKET as Market),
+      turbo: true,
+      contract_id: TURBO_BOOK as never,
+      canonical_contract_id: BOOK as never,
+    };
+    host.fetchMarkets = async (selection) => ({
+      ...(await fetch()),
+      markets: selection?.turbo ? [selected] : [MARKET],
+    });
+    const derive = vi.spyOn(host, "spotActionToCall");
+    return { host, api, submitted, selected, derive, wire };
+  }
+
+  it("prices and submits a protected long on the Turbo order book while funding the same child", async () => {
+    const { host, api, submitted, selected, derive } = turboMarketHost();
+    api.getDepth.mockResolvedValue({
+      bids: [],
+      asks: [{ price: 2_000_000000n, quantity: 1_000000000n }],
+    } as never);
+    await new TurboClient(host)
+      .use(CHILD)
+      .long(
+        "fETH/fUSDC",
+        { quantity: "1" },
+        { stopLoss: { triggerPrice: "1800", limitPrice: "1790" } },
+      );
+    expect(api.getDepth).toHaveBeenCalledWith("eth-usdc", 10, 1, selected);
+    const batch = submitted.at(-1)!;
+    expect(batch.tradeAccountId).toBe(CHILD);
+    expect(batch.marketActions[0]).toMatchObject({ market_id: "eth-usdc", turbo: true });
+    expect(batch.marketActions[0].actions.map((action) => Object.keys(action)[0])).toEqual([
+      "SettleBalance",
+      "Draw",
+      "CreateOrderWithTriggers",
+    ]);
+    expect(derive.mock.calls.every(([, market]) => market.contract_id === TURBO_BOOK)).toBe(true);
+  });
+
+  it("rejects an explicit public order book when the pinned tier only grants the Turbo order book", async () => {
+    const { host, submitted } = turboMarketHost();
+    await expect(
+      new TurboClient(host).use(CHILD).long(MARKET, { quantity: "1" }, { price: "2000" }),
+    ).rejects.toThrow(/not allowed/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("does not substitute a public book when Turbo discovery fails", async () => {
+    const { host, submitted } = turboMarketHost();
+    const fetch = host.fetchMarkets;
+    host.fetchMarkets = async (selection) => {
+      if (selection?.turbo) throw new Error("Turbo market discovery unavailable");
+      return fetch();
+    };
+    await expect(
+      new TurboClient(host).use(CHILD).long("fETH/fUSDC", { quantity: "1" }, { price: "2000" }),
+    ).rejects.toThrow(/discovery unavailable/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("uses explicitly granted public books only for unsupported discovery", async () => {
+    const { host, submitted, wire } = turboMarketHost();
+    wire.tier!.books = [BOOK];
+    const fetch = host.fetchMarkets;
+    host.fetchMarkets = async (selection) => {
+      if (selection?.turbo) throw new TurboDiscoveryUnavailable();
+      return fetch();
+    };
+    await new TurboClient(host).use(CHILD).long("fETH/fUSDC", { quantity: "1" }, { price: "2000" });
+    expect(submitted.at(-1)!.marketActions[0].turbo).toBeUndefined();
+  });
+
+  it("propagates transient discovery failures even with public grants and during cleanup", async () => {
+    const { host, submitted, wire } = turboMarketHost();
+    wire.tier!.books = [BOOK];
+    const fetch = host.fetchMarkets;
+    const error = new Error("temporary catalog failure");
+    host.fetchMarkets = async (selection) => {
+      if (selection?.turbo) throw error;
+      return fetch();
+    };
+    const client = new TurboClient(host).use(CHILD);
+    await expect(client.long("fETH/fUSDC", { quantity: "1" }, { price: "2000" })).rejects.toBe(
+      error,
+    );
+    await expect((client as any).cancelChildOrders(CHILD)).rejects.toBe(error);
+    await expect(client.repayInKind()).rejects.toBe(error);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("routes cleanup by actual book even when that venue is outside the current tier", async () => {
+    const { host, api, submitted, derive } = turboMarketHost();
+    api.getMarginCloseCleanups.mockResolvedValue([
+      { order_book_id: BOOK, order_ids: [] },
+      { order_book_id: TURBO_BOOK, order_ids: [] },
+    ] as never);
+    api.getActiveOrders.mockResolvedValue({
+      entries: [
+        { kind: "trigger", order_id: "trigger" },
+        { kind: "order", order_id: "spot" },
+      ],
+    } as never);
+    await (new TurboClient(host).use(CHILD) as any).cancelChildOrders(CHILD);
+    expect(submitted.map((batch) => batch.marketActions[0].turbo)).toEqual([
+      undefined,
+      undefined,
+      true,
+      true,
+    ]);
+    expect(submitted[2].marketActions[0].actions.map((action) => Object.keys(action)[0])).toEqual([
+      "CancelTriggerOrder",
+      "CancelOrder",
+    ]);
+    expect(derive.mock.calls.map(([, market]) => market.contract_id)).toContain(TURBO_BOOK);
+    expect(api.getActiveOrders.mock.calls[1][4]).toMatchObject({
+      contract_id: TURBO_BOOK,
+      turbo: true,
+    });
+  });
+
+  it("cancels triggers and settles as the child on the selected book", async () => {
+    const { host, submitted, selected } = turboMarketHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await turbo.cancelTriggerOrder("trigger", selected);
+    await turbo.cancelOrder("spot", selected);
+    await turbo.settleBalance(selected);
+    expect(submitted.map((batch) => Object.keys(batch.marketActions[0].actions[0])[0])).toEqual([
+      "CancelTriggerOrder",
+      "CancelOrder",
+      "SettleBalance",
+    ]);
+    expect(
+      submitted.every(
+        (batch) =>
+          batch.tradeAccountId === CHILD &&
+          batch.parallelNonce !== undefined &&
+          batch.marketActions[0].turbo === true,
+      ),
+    ).toBe(true);
+    expect(submitted[2].marketActions[0].actions[0]).toEqual({
+      SettleBalance: { to: { ContractId: CHILD } },
+    });
+  });
+
+  it("propagates backend pause errors for cleanup", async () => {
+    const { host, selected } = turboMarketHost();
+    selected.paused = true;
+    const error = new MarketPaused();
+    const submit = vi.spyOn(host, "submitPrepared").mockRejectedValue(error);
+    const turbo = new TurboClient(host).use(CHILD);
+
+    await expect(turbo.cancelOrder("spot", selected)).rejects.toBe(error);
+    await expect(turbo.cancelTriggerOrder("trigger", selected)).rejects.toBe(error);
+    await expect(turbo.settleBalance(selected)).rejects.toBe(error);
+    expect(submit).toHaveBeenCalledTimes(3);
+  });
+
+  it("still rejects cleanup for a market not allowed by the account", async () => {
+    const { host, submitted } = turboMarketHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await expect(turbo.cancelOrder("spot", MARKET)).rejects.toThrow(/not allowed/);
+    await expect(turbo.cancelTriggerOrder("trigger", MARKET)).rejects.toThrow(/not allowed/);
+    await expect(turbo.settleBalance(MARKET)).rejects.toThrow(/not allowed/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it.each([
+    { connected: false, paused: false },
+    { connected: true, paused: true },
+  ])("allows cleanup when execution is unavailable ($connected, $paused)", async (availability) => {
+    const { host, submitted, selected, derive } = turboMarketHost();
+    Object.assign(selected, availability);
+    const turbo = new TurboClient(host).use(CHILD);
+
+    await turbo.cancelOrder("spot", selected);
+    await turbo.cancelTriggerOrder("trigger", "fETH/fUSDC");
+    await turbo.settleBalance("eth-usdc");
+
+    expect(submitted.map((batch) => kindsOf(batch))).toEqual([
+      ["CancelOrder"],
+      ["CancelTriggerOrder"],
+      ["SettleBalance"],
+    ]);
+    expect(submitted.every((batch) => batch.marketActions[0].turbo === true)).toBe(true);
+    expect(derive.mock.calls.every(([, market]) => market.contract_id === TURBO_BOOK)).toBe(true);
+  });
+
+  it.each([
+    { connected: false, paused: false },
+    { connected: true, paused: true },
+  ])("refuses unavailable Turbo trading before signing ($connected, $paused)", async (availability) => {
+    const { host, submitted, selected } = turboMarketHost();
+    Object.assign(selected, availability);
+    await expect(
+      new TurboClient(host).use(CHILD).long("fETH/fUSDC", { quantity: "1" }, { price: "2000" }),
+    ).rejects.toThrow(/disconnected/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it("accepts a perpetual tier and reports no remaining countdown", async () => {
+    const { host, wire } = turboMarketHost();
+    wire.tier!.turbo = {
+      term_seconds: "18446744073709551615",
+      max_loss_bps: ["0", "0", "0", "0"],
+      rollover_profit_bps: "0",
+      max_rollovers: "0",
+    };
+    marginSession(wire)!.expires_at = "18446744073709551615";
+    const client = new TurboClient(host).use(CHILD);
+    expect(client.sellablePeriods(wire.tier!)).toEqual(["Week"]);
+    expect((await client.snapshot()).secondsRemaining).toBeNull();
   });
 });
