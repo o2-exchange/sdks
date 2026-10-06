@@ -942,6 +942,41 @@ describe("regression: repayInKind sweeps before it repays", () => {
     expect(repay.Repay.asset_id).toBe(ETH);
   });
 
+  it.each([
+    { assetSide: "base", onAccount: "0", repaid: "3999600" },
+    { assetSide: "base", onAccount: "400", repaid: "4000000" },
+    { assetSide: "quote", onAccount: "0", repaid: "3999600" },
+    { assetSide: "quote", onAccount: "400", repaid: "4000000" },
+  ])("repays settled funds outside the tier ($assetSide, on account $onAccount)", async ({
+    assetSide,
+    onAccount,
+    repaid,
+  }) => {
+    const wire = withDebt();
+    wire.tier!.books = [];
+    wire.balances[1].on_account = onAccount;
+    const { host, submitted, api } = makeHost({ wire });
+    const market = MARKET as Market;
+    const cleanupMarket =
+      assetSide === "base" ? market : { ...market, base: market.quote, quote: market.base };
+    const fetch = host.fetchMarkets;
+    host.fetchMarkets = async () => ({ ...(await fetch()), markets: [cleanupMarket] });
+    api.getMarginCloseCleanups.mockResolvedValue([{ order_book_id: BOOK, order_ids: [] }]);
+
+    expect(await new TurboClient(host).use(CHILD).repayInKind()).toEqual([]);
+    expect(kindsOf(submitted[0])).toEqual(["SettleBalance", "Repay"]);
+    expect(submitted[0].marketActions[0].actions[1]).toEqual({
+      Repay: { asset_id: ETH, amount: repaid },
+    });
+    if (onAccount === "400") {
+      expect(submitted).toHaveLength(1);
+    } else {
+      expect(submitted[1].marketActions[0].actions[0]).toEqual({
+        RepayBaseFromCollateral: { asset_id: ETH, amount: "400" },
+      });
+    }
+  });
+
   it("converts the remainder out of collateral", async () => {
     const { host, submitted } = makeHost({ wire: withDebt() });
     await new TurboClient(host).use(CHILD).repayInKind({ marginAccountId: CHILD });

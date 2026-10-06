@@ -1009,17 +1009,17 @@ export class TurboClient {
       const market =
         markets.find((m) => m.turbo && sameHex(m.base.asset, assetId)) ??
         markets.find((m) => sameHex(m.base.asset, assetId));
-      const held = big(row.on_account) + (market ? big(row.settled) : 0n);
+      const books = cleanupBooks.filter(
+        (book) => sameHex(book.base.asset, assetId) || sameHex(book.quote.asset, assetId),
+      );
+      const sweepBooks = books.length ? books : market ? [market] : [];
+      const held = big(row.on_account) + (sweepBooks.length ? big(row.settled) : 0n);
       const payable = min(owed, held);
       let remaining = owed;
 
       if (payable > 0n) {
         try {
-          if (market && big(row.settled) > 0n) {
-            const books = cleanupBooks.filter(
-              (book) => sameHex(book.base.asset, assetId) || sameHex(book.quote.asset, assetId),
-            );
-            const sweepBooks = books.length ? books : [market];
+          if (sweepBooks.length && big(row.settled) > 0n) {
             for (const book of sweepBooks.slice(0, -1)) {
               await this.submitMixed(
                 [{ SettleBalance: { to: { ContractId: id } } }],
