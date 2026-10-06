@@ -27,8 +27,6 @@ for await (const update of stream) {
 The first message received is a full snapshot (`action: "subscribe_depth"`).
 Subsequent messages are incremental updates
 (`action: "subscribe_depth_update"`).
-When restarting a stream on the same connection, updates still queued from the
-previous subscription are ignored until the new snapshot arrives.
 
 ## Order Updates
 
@@ -112,28 +110,16 @@ await Promise.all([monitorDepth(), monitorOrders()]);
 
 ## Cleanup
 
-Breaking out of a loop or calling `await stream.return(undefined)` releases that
-stream immediately, including when a `next()` call is waiting for a message.
-Identical orders, trades, balances, and nonce subscriptions share one server
-subscription; the last consumer to finish sends the unsubscribe request.
-Explicit `unsubscribe*()` calls also end
-the corresponding local streams and discard their buffered messages.
-
-The server supports one orders subscription per venue, one balances or nonce
-subscription per connection, and one depth or trades subscription per market
-and venue. Spot and Turbo streams have independent ownership and routing.
-Consumers of the same topic
-must use identical parameters. Conflicting parameters reject the new stream;
-unsubscribe the current topic before changing its identities or precision.
-
-Depth allows only one consumer per market and venue on each connection. A second consumer
-rejects on its first read, even with identical precision, because an active topic
-cannot provide another initial snapshot. Use a separate `O2Client` or `O2WebSocket`
-connection when independent depth consumers need their own starting snapshots.
+Breaking a loop or calling `await stream.return(undefined)` releases that
+stream's handlers and reconnect entry, including when `next()` is waiting.
+The SDK sends an automatic unsubscribe only after the final active consumer of
+the topic stops. Explicit `unsubscribe*()` calls retain their existing behavior:
+they remove reconnect requests without ending local iterators or discarding
+queued messages. Use `stream.return(undefined)` to stop a local iterator.
 
 If you wrap a stream inside another async generator with `yield*`, returning the
-outer generator can still wait behind its pending read. Return the SDK stream
-directly or call the matching `unsubscribe*()` to cancel it immediately.
+outer generator can wait behind a pending read. Keep a reference to the SDK
+stream and return it directly when cancelling a pending read.
 
 When you are done streaming, disconnect the WebSocket:
 
@@ -153,40 +139,6 @@ drops. This behavior is controlled by the `O2WebSocket` options:
 
 Reconnection uses exponential backoff with jitter to avoid thundering herd
 effects.
-
-## Slow Consumers
-
-Each data or lifecycle stream buffers at most **1024 unread messages** by default.
-If it exceeds the limit, the SDK releases that stream's handlers, discards its
-buffer, and throws `WebSocketBufferOverflowError` on its next read. Other
-consumers keep running. Messages are not silently dropped from a live stream.
-Re-sync your state from REST before subscribing again, especially when applying
-incremental depth updates.
-
-Configure the limit with `maxBufferedMessages` on `O2WebSocket`, or through the
-high-level client:
-
-```ts
-import { O2Client, WebSocketBufferOverflowError } from "@o2exchange/sdk";
-
-const client = new O2Client({
-  webSocketOptions: { maxBufferedMessages: 256 },
-});
-
-try {
-  const stream = await client.streamOrders(tradeAccountId);
-  for await (const update of stream) {
-    // Process each update promptly.
-  }
-} catch (error) {
-  if (!(error instanceof WebSocketBufferOverflowError)) throw error;
-  // Re-fetch current orders, then start a new stream.
-}
-```
-
-The limit must be a positive safe integer. It bounds the number of queued
-messages, rather than their total bytes; memory use also depends on payload size
-and the number of active consumers.
 
 ## Direct WebSocket Access
 

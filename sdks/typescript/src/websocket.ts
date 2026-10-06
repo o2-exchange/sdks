@@ -17,6 +17,7 @@
 
 import type { NetworkConfig } from "./config.js";
 import { StreamResyncRequired } from "./errors.js";
+import { normaliseHex, sameHex } from "./hex.js";
 import { selectionParams } from "./market-selection.js";
 import type {
   BalanceUpdate,
@@ -29,7 +30,6 @@ import type {
   TradeUpdate,
 } from "./models.js";
 import {
-  hexIdTrusted,
   parseBalanceUpdate,
   parseDepthUpdate,
   parseNonceUpdate,
@@ -84,12 +84,6 @@ export interface O2WebSocketOptions {
   /** Inactivity timeout in milliseconds — triggers reconnect if no message is received (default: `60000`). */
   pongTimeoutMs?: number;
   /**
-   * Maximum unread messages per stream (default: `1024`). Must be a positive integer.
-   * Overflow ends the affected stream with {@link WebSocketBufferOverflowError};
-   * re-sync state from REST before starting a new stream.
-   */
-  maxBufferedMessages?: number;
-  /**
    * Optional WebSocket factory for custom runtimes/tests.
    * Defaults to `globalThis.WebSocket`.
    */
@@ -98,17 +92,8 @@ export interface O2WebSocketOptions {
 
 type MessageHandler = (data: Record<string, unknown>) => void;
 
-interface Subscription {
+interface SubscriptionConsumer {
   request: Record<string, unknown>;
-  consumers: Set<() => void>;
-}
-
-/** A stream fell behind its message buffer limit. Re-sync before subscribing again. */
-export class WebSocketBufferOverflowError extends Error {
-  constructor(readonly maxBufferedMessages: number) {
-    super(`WebSocket stream exceeded ${maxBufferedMessages} buffered messages; re-sync from REST`);
-    this.name = "WebSocketBufferOverflowError";
-  }
 }
 
 /**
@@ -138,7 +123,6 @@ export class O2WebSocket {
   protected readonly reconnectDelayMs: number;
   protected readonly pingIntervalMs: number;
   protected readonly pongTimeoutMs: number;
-  protected readonly maxBufferedMessages: number;
   protected readonly webSocketFactory?: (url: string) => WebSocket;
   protected reconnectAttempts = 0;
   protected reconnecting = false;
@@ -151,7 +135,8 @@ export class O2WebSocket {
   protected closing = false;
   protected terminated = false;
   protected lastMessage = 0;
-  protected pendingSubscriptions = new Map<string, Subscription>();
+  protected pendingSubscriptions: Array<Record<string, unknown>> = [];
+  private subscriptionConsumers = new Map<string, Set<SubscriptionConsumer>>();
 
   constructor(options: O2WebSocketOptions) {
     this.url = options.config.wsUrl;
@@ -160,10 +145,6 @@ export class O2WebSocket {
     this.reconnectDelayMs = options.reconnectDelayMs ?? 1000;
     this.pingIntervalMs = options.pingIntervalMs ?? 30000;
     this.pongTimeoutMs = options.pongTimeoutMs ?? 60000;
-    this.maxBufferedMessages = options.maxBufferedMessages ?? 1024;
-    if (!Number.isSafeInteger(this.maxBufferedMessages) || this.maxBufferedMessages < 1) {
-      throw new RangeError("maxBufferedMessages must be a positive safe integer");
-    }
     this.webSocketFactory = options.webSocketFactory;
   }
 
@@ -208,8 +189,8 @@ export class O2WebSocket {
       this.lastMessage = Date.now();
       this.startPingInterval();
       // Re-subscribe after reconnect
-      for (const sub of this.pendingSubscriptions.values()) {
-        this.send(sub.request);
+      for (const sub of this.pendingSubscriptions) {
+        this.send(sub);
       }
       if (this.reconnecting) {
         this.reconnecting = false;
@@ -340,10 +321,81 @@ export class O2WebSocket {
    * ```
    */
   streamLifecycle(): AsyncGenerator<ConnectionEvent> {
-    return this.createStream<ConnectionEvent>(
-      ["__lifecycle__"],
-      (msg) => msg as unknown as ConnectionEvent,
-    );
+    const queue: ConnectionEvent[] = [];
+    let resolve: (() => void) | null = null;
+    let done = false;
+    let registered = false;
+
+    const handler = (msg: Record<string, unknown>) => {
+      queue.push(msg as unknown as ConnectionEvent);
+      if (resolve) {
+        resolve();
+        resolve = null;
+      }
+    };
+
+    const closeHandler = () => stop(true);
+    const stop = (drain = false) => {
+      done = true;
+      if (!drain) queue.length = 0;
+      if (registered) {
+        registered = false;
+        for (const [action, listener] of [
+          ["__lifecycle__", handler],
+          ["__close__", closeHandler],
+        ] as const) {
+          const handlers = this.handlers.get(action);
+          handlers?.delete(listener);
+          if (handlers?.size === 0) this.handlers.delete(action);
+        }
+      }
+      resolve?.();
+      resolve = null;
+    };
+    const start = () => {
+      if (registered || done) return;
+      if (this.terminated) {
+        stop();
+        return;
+      }
+      registered = true;
+      for (const [action, listener] of [
+        ["__lifecycle__", handler],
+        ["__close__", closeHandler],
+      ] as const) {
+        let handlers = this.handlers.get(action);
+        if (!handlers) {
+          handlers = new Set();
+          this.handlers.set(action, handlers);
+        }
+        handlers.add(listener);
+      }
+    };
+
+    const iterator = (async function* (): AsyncGenerator<ConnectionEvent> {
+      try {
+        while (!done) {
+          if (queue.length > 0) {
+            yield queue.shift()!;
+          } else {
+            await new Promise<void>((r) => {
+              resolve = r;
+            });
+          }
+        }
+        // Drain events queued before done was set. disconnect() emits
+        // the "closed" lifecycle event synchronously before firing close
+        // handlers that set done=true — so the event is in the queue but
+        // the while-loop exits before yielding it. This ensures consumers
+        // always receive the terminal "closed" event.
+        while (queue.length > 0) {
+          yield queue.shift()!;
+        }
+      } finally {
+        stop();
+      }
+    })();
+    return cancellableIterator(iterator, start, stop);
   }
 
   // ── Subscription streams ────────────────────────────────────────
@@ -365,7 +417,7 @@ export class O2WebSocket {
     const sub = {
       action: "subscribe_depth",
       ...selectionParams(selection),
-      market_id: hexIdTrusted<"MarketId">(marketId),
+      market_id: marketId,
       precision: precision as string,
     };
     return this.subscribe<DepthUpdate>(
@@ -394,7 +446,7 @@ export class O2WebSocket {
   streamTrades(marketId: string, selection: MarketSelection = {}): AsyncGenerator<TradeUpdate> {
     const sub = {
       action: "subscribe_trades",
-      market_id: hexIdTrusted<"MarketId">(marketId),
+      market_id: marketId,
       ...selectionParams(selection),
     };
     return this.subscribe<TradeUpdate>(sub, ["subscribe_trades", "trades"], parseTradeUpdate);
@@ -422,34 +474,32 @@ export class O2WebSocket {
 
   /** Unsubscribe from depth updates for a market. */
   unsubscribeDepth(marketId: string, selection: MarketSelection = {}): void {
-    marketId = hexIdTrusted<"MarketId">(marketId);
-    this.removePendingSub("subscribe_depth", marketId, selection);
     this.send({ action: "unsubscribe_depth", market_id: marketId, ...selectionParams(selection) });
+    this.removePendingSub("subscribe_depth", marketId, selection);
   }
 
   /** Unsubscribe from order updates. */
   unsubscribeOrders(selection: MarketSelection = {}): void {
-    this.removePendingSub("subscribe_orders", undefined, selection);
     this.send({ action: "unsubscribe_orders", ...selectionParams(selection) });
+    this.removePendingSub("subscribe_orders", undefined, selection);
   }
 
   /** Unsubscribe from trade updates for a market. */
   unsubscribeTrades(marketId: string, selection: MarketSelection = {}): void {
-    marketId = hexIdTrusted<"MarketId">(marketId);
-    this.removePendingSub("subscribe_trades", marketId, selection);
     this.send({ action: "unsubscribe_trades", market_id: marketId, ...selectionParams(selection) });
+    this.removePendingSub("subscribe_trades", marketId, selection);
   }
 
   /** Unsubscribe from balance updates. */
   unsubscribeBalances(identities: Identity[]): void {
-    this.removePendingSub("subscribe_balances");
     this.send({ action: "unsubscribe_balances", identities });
+    this.removePendingSub("subscribe_balances");
   }
 
   /** Unsubscribe from nonce updates. */
   unsubscribeNonce(identities: Identity[]): void {
-    this.removePendingSub("subscribe_nonce");
     this.send({ action: "unsubscribe_nonce", identities });
+    this.removePendingSub("subscribe_nonce");
   }
 
   // ── Internal ────────────────────────────────────────────────────
@@ -473,176 +523,145 @@ export class O2WebSocket {
     actions: string[],
     transform?: (raw: Record<string, unknown>) => T,
   ): AsyncGenerator<T> {
-    // Snapshot inputs so caller mutation cannot change reconnect/cleanup ownership.
-    const request = JSON.parse(JSON.stringify(subscription)) as Record<string, unknown>;
-    if (typeof request.market_id === "string") {
-      request.market_id = hexIdTrusted<"MarketId">(request.market_id);
-    }
-    return this.createStream(actions, transform, request);
-  }
-
-  private createStream<T>(
-    actions: string[],
-    transform?: (raw: Record<string, unknown>) => T,
-    request?: Record<string, unknown>,
-  ): AsyncGenerator<T> {
+    // Create a queue-based async generator
     const queue: T[] = [];
-    let wake: (() => void) | null = null;
+    let resolve: (() => void) | null = null;
     let done = false;
-    let failure: Error | undefined;
     let registered = false;
-    let subscription: Subscription | undefined;
-    let awaitingDepthSnapshot = request?.action === "subscribe_depth";
-    const key = request
-      ? this.subscriptionKey(request.action as string, request.market_id, {
-          turbo: request.turbo === true,
-        })
-      : "";
+    let consumers: Set<SubscriptionConsumer> | undefined;
+    let consumer: SubscriptionConsumer | undefined;
+    const key = this.subscriptionKey(subscription.action as string, subscription.market_id, {
+      turbo: subscription.turbo === true,
+    });
 
-    const stop = (drain = false, error?: Error) => {
-      done = true;
-      failure ??= error;
-      if (!drain) queue.length = 0;
-      if (registered) {
-        registered = false;
-        for (const [action, streamHandler] of streamHandlers) {
-          const handlers = this.handlers.get(action);
-          handlers?.delete(streamHandler);
-          if (handlers?.size === 0) this.handlers.delete(action);
-        }
-        subscription?.consumers.delete(cancel);
-        // An old generator must never release a new subscription to the same topic.
-        if (
-          subscription?.consumers.size === 0 &&
-          this.pendingSubscriptions.get(key) === subscription
-        ) {
-          this.pendingSubscriptions.delete(key);
-          this.sendUnsubscribe(subscription.request);
-        }
-      }
-      wake?.();
-      wake = null;
-    };
-    const cancel = () => stop();
-    const closeHandler = () => stop(true);
-    const handler: MessageHandler = (msg) => {
-      if (done) return;
-      // Market-scoped streams share response actions, but not message queues.
+    let failure: StreamResyncRequired | null = null;
+    const errorHandler = (msg: Record<string, unknown>) => {
       if (
-        request?.market_id !== undefined &&
-        (typeof msg.market_id !== "string" ||
-          hexIdTrusted<"MarketId">(msg.market_id) !== request.market_id)
-      )
-        return;
-      const venueScoped =
-        request?.market_id !== undefined || request?.action === "subscribe_orders";
-      if (venueScoped && !!msg.turbo !== !!request?.turbo) return;
-      // Updates queued by a previous subscription can arrive after resubscribe.
-      // A fresh depth consumer must start from its new snapshot, not stale deltas.
-      if (
-        awaitingDepthSnapshot &&
-        (msg.action !== "subscribe_depth" || (msg.orders ?? msg.view) == null)
-      )
-        return;
-      let parsed: T;
-      try {
-        parsed = transform ? transform(msg) : (msg as T);
-      } catch {
-        // Malformed payloads must not unwind through the socket event handler.
-        return;
-      }
-      awaitingDepthSnapshot = false;
-      if (queue.length >= this.maxBufferedMessages) {
-        stop(false, new WebSocketBufferOverflowError(this.maxBufferedMessages));
-        return;
-      }
-      queue.push(parsed);
-      wake?.();
-      wake = null;
-    };
-
-    const errorHandler: MessageHandler = (msg) => {
-      if (
-        done ||
-        request?.action !== "subscribe_trades" ||
-        request.turbo !== true ||
+        subscription.action !== "subscribe_trades" ||
+        subscription.turbo !== true ||
         msg.turbo !== true ||
         msg.resync_required !== true ||
         typeof msg.market_id !== "string" ||
-        hexIdTrusted<"MarketId">(msg.market_id) !== request.market_id
+        typeof subscription.market_id !== "string" ||
+        !sameHex(msg.market_id, subscription.market_id)
       )
         return;
       stop(false, new StreamResyncRequired());
     };
-    const streamHandlers = new Map<string, MessageHandler>(
-      actions.map((action) => [action, handler]),
-    );
-    streamHandlers.set("__close__", closeHandler);
-    if (request?.action === "subscribe_trades" && request.turbo === true)
-      streamHandlers.set("error", errorHandler);
 
-    const client = this;
+    const handler = (msg: Record<string, unknown>) => {
+      if (done) return;
+      if (subscription.market_id && !sameHex(String(msg.market_id), String(subscription.market_id)))
+        return;
+      const venueScoped =
+        subscription.market_id !== undefined || subscription.action === "subscribe_orders";
+      if (venueScoped && !!msg.turbo !== !!subscription.turbo) return;
+      let parsed: T;
+      try {
+        parsed = transform ? transform(msg) : (msg as T);
+      } catch {
+        // Drop malformed payloads instead of letting parser exceptions
+        // unwind through the WebSocket message event path.
+        return;
+      }
+      queue.push(parsed);
+      if (resolve) {
+        resolve();
+        resolve = null;
+      }
+    };
+
+    const closeHandler = () => stop(true);
+    const stop = (drain = false, error?: StreamResyncRequired) => {
+      done = true;
+      failure ??= error ?? null;
+      if (!drain) queue.length = 0;
+      if (registered) {
+        registered = false;
+        for (const [action, listener] of [
+          ...actions.map((action) => [action, handler] as const),
+          ["error", errorHandler] as const,
+          ["__close__", closeHandler] as const,
+        ]) {
+          const handlers = this.handlers.get(action);
+          handlers?.delete(listener);
+          if (handlers?.size === 0) this.handlers.delete(action);
+        }
+        if (consumer && consumers) {
+          consumers.delete(consumer);
+          // Old iterators must not unsubscribe a topic replaced after explicit
+          // unsubscribe or disconnect; queued-data behavior remains unchanged.
+          if (this.subscriptionConsumers.get(key) === consumers) {
+            const request = consumer.request;
+            if (![...consumers].some((owner) => owner.request === request)) {
+              this.pendingSubscriptions = this.pendingSubscriptions.filter(
+                (sub) => sub !== request,
+              );
+            }
+            if (consumers.size === 0) {
+              this.subscriptionConsumers.delete(key);
+              this.sendUnsubscribe(subscription);
+            }
+          }
+        }
+      }
+      resolve?.();
+      resolve = null;
+    };
+    const start = () => {
+      if (registered || done) return;
+      if (this.terminated) {
+        stop();
+        return;
+      }
+      // Preserve the request array's content deduplication and per-consumer sends.
+      const subKey = JSON.stringify(subscription);
+      const pending = this.pendingSubscriptions.find((sub) => JSON.stringify(sub) === subKey);
+      consumers = this.subscriptionConsumers.get(key);
+      if (!consumers) {
+        consumers = new Set();
+        this.subscriptionConsumers.set(key, consumers);
+      }
+      consumer = { request: pending ?? subscription };
+      if (!pending) this.pendingSubscriptions.push(subscription);
+      consumers.add(consumer);
+      registered = true;
+      for (const [action, listener] of [
+        ...actions.map((action) => [action, handler] as const),
+        ["error", errorHandler] as const,
+        ["__close__", closeHandler] as const,
+      ]) {
+        let handlers = this.handlers.get(action);
+        if (!handlers) {
+          handlers = new Set();
+          this.handlers.set(action, handlers);
+        }
+        handlers.add(listener);
+      }
+      this.send(subscription);
+    };
+
     const iterator = (async function* (): AsyncGenerator<T> {
       try {
-        if (done || client.terminated) return;
-        let firstConsumer = false;
-        if (request) {
-          subscription = client.pendingSubscriptions.get(key);
-          if (subscription && JSON.stringify(subscription.request) !== JSON.stringify(request)) {
-            throw new Error(
-              `Already subscribed to ${request.action} with different parameters; unsubscribe first`,
-            );
-          }
-          if (subscription && request.action === "subscribe_depth") {
-            throw new Error(
-              "A depth stream is already active for this market; use a separate WebSocket connection for an independent snapshot",
-            );
-          }
-          if (!subscription) {
-            subscription = { request, consumers: new Set() };
-            client.pendingSubscriptions.set(key, subscription);
-            firstConsumer = true;
-          }
-          subscription.consumers.add(cancel);
-        }
-        registered = true;
-        for (const [action, streamHandler] of streamHandlers) {
-          let handlers = client.handlers.get(action);
-          if (!handlers) {
-            handlers = new Set();
-            client.handlers.set(action, handlers);
-          }
-          handlers.add(streamHandler);
-        }
-        if (firstConsumer && request) client.send(request);
-
-        while (!done || queue.length > 0) {
-          if (failure) throw failure;
-          if (queue.length > 0) yield queue.shift()!;
-          else
-            await new Promise<void>((resolve) => {
-              wake = resolve;
+        while (!done) {
+          if (queue.length > 0) {
+            yield queue.shift()!;
+          } else {
+            await new Promise<void>((r) => {
+              resolve = r;
             });
+          }
         }
         if (failure) throw failure;
+        // Drain data queued before close handler set done=true.
+        while (queue.length > 0) {
+          yield queue.shift()!;
+        }
       } finally {
         stop();
       }
     })();
-
-    // Native return()/throw() wait behind a pending next(). Wake it and release
-    // handlers immediately so cancellation never depends on another server message.
-    const returnIterator = iterator.return.bind(iterator);
-    iterator.return = (value) => {
-      stop();
-      return returnIterator(value);
-    };
-    const throwIterator = iterator.throw.bind(iterator);
-    iterator.throw = (error) => {
-      stop();
-      return throwIterator(error);
-    };
-    return iterator;
+    return cancellableIterator(iterator, start, stop);
   }
 
   protected startPingInterval(): void {
@@ -714,7 +733,8 @@ export class O2WebSocket {
     this.reconnecting = false;
     this.cancelReconnect();
     // Clear ownership before closing streams to avoid sending unsubscribes on teardown.
-    this.pendingSubscriptions.clear();
+    this.pendingSubscriptions = [];
+    this.subscriptionConsumers.clear();
     this.emitLifecycle("closed", this.reconnectAttempts, message);
     for (const handler of [...(this.handlers.get("__close__") ?? [])]) handler({});
     this.handlers.clear();
@@ -725,7 +745,7 @@ export class O2WebSocket {
     marketId?: unknown,
     selection: MarketSelection = {},
   ): string {
-    const market = typeof marketId === "string" ? hexIdTrusted<"MarketId">(marketId) : null;
+    const market = typeof marketId === "string" ? normaliseHex(marketId) : null;
     return JSON.stringify([action, market, !!selection.turbo]);
   }
 
@@ -743,11 +763,44 @@ export class O2WebSocket {
     marketId?: string,
     selection: MarketSelection = {},
   ): void {
-    const key = this.subscriptionKey(action, marketId, selection);
-    const subscription = this.pendingSubscriptions.get(key);
-    this.pendingSubscriptions.delete(key);
-    for (const stop of subscription?.consumers ?? []) stop();
+    this.pendingSubscriptions = this.pendingSubscriptions.filter((s) => {
+      if (s.action !== action) return true;
+      if (marketId && !sameHex(String(s.market_id), marketId)) return true;
+      if (!!s.turbo !== !!selection.turbo) return true;
+      this.subscriptionConsumers.delete(this.subscriptionKey(action, s.market_id, selection));
+      return false;
+    });
   }
+}
+
+// Native return()/throw() queue behind a pending next(). Release its resources
+// and wake the read before delegating, without registering an unstarted iterator.
+function cancellableIterator<T>(
+  iterator: AsyncGenerator<T>,
+  start: () => void,
+  stop: () => void,
+): AsyncGenerator<T> {
+  const next = iterator.next.bind(iterator);
+  iterator.next = (...args) => {
+    try {
+      start();
+    } catch (error) {
+      stop();
+      return Promise.reject(error);
+    }
+    return next(...args);
+  };
+  const returnIterator = iterator.return.bind(iterator);
+  iterator.return = (value) => {
+    stop();
+    return returnIterator(value);
+  };
+  const throwIterator = iterator.throw.bind(iterator);
+  iterator.throw = (error) => {
+    stop();
+    return throwIterator(error);
+  };
+  return iterator;
 }
 
 function createDefaultWebSocket(url: string): WebSocket {
