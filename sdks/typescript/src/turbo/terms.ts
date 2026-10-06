@@ -91,10 +91,10 @@ export function turboLossFloor(
   terms: TurboTermsWire | null,
   rollover: TurboRollover | null,
 ): bigint | null {
-  if (!tier || !terms || !rollover) return null;
+  if (!tier || !terms) return null;
   if (!drawdownOffered(terms)) return null;
   const line = big(tier.line);
-  const allowance = (line * drawdownBps(terms, rollover.rolloversUsed)) / 10_000n;
+  const allowance = (line * drawdownBps(terms, rollover?.rolloversUsed ?? 0n)) / 10_000n;
   const floor = line - allowance;
   return floor < 0n ? 0n : floor;
 }
@@ -126,4 +126,16 @@ export function marginFreezeLine(wire: MarginStateWire | null | undefined): bigi
   const floor = turboLossFloor(tier, turboTermsOf(tier), marginRolloverOf(wire));
   if (floor === null) return big(tier.k) + big(tier.open_buffer);
   return floor + (big(tier.open_buffer) - big(tier.maintenance));
+}
+
+/** No-expiry sentinel (including imprecise JSON-number representations). */
+export function isPerpetualTerm(value: unknown): boolean {
+  const raw =
+    typeof value === "object" && value !== null && "unix" in value
+      ? (value as { unix: unknown }).unix
+      : value;
+  if (typeof raw !== "string" && typeof raw !== "number" && typeof raw !== "bigint") return false;
+  if (typeof raw === "string" && !/^\d+$/.test(raw)) return false;
+  if (typeof raw === "number" && (!Number.isFinite(raw) || !Number.isInteger(raw))) return false;
+  return BigInt(raw) >= 100n * 365n * 24n * 60n * 60n;
 }

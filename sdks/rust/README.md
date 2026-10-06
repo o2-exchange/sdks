@@ -208,6 +208,7 @@ Identifier usage:
 | `create_session(&wallet, markets, ttl)` | Create a trading session |
 | `create_order(&mut session, market_symbol, side, price, qty, ...)` | Place an order |
 | `create_shared_order(&mut session, market_symbol, side, price, qty, ...)` | Place a shared PostOnly order |
+| `create_shared_order_with_type(&mut session, market_symbol, side, price, qty, type, ...)` | Place a shared Spot or PostOnly order |
 | `cancel_order(&mut session, order_id, market)` | Cancel a specific order |
 | `cancel_all_orders(&mut session, market)` | Cancel all open orders |
 | `settle_balance(&mut session, market)` | Settle filled order proceeds |
@@ -222,7 +223,8 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 
 ### Shared orders
 
-Eligible accounts can place PostOnly orders that may also be available in Turbo markets:
+Eligible accounts can place Spot or PostOnly orders that may also be available
+in Turbo markets. PostOnly is the default:
 
 ```rust
 let actions = client.actions_for("fETH/fUSDC").await?
@@ -230,9 +232,16 @@ let actions = client.actions_for("fETH/fUSDC").await?
     .create_shared_order(Side::Buy, "2000", "0.1")
     .build()?;
 client.batch_actions(&mut session, "fETH/fUSDC", actions, true).await?;
+
+let actions = client.actions_for("fETH/fUSDC").await?
+    .create_shared_order_with_type(Side::Buy, "2000", "0.1", OrderType::Spot)
+    .build()?;
+client.batch_actions(&mut session, "fETH/fUSDC", actions, true).await?;
 ```
 
-Use this only when the market and account are enabled for sharing. Otherwise the request may be rejected or placed as an ordinary PostOnly order. Existing `create_order` calls remain unchanged.
+Use this only when the market and account are enabled for sharing. Otherwise
+the request may be rejected or placed as an ordinary order of the selected
+type. Existing `create_order` calls remain unchanged.
 
 To execute against available Turbo orders using an existing resting order,
 provide its order ID and execution limits:

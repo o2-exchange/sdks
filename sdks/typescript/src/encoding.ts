@@ -73,6 +73,7 @@ export type OrderTypeVariant =
   | "FillOrKill"
   | "PostOnly"
   | "Market"
+  | "TurboSharedSpot"
   | "TurboSharedPostOnly"
   | { Limit: { price: bigint; timestamp: bigint } }
   | { BoundedMarket: { maxPrice: bigint; minPrice: bigint } };
@@ -88,6 +89,7 @@ export type OrderTypeVariant =
  *   PostOnly(3):      u64(3)                                   [8 bytes]
  *   Market(4):        u64(4)                                   [8 bytes]
  *   BoundedMarket(5): u64(5) + u64(maxPrice) + u64(minPrice)  [24 bytes]
+ *   TurboSharedSpot(6): u64(6)                                [8 bytes]
  *   TurboSharedPostOnly(7): u64(7)                            [8 bytes]
  */
 export function encodeOrderArgs(
@@ -105,6 +107,8 @@ export function encodeOrderArgs(
     parts.push(u64BE(3));
   } else if (orderType === "Market") {
     parts.push(u64BE(4));
+  } else if (orderType === "TurboSharedSpot") {
+    parts.push(u64BE(6));
   } else if (orderType === "TurboSharedPostOnly") {
     parts.push(u64BE(7));
   } else if (typeof orderType === "object" && "Limit" in orderType) {
@@ -256,7 +260,12 @@ export interface CreateOrderAction {
 }
 
 export interface CreateSharedOrderAction {
-  CreateSharedOrder: { side: "buy" | "sell" | "Buy" | "Sell"; price: string; quantity: string };
+  CreateSharedOrder: {
+    side: "buy" | "sell" | "Buy" | "Sell";
+    price: string;
+    quantity: string;
+    order_type?: "Spot" | "PostOnly";
+  };
 }
 
 export interface ExecuteTurboOrdersAction {
@@ -395,9 +404,16 @@ export function actionToCall(
     const price = BigInt(data.price);
     const quantity = BigInt(data.quantity);
     const baseDecimals = market.base.decimals;
-    const otVariant = shared
-      ? "TurboSharedPostOnly"
-      : parseOrderTypeJSON(action.CreateOrder.order_type);
+    let otVariant: OrderTypeVariant;
+    if (shared) {
+      const sharedType = action.CreateSharedOrder.order_type ?? "PostOnly";
+      if (sharedType !== "Spot" && sharedType !== "PostOnly") {
+        throw new Error("Shared order type must be Spot or PostOnly");
+      }
+      otVariant = sharedType === "Spot" ? "TurboSharedSpot" : "TurboSharedPostOnly";
+    } else {
+      otVariant = parseOrderTypeJSON(action.CreateOrder.order_type);
+    }
     const callData = encodeOrderArgs(price, quantity, otVariant);
 
     let amount: bigint;

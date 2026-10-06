@@ -10,6 +10,8 @@
  * @module
  */
 
+export { normaliseHex, sameHex } from "../hex.js";
+
 /** A 0x-prefixed hex string. */
 export type Hex = `0x${string}`;
 
@@ -229,24 +231,6 @@ export function marginSession(wire: MarginStateWire | null | undefined): MarginS
   return session as MarginSessionWire;
 }
 
-/** Lowercase a hex id for comparison. */
-export function normaliseHex(id: string): Hex {
-  const value = id.startsWith("0x") ? id : `0x${id}`;
-  return value.toLowerCase() as Hex;
-}
-
-/**
- * Compare two hex ids.
- *
- * Not decorative: tier asset lists come back as BARE hex while market ids
- * carry `0x`, so a plain `===` matches nothing and every market reads as
- * allowed.
- */
-export function sameHex(a: string | null | undefined, b: string | null | undefined): boolean {
-  if (!a || !b) return false;
-  return normaliseHex(a) === normaliseHex(b);
-}
-
 /**
  * The deployment's margin wiring, as `/v1/markets` carries it.
  *
@@ -270,4 +254,17 @@ export interface MarginWiringWire {
    * one makes the client refuse sizes the chain would take.
    */
   stress_band_bps?: string;
+}
+
+/** Rolling executed volume, in raw collateral units. Informational only. */
+export interface TurboVolumeWire {
+  turbo_account_id: string;
+  volume: string;
+  collateral_decimals: number;
+  window_start: number;
+  window_end: number;
+  as_of: number;
+  indexed_at: number;
+  indexed_block: string;
+  window_days: number;
 }

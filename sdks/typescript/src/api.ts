@@ -14,7 +14,15 @@
  */
 
 import type { NetworkConfig } from "./config.js";
-import { isActionsSuccess, O2Error, parseApiError, RateLimitExceeded } from "./errors.js";
+import {
+  isActionsSuccess,
+  O2Error,
+  parseApiError,
+  RateLimitExceeded,
+  TurboDiscoveryUnavailable,
+} from "./errors.js";
+import { assertMarketSelection, selectionParams } from "./market-selection.js";
+import type { MarketSelection } from "./models.js";
 import {
   type AccountInfo,
   type AggregatedAsset,
@@ -55,6 +63,7 @@ import {
   type WithdrawResponse,
 } from "./models.js";
 import type { ActiveOrdersResponse } from "./triggers.js";
+import { canonicalTurboAccountId } from "./turbo/identity.js";
 import type { NonceWindow } from "./turbo/parallelNonce.js";
 import type {
   SignedEnvelope,
@@ -70,6 +79,7 @@ import type {
   MarginWiringWire,
   NextMarginAccount,
   OrderBookCleanup,
+  TurboVolumeWire,
 } from "./turbo/wire.js";
 
 /**
@@ -285,9 +295,15 @@ export class O2Api {
   // ── Market Data ─────────────────────────────────────────────────
 
   /** Fetch all markets and global registry configuration. */
-  async getMarkets(): Promise<MarketsResponse> {
-    const raw = await this.get<Record<string, unknown>>("/v1/markets");
+  async getMarkets(selection: MarketSelection = {}): Promise<MarketsResponse> {
+    const raw = await this.get<Record<string, unknown>>("/v1/markets", selectionParams(selection));
     const rawMarkets = raw.markets as Record<string, unknown>[];
+    if (selection.turbo) {
+      if (!rawMarkets.every((market) => market.turbo === true && market.canonical_contract_id))
+        throw new TurboDiscoveryUnavailable();
+    } else {
+      assertMarketSelection(rawMarkets, selection);
+    }
     return {
       books_registry_id: hexIdTrusted<"ContractId">(raw.books_registry_id as string),
       accounts_registry_id: hexIdTrusted<"ContractId">(raw.accounts_registry_id as string),
@@ -307,20 +323,31 @@ export class O2Api {
    * Fetch 24-hour market summary statistics.
    * @param marketId - The market identifier.
    */
-  async getMarketSummary(marketId: MarketId): Promise<MarketSummary> {
-    return this.get<MarketSummary>("/v1/markets/summary", {
+  async getMarketSummary(
+    marketId: MarketId,
+    selection: MarketSelection = {},
+  ): Promise<MarketSummary> {
+    const data = await this.get<MarketSummary>("/v1/markets/summary", {
+      ...selectionParams(selection),
       market_id: marketId,
     });
+    assertMarketSelection(data, selection);
+    return data;
   }
 
   /**
    * Fetch real-time ticker data for a market.
    * @param marketId - The market identifier.
    */
-  async getMarketTicker(marketId: MarketId): Promise<MarketTicker> {
+  async getMarketTicker(
+    marketId: MarketId,
+    selection: MarketSelection = {},
+  ): Promise<MarketTicker> {
     const raw = await this.get<MarketTicker | Array<Partial<MarketTicker>>>("/v1/markets/ticker", {
+      ...selectionParams(selection),
       market_id: marketId,
     });
+    assertMarketSelection(raw, selection);
     // The live endpoint returns a one-item list even when market_id is
     // supplied. Accept the historical object shape as well.
     const ticker = Array.isArray(raw) ? raw[0] : raw;
@@ -329,6 +356,7 @@ export class O2Api {
     }
     return {
       ...ticker,
+      ...selectionParams(selection),
       market_id: marketId,
     } as MarketTicker;
   }
@@ -339,8 +367,14 @@ export class O2Api {
    * @param precision - Price aggregation precision (default: 10).
    * @param limit - Maximum number of price levels per side. `undefined` returns the full book.
    */
-  async getDepth(marketId: MarketId, precision = 10, limit?: number): Promise<DepthSnapshot> {
+  async getDepth(
+    marketId: MarketId,
+    precision = 10,
+    limit?: number,
+    selection: MarketSelection = {},
+  ): Promise<DepthSnapshot> {
     const params: Record<string, string | number | boolean | undefined> = {
+      ...selectionParams(selection),
       market_id: marketId,
       precision,
     };
@@ -348,6 +382,7 @@ export class O2Api {
       params.limit = limit;
     }
     const data = await this.get<Record<string, unknown>>("/v1/depth", params);
+    assertMarketSelection(data, selection);
     // API wraps depth in "orders" or "view" field; unwrap it
     const depth = (data.orders ?? data.view ?? data) as Record<string, unknown>;
     let buys = (depth.buys ?? []) as Record<string, unknown>[];
@@ -359,6 +394,7 @@ export class O2Api {
       sells = sells.slice(0, limit);
     }
     return {
+      ...(data.turbo !== undefined ? { turbo: data.turbo as boolean } : {}),
       bids: buys.map(parseDepthLevel),
       asks: sells.map(parseDepthLevel),
     };
@@ -381,8 +417,10 @@ export class O2Api {
     startTimestamp?: number,
     startTradeId?: string,
     contract?: string,
+    selection: MarketSelection = {},
   ): Promise<Trade[]> {
     const data = await this.get<unknown>("/v1/trades", {
+      ...selectionParams(selection),
       market_id: marketId,
       direction,
       count,
@@ -390,6 +428,7 @@ export class O2Api {
       start_trade_id: startTradeId,
       contract,
     });
+    if (!Array.isArray(data)) assertMarketSelection(data, selection);
     const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
@@ -408,8 +447,10 @@ export class O2Api {
     count = 50,
     startTimestamp?: number,
     startTradeId?: string,
+    selection: MarketSelection = {},
   ): Promise<Trade[]> {
     const data = await this.get<unknown>("/v1/trades_by_account", {
+      ...selectionParams(selection),
       market_id: marketId,
       contract,
       direction,
@@ -417,6 +458,7 @@ export class O2Api {
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
     });
+    if (!Array.isArray(data)) assertMarketSelection(data, selection);
     const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
@@ -454,19 +496,27 @@ export class O2Api {
    *   `1d`, `3d`, `1w`, `1M`, `3M`.
    * @throws {Error} If resolution is not valid.
    */
-  async getBars(marketId: MarketId, from: number, to: number, resolution: string): Promise<Bar[]> {
+  async getBars(
+    marketId: MarketId,
+    from: number,
+    to: number,
+    resolution: string,
+    selection: MarketSelection = {},
+  ): Promise<Bar[]> {
     if (!O2Api.VALID_RESOLUTIONS.has(resolution)) {
       throw new Error(
         `Invalid bar resolution "${resolution}". Valid values: ${[...O2Api.VALID_RESOLUTIONS].sort().join(", ")}`,
       );
     }
     const data = await this.get<{ bars?: Bar[] } | Bar[]>("/v1/bars", {
+      ...selectionParams(selection),
       market_id: marketId,
       from,
       to,
       resolution,
     });
     if (Array.isArray(data)) return data;
+    assertMarketSelection(data, selection);
     return (data.bars ?? []) as Bar[];
   }
 
@@ -532,8 +582,10 @@ export class O2Api {
     isOpen?: boolean,
     startTimestamp?: number,
     startOrderId?: OrderId,
+    selection: MarketSelection = {},
   ): Promise<OrdersResponse> {
     const raw = await this.get<Record<string, unknown>>("/v1/orders", {
+      ...selectionParams(selection),
       market_id: marketId,
       contract,
       direction,
@@ -542,10 +594,16 @@ export class O2Api {
       start_timestamp: startTimestamp,
       start_order_id: startOrderId,
     });
+    assertMarketSelection(raw, selection);
     const rawOrders = (raw.orders ?? []) as Record<string, unknown>[];
     return {
       ...(raw as unknown as OrdersResponse),
-      orders: rawOrders.map(parseOrder),
+      orders: rawOrders.map((order) =>
+        parseOrder({
+          ...order,
+          ...selectionParams(selection),
+        }),
+      ),
     };
   }
 
@@ -554,14 +612,23 @@ export class O2Api {
    * @param marketId - The market identifier.
    * @param orderId - The order identifier.
    */
-  async getOrder(marketId: MarketId, orderId: OrderId): Promise<Order> {
+  async getOrder(
+    marketId: MarketId,
+    orderId: OrderId,
+    selection: MarketSelection = {},
+  ): Promise<Order> {
     const data = await this.get<Record<string, unknown>>("/v1/order", {
+      ...selectionParams(selection),
       market_id: marketId,
       order_id: orderId,
     });
+    assertMarketSelection(data, selection);
     // API wraps order in an "order" key
     const raw = (data.order ?? data) as Record<string, unknown>;
-    return parseOrder(raw);
+    return parseOrder({
+      ...raw,
+      ...selectionParams(selection),
+    });
   }
 
   // ── Session Management ──────────────────────────────────────────
@@ -664,13 +731,40 @@ export class O2Api {
     contract: TradeAccountId,
     direction: "asc" | "desc" = "desc",
     count = 50,
+    selection: MarketSelection = {},
   ): Promise<ActiveOrdersResponse> {
-    return this.get<ActiveOrdersResponse>("/v1/orders/active", {
+    const data = await this.get<ActiveOrdersResponse>("/v1/orders/active", {
+      ...selectionParams(selection),
       market_id: marketId,
       contract,
       direction,
       count,
     });
+    assertMarketSelection(data, selection);
+    return {
+      ...data,
+      entries: data.entries.map((entry) => ({
+        ...entry,
+        ...selectionParams(selection),
+      })),
+    };
+  }
+
+  /** Rolling 30-day executed Turbo volume; this does not enforce a target. */
+  async getTurboVolume(turboAccountId: string): Promise<TurboVolumeWire> {
+    const account = canonicalTurboAccountId(turboAccountId);
+    const data = await this.getAnalytics<TurboVolumeWire>(
+      `/analytics/v1/turbo/volume?turbo_account_id=${encodeURIComponent(account)}`,
+    );
+    let responseId = "";
+    try {
+      responseId = canonicalTurboAccountId(data.turbo_account_id);
+    } catch {
+      /* invalid response */
+    }
+    if (responseId !== account)
+      throw new O2Error("Invalid Turbo volume response: account ID mismatch");
+    return data;
   }
 
   // ── Margin ("Turbo") ────────────────────────────────────────────

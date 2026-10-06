@@ -97,6 +97,54 @@ describe("Encoding Module", () => {
     expect(call.assetId).toEqual(hexToBytes(market.quote.asset));
     expect(call.callData).toEqual(concat([u64BE(2000000000n), u64BE(100000000n), u64BE(7n)]));
   });
+
+  it.each(["Buy", "Sell"] as const)("encodes a shared Spot %s with variant 6", (side) => {
+    const market = {
+      contractId: `0x${"11".repeat(32)}`,
+      marketId: `0x${"22".repeat(32)}`,
+      base: { asset: `0x${"33".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "BASE" },
+      quote: { asset: `0x${"44".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "QUOTE" },
+    };
+    const call = actionToCall(
+      {
+        CreateSharedOrder: {
+          side,
+          price: "2000000000",
+          quantity: "100000000",
+          order_type: "Spot",
+        },
+      },
+      market,
+    );
+    expect(call.functionSelector).toEqual(functionSelector("create_order"));
+    expect(call.amount).toBe(side === "Buy" ? 200000000n : 100000000n);
+    expect(call.assetId).toEqual(
+      hexToBytes(side === "Buy" ? market.quote.asset : market.base.asset),
+    );
+    expect(call.callData).toEqual(concat([u64BE(2000000000n), u64BE(100000000n), u64BE(6n)]));
+  });
+
+  it("rejects unsupported shared order types", () => {
+    const market = {
+      contractId: `0x${"11".repeat(32)}`,
+      marketId: `0x${"22".repeat(32)}`,
+      base: { asset: `0x${"33".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "BASE" },
+      quote: { asset: `0x${"44".repeat(32)}`, decimals: 9, maxPrecision: 9, symbol: "QUOTE" },
+    };
+    expect(() =>
+      actionToCall(
+        {
+          CreateSharedOrder: {
+            side: "Buy",
+            price: "2000000000",
+            quantity: "100000000",
+            order_type: "Market" as "Spot",
+          },
+        },
+        market,
+      ),
+    ).toThrow("Spot or PostOnly");
+  });
   describe("u64BE", () => {
     it("encodes 0 correctly", () => {
       const result = u64BE(0);
