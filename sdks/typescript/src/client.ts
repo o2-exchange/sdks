@@ -1320,9 +1320,12 @@ export class O2Client {
         config: this.config,
         webSocketFactory: this.webSocketFactory,
       });
-      await this.wsClient.connect();
     }
-    return this.wsClient;
+    const ws = this.wsClient;
+    // During recovery, new consumers join the topics replayed by the reconnect
+    // loop. Only an initial open must be awaited by concurrent stream calls.
+    if (!ws.isReconnecting()) await ws.connect();
+    return ws;
   }
 
   /**

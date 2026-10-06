@@ -110,6 +110,17 @@ await Promise.all([monitorDepth(), monitorOrders()]);
 
 ## Cleanup
 
+Breaking a loop or calling `await stream.return(undefined)` releases that
+stream's handlers and reconnect entry, including when `next()` is waiting.
+The SDK sends an automatic unsubscribe only after the final active consumer of
+the topic stops. Explicit `unsubscribe*()` calls retain their existing behavior:
+they remove reconnect requests without ending local iterators or discarding
+queued messages. Use `stream.return(undefined)` to stop a local iterator.
+
+If you wrap a stream inside another async generator with `yield*`, returning the
+outer generator can wait behind a pending read. Keep a reference to the SDK
+stream and return it directly when cancelling a pending read.
+
 When you are done streaming, disconnect the WebSocket:
 
 ```ts
