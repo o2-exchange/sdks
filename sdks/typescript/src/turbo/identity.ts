@@ -1,8 +1,7 @@
 import { O2Error } from "../errors.js";
 
 /**
- * Analytics identifies a Turbo account by contract and session, preserving
- * integer precision.
+ * Normalize the account and session ID used for Turbo volume requests.
  */
 export function canonicalTurboAccountId(id: string): string {
   const match = /^(?:0x)?([0-9a-f]{64}):([0-9]+)$/i.exec(id);

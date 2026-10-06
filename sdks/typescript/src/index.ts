@@ -239,7 +239,6 @@ export {
   borrowAction,
   buildReferralPayload,
   buildSignedReferralEnvelope,
-  canonicalTurboAccountId,
   closeMarginSessionAction,
   drawAction,
   effectiveBitmap,
