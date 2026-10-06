@@ -170,21 +170,31 @@ describe("Turbo 3.0 venue routing", () => {
     const nextTurbo = turboStream.next();
     await Promise.resolve();
     const state = ws as any;
-    expect(state.pendingSubscriptions).toHaveLength(2);
+    expect(state.pendingSubscriptions.size).toBe(2);
     for (const handler of state.handlers.get("subscribe_depth")) {
-      handler({ market_id: id("ee"), turbo: true, orders: { buys: [], sells: [] } });
       handler({
+        action: "subscribe_depth",
+        market_id: id("ee"),
+        turbo: true,
+        orders: { buys: [], sells: [] },
+      });
+      handler({
+        action: "subscribe_depth",
         market_id: market.market_id,
         turbo: true,
         orders: { buys: [], sells: [] },
       });
-      handler({ market_id: market.market_id, orders: { buys: [], sells: [] } });
+      handler({
+        action: "subscribe_depth",
+        market_id: market.market_id,
+        orders: { buys: [], sells: [] },
+      });
     }
     expect((await nextTurbo).value).toMatchObject({ turbo: true });
     expect((await nextPublic).value?.turbo).toBeUndefined();
     ws.unsubscribeDepth(market.market_id, turbo);
-    expect(state.pendingSubscriptions).toHaveLength(1);
-    expect(state.pendingSubscriptions[0].turbo).toBeUndefined();
+    expect(state.pendingSubscriptions.size).toBe(1);
+    expect([...state.pendingSubscriptions.values()][0].request.turbo).toBeUndefined();
     await publicStream.return(undefined as never);
     await turboStream.return(undefined as never);
   });
@@ -208,13 +218,15 @@ describe("Turbo 3.0 venue routing", () => {
       handler({ ...error, market_id: id("ee") });
       handler({ ...error, turbo: false, market_id: market.market_id });
     }
-    expect(state.pendingSubscriptions).toHaveLength(5);
+    expect(state.pendingSubscriptions.size).toBe(5);
     for (const handler of state.handlers.get("error")) {
       handler({ ...error, market_id: market.market_id.toUpperCase() });
     }
     await rejected;
-    expect(state.pendingSubscriptions).toHaveLength(4);
-    expect(state.pendingSubscriptions).not.toContainEqual({
+    expect(state.pendingSubscriptions.size).toBe(4);
+    expect(
+      [...state.pendingSubscriptions.values()].map((subscription: any) => subscription.request),
+    ).not.toContainEqual({
       action: "subscribe_trades",
       market_id: market.market_id,
       turbo: true,
@@ -224,7 +236,12 @@ describe("Turbo 3.0 venue routing", () => {
       handler({ market_id: id("dd"), turbo: true, trades: [] });
     }
     for (const handler of state.handlers.get("subscribe_depth")) {
-      handler({ market_id: market.market_id, turbo: true, orders: { buys: [], sells: [] } });
+      handler({
+        action: "subscribe_depth",
+        market_id: market.market_id,
+        turbo: true,
+        orders: { buys: [], sells: [] },
+      });
     }
     for (const handler of state.handlers.get("subscribe_orders")) {
       handler({ turbo: true, orders: [] });
@@ -274,7 +291,9 @@ describe("Turbo 3.0 venue routing", () => {
     const secondNext = second.next();
     await Promise.resolve();
     const state = ws as any;
-    expect(state.pendingSubscriptions).toEqual([{ action: "subscribe_orders", identities: [] }]);
+    expect(
+      [...state.pendingSubscriptions.values()].map((subscription: any) => subscription.request),
+    ).toEqual([{ action: "subscribe_orders", identities: [] }]);
     for (const handler of state.handlers.get("subscribe_orders")) {
       handler({ turbo: true, orders: [] });
       handler({ orders: [] });

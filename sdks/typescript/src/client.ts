@@ -103,7 +103,7 @@ import {
   resolveMarket as resolveMarketFromMarkets,
   scaleOrderType,
 } from "./utils.js";
-import { type ConnectionEvent, O2WebSocket } from "./websocket.js";
+import { type ConnectionEvent, O2WebSocket, type O2WebSocketOptions } from "./websocket.js";
 
 const DEFAULT_MARKETS_CACHE_TTL_MS = 60_000;
 
@@ -148,6 +148,8 @@ export interface O2ClientOptions {
    * Defaults to `globalThis.WebSocket`.
    */
   webSocketFactory?: (url: string) => WebSocket;
+  /** WebSocket reconnect and buffer policy. Each stream defaults to 1024 unread messages. */
+  webSocketOptions?: Omit<O2WebSocketOptions, "config" | "webSocketFactory">;
 }
 
 /**
@@ -263,6 +265,7 @@ export class O2Client {
   >();
   protected readonly marketsCacheTtlMs: number;
   protected readonly webSocketFactory?: (url: string) => WebSocket;
+  protected readonly webSocketOptions?: O2ClientOptions["webSocketOptions"];
   protected _session: SessionState | null = null;
 
   constructor(optionsOrNetwork: O2ClientOptions | Network = {}) {
@@ -272,6 +275,7 @@ export class O2Client {
     this.api = new O2Api({ config: this.config, ...options.apiOptions });
     this.marketsCacheTtlMs = options.marketsCacheTtlMs ?? DEFAULT_MARKETS_CACHE_TTL_MS;
     this.webSocketFactory = options.webSocketFactory;
+    this.webSocketOptions = options.webSocketOptions;
   }
 
   /** The active trading session, or `null` if no session has been created. */
@@ -1317,12 +1321,16 @@ export class O2Client {
     }
     if (!this.wsClient) {
       this.wsClient = new O2WebSocket({
+        ...this.webSocketOptions,
         config: this.config,
         webSocketFactory: this.webSocketFactory,
       });
-      await this.wsClient.connect();
     }
-    return this.wsClient;
+    const ws = this.wsClient;
+    // During recovery, new consumers join the topics replayed by the reconnect
+    // loop. Only an initial open must be awaited by concurrent stream calls.
+    if (!ws.isReconnecting()) await ws.connect();
+    return ws;
   }
 
   /**

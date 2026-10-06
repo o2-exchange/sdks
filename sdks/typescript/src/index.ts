@@ -321,4 +321,5 @@ export {
   type ConnectionState,
   O2WebSocket,
   type O2WebSocketOptions,
+  WebSocketBufferOverflowError,
 } from "./websocket.js";
