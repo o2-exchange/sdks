@@ -1,4 +1,41 @@
 # Changelog
+## 0.4.1 (2026-10-06)
+
+### Features
+
+- add turbo shared orders support (#78)
+- simplify EVM digest signing (#82)
+- add shared spot support for ts and rust sdks (#81)
+- Add shared PostOnly orders and explicit Turbo order execution across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.
+- Add shared Spot order support while keeping shared PostOnly as the default.
+- Add root-level EVM digest signing helpers that return submit-ready `r || s || v` signatures for Fast Bridge deposits.
+
+#### Add Turbo 3.0 support for trading, market data, and real-time updates, including
+
+TP/SL, cancellation, and settlement. Existing calls keep their standard trading
+defaults, and older deployments remain supported. Add perpetual-session support
+and rolling 30-day trading volume reads.
+
+Subclass compatibility: the protected `marketsCache`, `marketsCacheTime`, and
+`marketsRefreshPromise` fields are replaced by a private catalog cache keyed by
+venue. Subclasses should use the protected `fetchMarkets(selection)` method.
+
+### Fixes
+
+- clean up WebSocket streams and reconnect resources (#84)
+
+#### Release abandoned WebSocket stream handlers and reconnect resources.
+
+Breaking a stream or calling its `return()`/`throw()` now releases its handlers
+and reconnect entry immediately, including when a read is waiting for a message.
+Automatic unsubscribe runs only after the final active consumer of that topic
+stops. Reconnect timers and pending opens are cancelled on disconnect, concurrent
+opens share a connection, and stale socket events cannot affect its replacement.
+
+Existing buffering, multiple-consumer admission, explicit unsubscribe behavior,
+spot/Turbo routing, and the protected `pendingSubscriptions` request array are
+preserved. Slow consumers still require an application-level buffering policy.
+
 ## 0.4.0 (2026-09-16)
 
 ### Breaking Changes

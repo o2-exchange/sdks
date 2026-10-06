@@ -1,4 +1,15 @@
 # Changelog
+## 0.4.1 (2026-10-06)
+
+### Features
+
+- add turbo shared orders support (#78)
+- simplify EVM digest signing (#82)
+- add shared spot support for ts and rust sdks (#81)
+- Add shared PostOnly orders and explicit Turbo order execution across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.
+- Add shared Spot order support while keeping shared PostOnly as the default.
+- Add root-level EVM digest signing helpers that return submit-ready `r || s || v` signatures for Fast Bridge deposits.
+
 ## 0.4.0 (2026-09-16)
 
 ### Features
