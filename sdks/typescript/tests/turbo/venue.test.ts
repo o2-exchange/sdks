@@ -111,6 +111,57 @@ describe("Turbo 3.0 venue routing", () => {
     expect(get.mock.calls[2][1]).toMatchObject({ market_id: market.market_id, turbo: true });
   });
 
+  it.each([
+    "trades",
+    "account trades",
+    "bars",
+  ])("accepts legacy arrays and validates envelopes for %s", async (endpoint) => {
+    const api = new O2Api({ config: TESTNET });
+    const rows =
+      endpoint === "bars"
+        ? [{ time: 0, open: "4", high: "4", low: "4", close: "4", volume: "3" }]
+        : [{ trade_id: "1", side: "Buy", price: "4", quantity: "3", total: "12", timestamp: 0 }];
+    const expected =
+      endpoint === "bars"
+        ? rows
+        : [{ trade_id: "1", side: "buy", price: 4n, quantity: 3n, total: 12n, timestamp: 0 }];
+    const get = vi.spyOn(api as any, "get").mockResolvedValue(rows);
+    const read = (turbo = true) => {
+      if (endpoint === "bars") return api.getBars(market.market_id, 0, 60_000, "1m", { turbo });
+      if (endpoint === "account trades") {
+        return api.getTradesByAccount(
+          market.market_id,
+          tradeAccountId(id("aa")),
+          "desc",
+          50,
+          undefined,
+          undefined,
+          { turbo },
+        );
+      }
+      return api.getTrades(market.market_id, "desc", 50, undefined, undefined, undefined, {
+        turbo,
+      });
+    };
+
+    await expect(read()).resolves.toMatchObject(expected);
+    expect(get.mock.calls.at(-1)![1]).toMatchObject({ turbo: true });
+    await expect(read(false)).resolves.toMatchObject(expected);
+    expect(get.mock.calls.at(-1)![1]).not.toHaveProperty("turbo");
+    get.mockResolvedValue([]);
+    await expect(read()).resolves.toEqual([]);
+
+    const field = endpoint === "bars" ? "bars" : "trades";
+    get.mockResolvedValue({ [field]: rows, turbo: true });
+    await expect(read()).resolves.toMatchObject(expected);
+    await expect(read(false)).rejects.toThrow(/requested trading market/);
+    get.mockResolvedValue({ [field]: rows, turbo: false });
+    await expect(read()).rejects.toThrow(/requested trading market/);
+    await expect(read(false)).resolves.toMatchObject(expected);
+    get.mockResolvedValue({ [field]: rows });
+    await expect(read()).rejects.toThrow(/requested trading market/);
+  });
+
   it("separates streams for the same market across venues and retains selection for reconnect", async () => {
     const ws = new O2WebSocket({ config: TESTNET, reconnect: false });
     const publicStream = ws.streamDepth(market.market_id, depthPrecision(1));

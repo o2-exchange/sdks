@@ -428,7 +428,7 @@ export class O2Api {
       start_trade_id: startTradeId,
       contract,
     });
-    assertMarketSelection(data, selection);
+    if (!Array.isArray(data)) assertMarketSelection(data, selection);
     const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
@@ -458,7 +458,7 @@ export class O2Api {
       start_timestamp: startTimestamp,
       start_trade_id: startTradeId,
     });
-    assertMarketSelection(data, selection);
+    if (!Array.isArray(data)) assertMarketSelection(data, selection);
     const rawArr = Array.isArray(data) ? data : (data as { trades: unknown[] }).trades;
     return (rawArr as Record<string, unknown>[]).map(parseTrade);
   }
@@ -515,8 +515,8 @@ export class O2Api {
       to,
       resolution,
     });
-    assertMarketSelection(data, selection);
     if (Array.isArray(data)) return data;
+    assertMarketSelection(data, selection);
     return (data.bars ?? []) as Bar[];
   }
 
