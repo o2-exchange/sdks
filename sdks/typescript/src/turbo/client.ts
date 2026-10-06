@@ -627,7 +627,7 @@ export class TurboClient {
     ];
   }
 
-  private async tradingMarket(market: string | Market, wire: MarginStateWire): Promise<Market> {
+  private async resolveMarket(market: string | Market, wire: MarginStateWire): Promise<Market> {
     const candidates = await this.tradingMarkets(wire);
     candidates.sort((a, b) => Number(!!b.turbo) - Number(!!a.turbo));
     const selected = candidates.find((candidate) =>
@@ -643,6 +643,11 @@ export class TurboClient {
           ? `No allowed Turbo trading market for ${market}`
           : "This order book is not allowed by the Turbo session's tier",
       );
+    return selected;
+  }
+
+  private async tradingMarket(market: string | Market, wire: MarginStateWire): Promise<Market> {
+    const selected = await this.resolveMarket(market, wire);
     if (selected.turbo && (selected.connected === false || selected.paused === true)) {
       throw new O2Error("The Turbo order book is disconnected or paused");
     }
@@ -1296,7 +1301,7 @@ export class TurboClient {
   ): Promise<SessionActionsResponse> {
     const id = marginAccountId ?? (await this.marginAccountId());
     const wire = await this.state(id);
-    const resolved = await this.tradingMarket(market, wire);
+    const resolved = await this.resolveMarket(market, wire);
     return this.submitMixed([action], resolved, id, await this.wiring(), {});
   }
 

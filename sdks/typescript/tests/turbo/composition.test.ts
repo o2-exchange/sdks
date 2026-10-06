@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import { TurboDiscoveryUnavailable } from "../../src/errors.js";
+import { MarketPaused, TurboDiscoveryUnavailable } from "../../src/errors.js";
 import type { Market } from "../../src/models.js";
 import { boundedMarket } from "../../src/triggers.js";
 import { TurboClient } from "../../src/turbo/client.js";
@@ -1564,9 +1564,55 @@ describe("Turbo 3.0 order book composition", () => {
     });
   });
 
-  it("refuses disconnected Turbo trading before signing", async () => {
+  it("propagates backend pause errors for cleanup", async () => {
+    const { host, selected } = turboMarketHost();
+    selected.paused = true;
+    const error = new MarketPaused();
+    const submit = vi.spyOn(host, "submitPrepared").mockRejectedValue(error);
+    const turbo = new TurboClient(host).use(CHILD);
+
+    await expect(turbo.cancelOrder("spot", selected)).rejects.toBe(error);
+    await expect(turbo.cancelTriggerOrder("trigger", selected)).rejects.toBe(error);
+    await expect(turbo.settleBalance(selected)).rejects.toBe(error);
+    expect(submit).toHaveBeenCalledTimes(3);
+  });
+
+  it("still rejects cleanup for a market not allowed by the account", async () => {
+    const { host, submitted } = turboMarketHost();
+    const turbo = new TurboClient(host).use(CHILD);
+    await expect(turbo.cancelOrder("spot", MARKET)).rejects.toThrow(/not allowed/);
+    await expect(turbo.cancelTriggerOrder("trigger", MARKET)).rejects.toThrow(/not allowed/);
+    await expect(turbo.settleBalance(MARKET)).rejects.toThrow(/not allowed/);
+    expect(submitted).toHaveLength(0);
+  });
+
+  it.each([
+    { connected: false, paused: false },
+    { connected: true, paused: true },
+  ])("allows cleanup when execution is unavailable ($connected, $paused)", async (availability) => {
+    const { host, submitted, selected, derive } = turboMarketHost();
+    Object.assign(selected, availability);
+    const turbo = new TurboClient(host).use(CHILD);
+
+    await turbo.cancelOrder("spot", selected);
+    await turbo.cancelTriggerOrder("trigger", "fETH/fUSDC");
+    await turbo.settleBalance("eth-usdc");
+
+    expect(submitted.map((batch) => kindsOf(batch))).toEqual([
+      ["CancelOrder"],
+      ["CancelTriggerOrder"],
+      ["SettleBalance"],
+    ]);
+    expect(submitted.every((batch) => batch.marketActions[0].turbo === true)).toBe(true);
+    expect(derive.mock.calls.every(([, market]) => market.contract_id === TURBO_BOOK)).toBe(true);
+  });
+
+  it.each([
+    { connected: false, paused: false },
+    { connected: true, paused: true },
+  ])("refuses unavailable Turbo trading before signing ($connected, $paused)", async (availability) => {
     const { host, submitted, selected } = turboMarketHost();
-    selected.connected = false;
+    Object.assign(selected, availability);
     await expect(
       new TurboClient(host).use(CHILD).long("fETH/fUSDC", { quantity: "1" }, { price: "2000" }),
     ).rejects.toThrow(/disconnected/);
