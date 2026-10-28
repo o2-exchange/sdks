@@ -41,6 +41,7 @@ const response = await client.createOrder("fFUEL/fUSDC", "buy", "0.02", "50");
 | `cancelOrder(orderId, market, session?)` | orderId, market, session? | `SessionActionsResponse` | Cancel an order |
 | `cancelAllOrders(market, session?)` | market, session? | `SessionActionsResponse[] \| null` | Cancel all open orders |
 | `settleBalance(market, session?)` | market, session? | `SessionActionsResponse` | Settle filled balances |
+| `buyEvalAccount(tierId, assetId, amount, session?)` | tier ID (bigint), payment asset ID, amount (bigint), session? | `SessionActionsResponse` | Buy an evaluation account; add the shop ID to `extraContractIds` when creating the session |
 | `batchActions(marketActions, collectOrders?, session?)` | type-safe action groups | `SessionActionsResponse` | Submit multi-action batch |
 | `getMarkets()` | — | `Market[]` | Fetch all markets |
 | `getMarket(pair)` | `"FUEL/USDC"` | `Market` | Resolve market by pair |

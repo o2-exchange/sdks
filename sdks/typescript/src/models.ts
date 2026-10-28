@@ -323,6 +323,8 @@ export interface MarketsResponse {
   base_asset_id: AssetId;
   /** All available markets. */
   markets: Market[];
+  /** Evaluation shop contract ID, if purchases are available. */
+  eval_shop_id?: ContractId | null;
   /**
    * The deployment's margin ("Turbo") wiring, when it has any.
    *
@@ -980,6 +982,21 @@ export interface RegisterRefererPayload {
   };
 }
 
+/** An evaluation purchase paid from the trading account. */
+export interface BuyEvalAccountPayload {
+  BuyEvalAccount: {
+    tier_id: string;
+    asset_id: AssetId;
+    amount: string;
+  };
+}
+
+/** Evaluation purchases do not need a market ID. */
+export interface EvalPurchaseActions {
+  market_id?: never;
+  actions: BuyEvalAccountPayload[];
+}
+
 /**
  * Union of all possible action payloads for session actions (wire format).
  *
@@ -994,18 +1011,19 @@ export type ActionPayload =
   | ExecuteTurboOrdersPayload
   | CancelOrderPayload
   | SettleBalancePayload
-  | RegisterRefererPayload;
+  | RegisterRefererPayload
+  | BuyEvalAccountPayload;
 
 /**
  * Request body for submitting session actions.
  *
  * @remarks
- * Actions are grouped by market via {@link MarketActions}. A maximum
- * of 5 actions can be submitted per request.
+ * Group actions by market with {@link MarketActions}, or buy evaluations with
+ * {@link EvalPurchaseActions}. A maximum of 5 actions can be submitted per request.
  */
 export interface SessionActionsRequest {
-  /** Grouped actions per market. */
-  actions: MarketActions[];
+  /** Market actions or evaluation purchases. */
+  actions: (MarketActions | EvalPurchaseActions)[];
   /** Session key signature over the action signing bytes. */
   signature: Signature;
   /**

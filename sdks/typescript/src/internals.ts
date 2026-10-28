@@ -29,6 +29,7 @@ export {
   actionToCall,
   adjustQuantityForFractionalPrice,
   buildActionsSigningBytes,
+  buildEvalPurchaseCall,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
   bytesToHex,
