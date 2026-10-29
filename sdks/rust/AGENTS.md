@@ -55,6 +55,9 @@ async fn main() -> Result<(), o2_sdk::O2Error> {
 | `create_session(owner, markets, ttl)` | `&impl SignableWallet, &[impl AsRef<str>], Duration` | `Result<Session>` | Create trading session (symbols validated/normalized) |
 | `create_session_until(owner, markets, expiry_unix_secs)` | `&impl SignableWallet, &[impl AsRef<str>], u64` | `Result<Session>` | Create session with absolute expiry |
 | `set_metadata_policy(policy)` | `MetadataPolicy` | `()` | Configure market metadata refresh strategy |
+| `buy_eval_account(session, tier_id, asset_id, amount)` | `&mut Session, u64, &AssetId, u64` | `Result<SessionActionsResponse>` | Purchase eval using exact base units |
+| `create_session_with_contracts(owner, markets, ttl, extra_contract_ids)` | `&impl SignableWallet, &[impl AsRef<str>], Duration, &[ContractId]` | `Result<Session>` | Authorize extra contracts, including purchase-only sessions |
+| `create_session_until_with_contracts(owner, markets, expiry, extra_contract_ids)` | `&impl SignableWallet, &[impl AsRef<str>], u64, &[ContractId]` | `Result<Session>` | Same, with absolute expiry |
 | `create_order(session, market, side, price, qty, type, settle, collect)` | `&mut Session, impl IntoMarketSymbol, Side, impl TryInto<OrderPriceInput>, impl TryInto<OrderQuantityInput>, ...` | `Result<SessionActionsResponse>` | Place order (accepts `&str`/`String`/`MarketSymbol`) |
 | `actions_for(market)` | `impl IntoMarketSymbol` | `Result<MarketActionsBuilder>` | Build validated single-market action batches |
 | `cancel_order(session, order_id, market)` | `&mut Session, &OrderId, impl IntoMarketSymbol` | `Result<SessionActionsResponse>` | Cancel order |
@@ -304,3 +307,11 @@ because both rehash. Fuel uses compact 64-byte signatures via
 `BridgeError::Api { status, code, message, details }` preserves HTTP errors with
 string proxy codes. `Transport` wraps reqwest errors, `Json` wraps JSON/model
 decoding errors, and `Invalid` reports invalid configuration or parser input.
+
+## Evaluation Accounts
+
+See [the evaluation guide](docs/guides/evaluations.md). `Network::Eval` uses Fuel
+testnet and has no faucet. Buy on mainnet (testnet for testing), discover
+`eval_shop_id` via `fetch_markets()`, and include it in `extra_contract_ids`
+when creating a session. Purchases omit `market_id`. Reconcile ambiguous failures
+before repurchasing. Full Turbo trading/state helpers remain TypeScript-only.

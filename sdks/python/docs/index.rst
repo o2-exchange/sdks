@@ -69,6 +69,7 @@ Quick example
    :caption: Guides
 
    guides/trading
+   guides/evaluations
    guides/market_data
    guides/websocket_streams
    guides/identifiers

@@ -15,7 +15,8 @@ use crate::crypto::{
     to_hex_string, EvmWallet, Wallet,
 };
 use crate::encoding::{
-    build_actions_signing_bytes, build_session_signing_bytes, build_withdraw_signing_bytes, CallArg,
+    build_actions_signing_bytes, build_eval_purchase_call, build_session_signing_bytes,
+    build_withdraw_signing_bytes, CallArg,
 };
 use crate::errors::O2Error;
 use crate::models::*;
@@ -682,6 +683,18 @@ impl O2Client {
         market_names: &[S],
         ttl: Duration,
     ) -> Result<Session, O2Error> {
+        self.create_session_with_contracts(owner, market_names, ttl, &[])
+            .await
+    }
+
+    /// Create a session with additional approved contracts, including purchase-only sessions.
+    pub async fn create_session_with_contracts<W: SignableWallet, S: AsRef<str>>(
+        &mut self,
+        owner: &W,
+        market_names: &[S],
+        ttl: Duration,
+        extra_contract_ids: &[ContractId],
+    ) -> Result<Session, O2Error> {
         let ttl_secs = ttl.as_secs();
         if ttl_secs == 0 {
             return Err(O2Error::InvalidSession(
@@ -697,7 +710,8 @@ impl O2Client {
             .checked_add(ttl_secs)
             .ok_or_else(|| O2Error::InvalidSession("Session TTL overflow".into()))?;
 
-        self.create_session_until(owner, market_names, expiry).await
+        self.create_session_until_with_contracts(owner, market_names, expiry, extra_contract_ids)
+            .await
     }
 
     /// Create a trading session that expires at an absolute UNIX timestamp.
@@ -709,6 +723,23 @@ impl O2Client {
         market_names: &[S],
         expiry_unix_secs: u64,
     ) -> Result<Session, O2Error> {
+        self.create_session_until_with_contracts(owner, market_names, expiry_unix_secs, &[])
+            .await
+    }
+
+    /// Create a session with absolute expiry and additional approved contracts.
+    pub async fn create_session_until_with_contracts<W: SignableWallet, S: AsRef<str>>(
+        &mut self,
+        owner: &W,
+        market_names: &[S],
+        expiry_unix_secs: u64,
+        extra_contract_ids: &[ContractId],
+    ) -> Result<Session, O2Error> {
+        // Validate additional contracts before making network calls.
+        let extra_bytes = extra_contract_ids
+            .iter()
+            .map(|id| parse_hex_32(id.as_str()))
+            .collect::<Result<Vec<_>, _>>()?;
         debug!(
             "client.create_session_until markets={} expiry_unix_secs={}",
             market_names.len(),
@@ -723,6 +754,13 @@ impl O2Client {
             let market = self.get_market(name.as_ref()).await?;
             contract_ids_hex.push(market.contract_id.clone());
             contract_ids_bytes.push(parse_hex_32(&market.contract_id)?);
+        }
+
+        for (id, bytes) in extra_contract_ids.iter().zip(extra_bytes) {
+            if !contract_ids_bytes.contains(&bytes) {
+                contract_ids_hex.push(id.clone());
+                contract_ids_bytes.push(bytes);
+            }
         }
 
         let chain_id = self.get_chain_id().await?;
@@ -1114,13 +1152,75 @@ impl O2Client {
             }
 
             all_market_actions.push(MarketActions {
-                market_id: market.market_id.clone(),
+                market_id: Some(market.market_id.clone()),
                 actions: actions_json,
             });
         }
 
+        self.submit_prepared(session, all_market_actions, &all_calls, collect_orders)
+            .await
+    }
+
+    /// Buy an evaluation with an exact payment in token base units.
+    /// Authorize the shop with `create_session_with_contracts` before purchasing.
+    /// Reconcile ambiguous submission failures before attempting another purchase.
+    pub async fn buy_eval_account(
+        &mut self,
+        session: &mut Session,
+        tier_id: u64,
+        asset_id: &AssetId,
+        amount: u64,
+    ) -> Result<SessionActionsResponse, O2Error> {
+        Self::check_session_expiry(session)?;
+        let shop = self
+            .ensure_markets()
+            .await?
+            .eval_shop_id
+            .clone()
+            .filter(|id| {
+                !id.as_str()
+                    .eq_ignore_ascii_case(&format!("0x{}", "00".repeat(32)))
+            })
+            .ok_or_else(|| {
+                O2Error::InvalidRequest(
+                    "Evaluation purchases are unavailable on this network".into(),
+                )
+            })?;
+        if !session
+            .contract_ids
+            .iter()
+            .any(|id| id.as_str().eq_ignore_ascii_case(shop.as_str()))
+        {
+            return Err(O2Error::InvalidSession(
+                "Create a new session with the shop ID in extra_contract_ids".into(),
+            ));
+        }
+        let call = build_eval_purchase_call(shop.as_str(), tier_id, asset_id.as_str(), amount)?;
+        self.submit_prepared(
+            session,
+            vec![MarketActions {
+                market_id: None,
+                actions: vec![serde_json::json!({"BuyEvalAccount": {
+                    "tier_id": tier_id.to_string(),
+                    "asset_id": asset_id,
+                    "amount": amount.to_string(),
+                }})],
+            }],
+            &[call],
+            false,
+        )
+        .await
+    }
+
+    async fn submit_prepared(
+        &self,
+        session: &mut Session,
+        all_market_actions: Vec<MarketActions>,
+        all_calls: &[CallArg],
+        collect_orders: bool,
+    ) -> Result<SessionActionsResponse, O2Error> {
         // Sign, submit, manage nonce
-        let signing_bytes = build_actions_signing_bytes(session.nonce, &all_calls);
+        let signing_bytes = build_actions_signing_bytes(session.nonce, all_calls);
         let signature = raw_sign(&session.session_private_key, &signing_bytes)?;
         let sig_hex = to_hex_string(&signature);
         let owner_hex = to_hex_string(&session.owner_address);
@@ -1628,6 +1728,7 @@ mod tests {
 
     fn dummy_markets_response() -> MarketsResponse {
         MarketsResponse {
+            eval_shop_id: None,
             books_registry_id: ContractId::new("0x1"),
             books_whitelist_id: None,
             books_blacklist_id: None,

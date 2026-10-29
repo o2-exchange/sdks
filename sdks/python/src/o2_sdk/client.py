@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import AsyncIterator, Sequence
 
@@ -26,6 +27,7 @@ from .crypto import (
 from .encoding import (
     action_to_call,
     build_actions_signing_bytes,
+    build_eval_purchase_call,
     build_parallel_actions_signing_bytes,
     build_session_signing_bytes,
     build_set_proxy_signing_bytes,
@@ -614,6 +616,8 @@ class O2Client:
         expiry_days: int = 30,
         nonce_strategy: str = "sequential",
         nonce_session_id: int = 0,
+        *,
+        extra_contract_ids: Sequence[str] = (),
     ) -> SessionInfo:
         """Create a trading session.
 
@@ -621,6 +625,7 @@ class O2Client:
             owner: A signer for the owner account (Wallet, EvmWallet,
                 ExternalSigner, ExternalEvmSigner, or any :class:`Signer`)
             markets: List of market pair strings/IDs or Market objects
+            extra_contract_ids: Additional contracts to authorize, such as the eval shop.
             expiry_days: Session expiry in days (default 30)
             nonce_strategy: ``"sequential"`` (default) or ``"parallel"``. Parallel
                 lets the session submit actions concurrently without nonce
@@ -646,6 +651,9 @@ class O2Client:
                     f"got {nonce_session_id}"
                 )
             )
+        for contract_id in extra_contract_ids:
+            if not re.fullmatch(r"0x[0-9a-fA-F]{64}", contract_id):
+                raise ValueError("extra_contract_ids must contain 32-byte hex IDs")
         logger.info("Creating session for markets=%s, expiry_days=%d", markets, expiry_days)
 
         # Resolve markets
@@ -657,6 +665,10 @@ class O2Client:
             )
             if market.contract_id not in contract_ids:
                 contract_ids.append(market.contract_id)
+
+        for contract_id in extra_contract_ids:
+            if not any(existing.lower() == contract_id.lower() for existing in contract_ids):
+                contract_ids.append(contract_id)
 
         chain_id = markets_resp.chain_id_int
 
@@ -942,26 +954,11 @@ class O2Client:
                 session if omitted.
         """
         session = self._require_session(session)
-        # Check session expiry before submitting on-chain
-        if session.session_expiry:
-            try:
-                expiry_ts = int(session.session_expiry)
-                if time.time() >= expiry_ts:
-                    raise SessionExpired(
-                        message="Session has expired. Create a new session before submitting actions."
-                    )
-            except ValueError:
-                pass  # Non-numeric expiry format, skip check
-
+        self._check_session_expiry(session)
         markets_resp = await self._get_markets_cached()
 
         # Convert typed/high-level actions to wire dicts once
         actions_dicts = await self._normalize_market_actions(session, actions)
-
-        if session.session_private_key is None:
-            raise O2Error(message="Session must have a private key")
-        if session.owner_address is None:
-            raise O2Error(message="Session must have an owner address")
 
         # Convert actions to calls (shared by both nonce tracks)
         calls: list[dict] = []
@@ -970,6 +967,59 @@ class O2Client:
             market_info = self._get_market_info_by_id(markets_resp, m_id)
             for action in market_group["actions"]:
                 calls.append(action_to_call(action, market_info))
+
+        return await self._submit_prepared(session, actions_dicts, calls, collect_orders)
+
+    async def buy_eval_account(
+        self,
+        tier_id: int,
+        asset_id: str,
+        amount: int,
+        session: SessionInfo | None = None,
+    ) -> ActionsResponse:
+        """Buy an eval using exact base units on mainnet (testnet for testing).
+
+        Authorize the shop via create_session(extra_contract_ids=[shop_id]).
+        Reconcile ambiguous submission failures before attempting another purchase.
+        """
+        session = self._require_session(session)
+        shop_id = (await self._get_markets_cached()).eval_shop_id
+        if shop_id is None or shop_id.lower() == "0x" + "00" * 32:
+            raise O2Error(message="Evaluation purchases are unavailable on this network")
+        if not any(contract.lower() == shop_id.lower() for contract in session.contract_ids):
+            raise O2Error(message="Create a new session with the shop ID in extra_contract_ids")
+        call = build_eval_purchase_call(shop_id, tier_id, asset_id, amount)
+        return await self._submit_prepared(
+            session,
+            [
+                {
+                    "actions": [
+                        {
+                            "BuyEvalAccount": {
+                                "tier_id": str(tier_id),
+                                "asset_id": asset_id,
+                                "amount": str(amount),
+                            }
+                        }
+                    ]
+                }
+            ],
+            [call],
+            False,
+        )
+
+    async def _submit_prepared(
+        self,
+        session: SessionInfo,
+        actions_dicts: list[dict],
+        calls: list[dict],
+        collect_orders: bool,
+    ) -> ActionsResponse:
+        self._check_session_expiry(session)
+        if session.session_private_key is None:
+            raise O2Error(message="Session must have a private key")
+        if session.owner_address is None:
+            raise O2Error(message="Session must have an owner address")
 
         # --- Parallel nonce track -------------------------------------------
         # Each submission draws a fresh window slot, so many can be in flight at
@@ -1047,7 +1097,10 @@ class O2Client:
             return result
         except O2Error as e:
             logger.warning("Actions failed (nonce=%d): %s", nonce, e)
-            await self.refresh_nonce(session)  # nonce bumps even on revert
+            try:
+                await self.refresh_nonce(session)  # nonce bumps even on revert
+            except Exception:
+                logger.warning("Nonce refresh after action failure failed", exc_info=True)
             raise
 
     async def _normalize_market_actions(
@@ -1131,6 +1184,19 @@ class O2Client:
                 MarketActions(market_id=market.market_id, actions=resolved_actions).to_dict()
             )
         return normalized
+
+    @staticmethod
+    def _check_session_expiry(session: SessionInfo) -> None:
+        # Check session expiry before submitting on-chain
+        if session.session_expiry:
+            try:
+                expiry_ts = int(session.session_expiry)
+                if time.time() >= expiry_ts:
+                    raise SessionExpired(
+                        message="Session has expired. Create a new session before submitting actions."
+                    )
+            except ValueError:
+                pass  # Non-numeric expiry format, skip check
 
     def _require_session(self, session: SessionInfo | None = None) -> SessionInfo:
         if session is not None:

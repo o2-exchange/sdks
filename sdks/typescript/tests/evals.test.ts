@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { rawSign } from "../src/crypto.js";
 import {
@@ -239,5 +240,24 @@ describe("evaluation discovery", () => {
     expect(EVAL.wsUrl).toBe("wss://api.eval.o2.app/v1/ws");
     expect(EVAL.fuelRpc).toBe("https://testnet.fuel.network/v1/graphql");
     expect(EVAL.faucetUrl).toBeNull();
+  });
+});
+
+describe("cross-language evaluation purchase fixture", () => {
+  it("matches the shared ABI bytes and signature", () => {
+    const vector = JSON.parse(
+      readFileSync(new URL("../../../fixtures/evals/purchase.json", import.meta.url), "utf8"),
+    );
+    const call = buildEvalPurchaseCall(
+      vector.shop_id,
+      BigInt(vector.tier_id),
+      vector.asset_id,
+      BigInt(vector.amount),
+    );
+    const payload = buildActionsSigningBytes(BigInt(vector.nonce), [call]);
+    expect(bytesToHex(payload)).toBe(vector.signing_bytes);
+    expect(bytesToHex(rawSign(hexToBytes(vector.session_private_key), payload))).toBe(
+      vector.signature,
+    );
   });
 });
