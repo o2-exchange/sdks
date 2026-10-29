@@ -1,7 +1,7 @@
 /**
  * Network configuration for O2 Exchange environments.
  *
- * Provides pre-configured endpoints for testnet, devnet, and mainnet,
+ * Provides pre-configured endpoints for eval, testnet, devnet, and mainnet,
  * as well as a {@link Network} enum for convenient selection.
  *
  * @module
@@ -51,6 +51,14 @@ export const TESTNET: NetworkConfig = {
   faucetUrl: "https://fuel-o2-faucet.vercel.app/api/testnet/mint-v2",
 };
 
+/** Pre-configured endpoints for evaluation trading on Fuel testnet. */
+export const EVAL: NetworkConfig = {
+  apiBase: "https://api.eval.o2.app",
+  wsUrl: "wss://api.eval.o2.app/v1/ws",
+  fuelRpc: "https://testnet.fuel.network/v1/graphql",
+  faucetUrl: null,
+};
+
 /** Pre-configured endpoints for O2 Exchange devnet. */
 export const DEVNET: NetworkConfig = {
   apiBase: "https://api.devnet.o2.app",
@@ -78,6 +86,8 @@ export const MAINNET: NetworkConfig = {
 export enum Network {
   /** O2 Exchange testnet — for integration testing with test tokens. */
   TESTNET = "testnet",
+  /** Evaluation trading on Fuel testnet. */
+  EVAL = "eval",
   /** O2 Exchange devnet — for development and early testing. */
   DEVNET = "devnet",
   /** O2 Exchange mainnet — production trading. */
@@ -94,6 +104,8 @@ export function getNetworkConfig(network: Network): NetworkConfig {
   switch (network) {
     case Network.TESTNET:
       return TESTNET;
+    case Network.EVAL:
+      return EVAL;
     case Network.DEVNET:
       return DEVNET;
     case Network.MAINNET:

@@ -45,6 +45,7 @@ export {
 // ── Config ────────────────────────────────────────────────────────
 export {
   DEVNET,
+  EVAL,
   getNetworkConfig,
   MAINNET,
   Network,
@@ -124,6 +125,7 @@ export type {
   BalanceResponse,
   BalanceUpdate,
   Bar,
+  BuyEvalAccountPayload,
   ContractId,
   CreateAccountResponse,
   DepthChange,
@@ -131,6 +133,7 @@ export type {
   DepthPrecision,
   DepthSnapshot,
   DepthUpdate,
+  EvalPurchaseActions,
   FaucetResponse,
   HexId,
   Identity,

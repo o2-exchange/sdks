@@ -298,6 +298,7 @@ export class O2Api {
   async getMarkets(selection: MarketSelection = {}): Promise<MarketsResponse> {
     const raw = await this.get<Record<string, unknown>>("/v1/markets", selectionParams(selection));
     const rawMarkets = raw.markets as Record<string, unknown>[];
+    const evalShopId = raw.eval_shop_id as string | null | undefined;
     if (selection.turbo) {
       if (!rawMarkets.every((market) => market.turbo === true && market.canonical_contract_id))
         throw new TurboDiscoveryUnavailable();
@@ -311,6 +312,7 @@ export class O2Api {
       chain_id: raw.chain_id as string,
       base_asset_id: hexIdTrusted<"AssetId">(raw.base_asset_id as string),
       markets: rawMarkets.map(parseMarket),
+      eval_shop_id: evalShopId == null ? evalShopId : hexIdTrusted<"ContractId">(evalShopId),
       // PASSED THROUGH, not dropped. This response is rebuilt from an
       // explicit field list, so anything not named here vanishes — and
       // `margin` vanishing made the whole Turbo surface report itself as

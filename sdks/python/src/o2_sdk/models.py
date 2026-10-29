@@ -302,6 +302,7 @@ class MarketsResponse:
     chain_id: str
     base_asset_id: Id
     markets: list[Market]
+    eval_shop_id: Id | None = None
 
     @classmethod
     def from_dict(cls, d: dict) -> MarketsResponse:
@@ -312,6 +313,7 @@ class MarketsResponse:
             chain_id=d.get("chain_id", "0x0000000000000000"),
             base_asset_id=Id(d.get("base_asset_id") or _ZERO_ID),
             markets=[Market.from_dict(m) for m in d.get("markets", [])],
+            eval_shop_id=Id(d["eval_shop_id"]) if d.get("eval_shop_id") is not None else None,
         )
 
     @property

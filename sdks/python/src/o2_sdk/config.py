@@ -7,6 +7,7 @@ from enum import Enum
 
 
 class Network(Enum):
+    EVAL = "eval"
     TESTNET = "testnet"
     DEVNET = "devnet"
     MAINNET = "mainnet"
@@ -22,6 +23,12 @@ class NetworkConfig:
 
 
 NETWORK_CONFIGS: dict[Network, NetworkConfig] = {
+    Network.EVAL: NetworkConfig(
+        api_base="https://api.eval.o2.app",
+        ws_url="wss://api.eval.o2.app/v1/ws",
+        fuel_rpc="https://testnet.fuel.network/v1/graphql",
+        faucet_url=None,
+    ),
     Network.TESTNET: NetworkConfig(
         api_base="https://api.testnet.o2.app",
         ws_url="wss://api.testnet.o2.app/v1/ws",

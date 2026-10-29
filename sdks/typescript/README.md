@@ -242,6 +242,7 @@ This is an explicit action; placing a shared order does not execute it automatic
 
 ## Guides
 
+- [Evaluation Accounts](docs/guides/evaluations.md)
 - [Identifiers and Wallet Types](docs/guides/identifiers.md)
 - [Trading](docs/guides/trading.md)
 - [Turbo (Margin) Trading](docs/guides/turbo.md)

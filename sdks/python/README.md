@@ -275,6 +275,8 @@ See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters an
 
 ## Guides
 
+- [Evaluation purchases and network configuration](docs/guides/evaluations.rst)
+
 - [`docs/guides/ccxt_compatibility.rst`](docs/guides/ccxt_compatibility.rst)
 - [`docs/guides/identifiers.rst`](docs/guides/identifiers.rst)
 - [`docs/guides/trading.rst`](docs/guides/trading.rst)

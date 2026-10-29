@@ -117,11 +117,17 @@ export interface MarginTierWire {
   /** Assets this tier may hold, and the only ones it may short. */
   assets: Hex[];
   turbo?: TurboTermsWire;
+  /** Profit target in basis points of the credit line. Null disables; "0" means breakeven. */
+  eval_profit_target_bps?: string | null;
+  /** Daily loss limit in basis points of the credit line. Null disables; "0" allows no loss. */
+  daily_loss_limit_bps?: string | null;
   enabled?: boolean;
 }
 
 /** The live session on a margin account. */
 export interface MarginSessionWire {
+  /** Current profit target for this session. Null disables; "0" means breakeven. */
+  eval_profit_target_bps?: string | null;
   session_id: string | number;
   tier_id: string | number;
   tier_version: string | number;

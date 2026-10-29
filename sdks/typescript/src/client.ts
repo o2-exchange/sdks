@@ -43,6 +43,7 @@ import {
   adjustQuantityForFractionalPrice,
   adjustQuantityForPrices,
   buildActionsSigningBytes,
+  buildEvalPurchaseCall,
   buildParallelActionsSigningBytes,
   buildSessionSigningBytes,
   buildWithdrawSigningBytes,
@@ -54,6 +55,7 @@ import {
   validateMinOrder,
 } from "./encoding.js";
 import { O2Error, SessionExpired, TurboDiscoveryUnavailable } from "./errors.js";
+import { sameHex } from "./hex.js";
 import { selectionParams } from "./market-selection.js";
 import type {
   ActionPayload,
@@ -64,10 +66,10 @@ import type {
   ContractId,
   DepthSnapshot,
   DepthUpdate,
+  EvalPurchaseActions,
   FaucetResponse,
   Identity,
   Market,
-  MarketActions,
   MarketRef,
   MarketSelection,
   MarketsResponse,
@@ -1132,6 +1134,49 @@ export class O2Client {
     return this.submitBatch(wireGroups, collectOrders, activeSession);
   }
 
+  /**
+   * Buy an evaluation account on the selected network.
+   *
+   * Pay `amount` in token base units from your trading account. The API pays gas.
+   * Add the shop ID to `extraContractIds` when creating the session.
+   */
+  async buyEvalAccount(
+    tierId: bigint,
+    assetId: AssetId,
+    amount: bigint,
+    session?: SessionState,
+  ): Promise<SessionActionsResponse> {
+    const activeSession = session ?? this.ensureSession();
+    const { eval_shop_id: shopId } = await this.fetchMarkets();
+    if (!shopId || /^0x0{64}$/i.test(shopId)) {
+      throw new O2Error("Evaluation purchases are unavailable on this network");
+    }
+    if (!activeSession.contractIds.some((id) => sameHex(id, shopId))) {
+      throw new O2Error(
+        "This session cannot buy evaluations; create a new session with the shop ID in extraContractIds",
+      );
+    }
+    const call = buildEvalPurchaseCall(shopId, tierId, assetId, amount);
+    return this.submitPrepared({
+      marketActions: [
+        {
+          actions: [
+            {
+              BuyEvalAccount: {
+                tier_id: tierId.toString(),
+                asset_id: assetId,
+                amount: amount.toString(),
+              },
+            },
+          ],
+        },
+      ],
+      calls: [call],
+      tradeAccountId: activeSession.tradeAccountId,
+      session: activeSession,
+    });
+  }
+
   // ── Market data ─────────────────────────────────────────────────
 
   /** Fetch all available markets. Results are cached with stale-while-revalidate. */
@@ -1844,7 +1889,7 @@ export class O2Client {
    * @internal
    */
   protected async submitPrepared(batch: {
-    marketActions: PreparedMarketActions[];
+    marketActions: (PreparedMarketActions | EvalPurchaseActions)[];
     calls: ContractCall[];
     tradeAccountId: string;
     collectOrders?: boolean;
@@ -1903,7 +1948,7 @@ export class O2Client {
     const signature = rawSign(activeSession.sessionPrivateKey, signingBytes);
 
     const request: SessionActionsRequest = {
-      actions: batch.marketActions as unknown as MarketActions[],
+      actions: batch.marketActions as unknown as SessionActionsRequest["actions"],
       signature:
         parallel !== undefined
           ? { TypedSecp256k1: bytesToHex(signature) }

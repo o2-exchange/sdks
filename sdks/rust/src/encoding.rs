@@ -177,6 +177,33 @@ pub struct CallArg {
 /// Gas value: always u64::MAX. The API overrides with its own value.
 pub const GAS_MAX: u64 = u64::MAX;
 
+/// Build the eval shop's buy_account(u64) call, forwarding exact base units.
+pub fn build_eval_purchase_call(
+    shop_id: &str,
+    tier_id: u64,
+    asset_id: &str,
+    amount: u64,
+) -> Result<CallArg, crate::errors::O2Error> {
+    for (name, id) in [("shop_id", shop_id), ("asset_id", asset_id)] {
+        if id.len() != 66
+            || !id.starts_with("0x")
+            || !id[2..].bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(crate::errors::O2Error::InvalidRequest(format!(
+                "{name} must be a 32-byte hex ID"
+            )));
+        }
+    }
+    Ok(CallArg {
+        contract_id: crate::crypto::parse_hex_32(shop_id)?,
+        function_selector: function_selector("buy_account"),
+        call_data: Some(u64_be(tier_id).to_vec()),
+        amount,
+        asset_id: crate::crypto::parse_hex_32(asset_id)?,
+        gas: GAS_MAX,
+    })
+}
+
 /// Build the signing bytes for session actions (Section 4.7 Step 2).
 ///
 /// Layout:

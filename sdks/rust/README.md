@@ -258,6 +258,7 @@ This is an explicit action; placing a shared order does not execute it automatic
 
 | Guide | Description |
 |-------|-------------|
+| [Evaluation purchases](docs/guides/evaluations.md) | Buying evaluations and eval network configuration |
 | [Trading](docs/guides/trading.md) | Order types, batch actions, cancel/replace, and market maker patterns |
 | [Market Data](docs/guides/market-data.md) | Fetching depth, trades, candles, tickers, and balances |
 | [WebSocket Streams](docs/guides/websocket-streams.md) | Real-time data with `TypedStream` and reconnection handling |
