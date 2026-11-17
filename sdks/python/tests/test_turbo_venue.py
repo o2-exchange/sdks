@@ -160,7 +160,7 @@ async def test_close_waits_for_turbo_refresh_cleanup(venue_client, monkeypatch):
 
     assert cleaned_up.is_set()
     with pytest.raises(asyncio.CancelledError):
-        await lookup
+        _ = await lookup
 
 
 @pytest.mark.parametrize("parallel", [False, True], ids=["sequential", "parallel"])
