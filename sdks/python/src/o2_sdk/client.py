@@ -237,7 +237,7 @@ class O2Client:
         if refresh is not None:
             refresh.cancel()
             with suppress(asyncio.CancelledError):
-                await refresh
+                _ = await refresh  # Let the refresh release its HTTP request first.
             self._turbo_markets_refresh = None
         self._turbo_markets_cache = None
         await self.api.close()

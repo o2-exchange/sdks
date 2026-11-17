@@ -143,6 +143,26 @@ async def test_turbo_discovery_rejects_legacy_catalog_without_falling_back(
         await venue_client.get_market(PAIR, turbo=True)
 
 
+async def test_close_waits_for_turbo_refresh_cleanup(venue_client, monkeypatch):
+    started, cleaned_up = asyncio.Event(), asyncio.Event()
+
+    async def request(*_, **__):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned_up.set()
+
+    monkeypatch.setattr(venue_client.api, "_request", request)
+    lookup = asyncio.create_task(venue_client.get_market(PAIR, turbo=True))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    await venue_client.close()
+
+    assert cleaned_up.is_set()
+    with pytest.raises(asyncio.CancelledError):
+        await lookup
+
+
 @pytest.mark.parametrize("parallel", [False, True], ids=["sequential", "parallel"])
 async def test_mixed_batch_signs_for_each_book(venue_client, submission, monkeypatch, parallel):
     client = venue_client
