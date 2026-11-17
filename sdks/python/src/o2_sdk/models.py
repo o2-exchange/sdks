@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, Decimal, InvalidOperation
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from .nonce import ParallelNonceManager
@@ -202,17 +202,23 @@ class Market:
 
     @classmethod
     def from_dict(cls, d: dict) -> Market:
-        return cls(
-            contract_id=Id(d["contract_id"]),
-            market_id=Id(d["market_id"]),
-            maker_fee=d.get("maker_fee", "0"),
-            taker_fee=d.get("taker_fee", "0"),
-            min_order=d.get("min_order", "0"),
-            dust=d.get("dust", "0"),
-            price_window=int(d.get("price_window", 0)),
-            base=MarketAsset.from_dict(d["base"]),
-            quote=MarketAsset.from_dict(d["quote"]),
-        )
+        if cls is Market and d.get("turbo") is True:
+            return TurboMarket.from_dict(d)
+        return cls(**cls._parse_market_fields(d))
+
+    @staticmethod
+    def _parse_market_fields(d: dict) -> dict[str, Any]:
+        return {
+            "contract_id": Id(d["contract_id"]),
+            "market_id": Id(d["market_id"]),
+            "maker_fee": d.get("maker_fee", "0"),
+            "taker_fee": d.get("taker_fee", "0"),
+            "min_order": d.get("min_order", "0"),
+            "dust": d.get("dust", "0"),
+            "price_window": int(d.get("price_window", 0)),
+            "base": MarketAsset.from_dict(d["base"]),
+            "quote": MarketAsset.from_dict(d["quote"]),
+        }
 
     @property
     def pair(self) -> str:
@@ -292,6 +298,25 @@ class Market:
         base_factor = 10**self.base.decimals
         quantum = base_factor // math.gcd(price, base_factor)
         return int(quantity - (quantity % quantum))
+
+
+@dataclass
+class TurboMarket(Market):
+    """A Turbo sidecar with the same logical market ID as the canonical book."""
+
+    canonical_contract_id: Id
+    connected: bool | None = None
+    paused: bool | None = None
+    turbo: Literal[True] = field(default=True, init=False)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> TurboMarket:
+        return cls(
+            **cls._parse_market_fields(d),
+            canonical_contract_id=Id(d["canonical_contract_id"]),
+            connected=d.get("connected"),
+            paused=d.get("paused"),
+        )
 
 
 @dataclass

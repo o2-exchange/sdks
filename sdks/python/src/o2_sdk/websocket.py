@@ -24,6 +24,7 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from .config import NetworkConfig
+from .errors import StreamResyncRequired
 from .models import (
     BalanceUpdate,
     DepthUpdate,
@@ -33,6 +34,11 @@ from .models import (
 )
 
 logger = logging.getLogger("o2_sdk.websocket")
+
+
+def _venue_key(topic: str, turbo: bool, market_id: str | None = None) -> str:
+    market = market_id.lower().removeprefix("0x") if market_id else ""
+    return f"{topic}:{turbo}:{market}"
 
 
 # ---------------------------------------------------------------------------
@@ -95,7 +101,7 @@ class O2WebSocket:
         self._ws: ClientConnection | None = None
         self._subscriptions: list[dict] = []
         # Per-subscriber fan-out: each stream_*() call registers its own queue.
-        # Key = action queue key (e.g. "depth", "orders"), value = list of queues.
+        # Market subscriptions are keyed by topic and venue, and by market where applicable.
         self._subscriber_queues: dict[str, list[asyncio.Queue[Any]]] = {}
         self._listener_task: asyncio.Task | None = None
         self._ping_task: asyncio.Task | None = None
@@ -419,7 +425,23 @@ class O2WebSocket:
 
     def _dispatch(self, action: str, data: dict) -> None:
         """Route messages to all subscriber queues for the matching action type."""
+        turbo = data.get("turbo") is True
+        market_id = data.get("market_id")
+        if (
+            action == "error"
+            and turbo
+            and data.get("resync_required") is True
+            and isinstance(market_id, str)
+        ):
+            self._resync_turbo_trades(market_id)
+            return
         key = self._action_to_queue_key(action)
+        if key in ("depth", "trades"):
+            if not isinstance(market_id, str):
+                return
+            key = _venue_key(key, turbo, market_id)
+        elif key == "orders":
+            key = _venue_key(key, turbo)
         if key and key in self._subscriber_queues:
             for q in self._subscriber_queues[key]:
                 try:
@@ -440,7 +462,7 @@ class O2WebSocket:
             return "depth"
         elif action == "subscribe_orders":
             return "orders"
-        elif action == "subscribe_trades":
+        elif action in ("subscribe_trades", "trades"):
             return "trades"
         elif action == "subscribe_balances":
             return "balances"
@@ -468,6 +490,24 @@ class O2WebSocket:
         """Add a subscription for reconnect tracking, deduplicating by content."""
         if sub not in self._subscriptions:
             self._subscriptions.append(sub)
+
+    def _remove_market_subscription(
+        self, action: str, turbo: bool, market_id: str | None = None
+    ) -> None:
+        key = _venue_key(action, turbo, market_id)
+        self._subscriptions = [
+            sub
+            for sub in self._subscriptions
+            if _venue_key(sub["action"], sub.get("turbo") is True, sub.get("market_id")) != key
+        ]
+
+    def _resync_turbo_trades(self, market_id: str) -> None:
+        self._remove_market_subscription("subscribe_trades", True, market_id)
+        key = _venue_key("trades", True, market_id)
+        for queue in self._subscriber_queues.pop(key, []):
+            while not queue.empty():
+                queue.get_nowait()
+            queue.put_nowait(StreamResyncRequired())
 
     # ------------------------------------------------------------------
     # Subscription methods
@@ -506,7 +546,7 @@ class O2WebSocket:
             self._unregister_queue("lifecycle", queue)
 
     async def stream_depth(
-        self, market_id: str, wire_precision: str = "10"
+        self, market_id: str, wire_precision: str = "10", *, turbo: bool = False
     ) -> AsyncIterator[DepthUpdate]:
         """Subscribe to order book depth updates.
 
@@ -516,6 +556,7 @@ class O2WebSocket:
                 The caller (normally :meth:`O2Client.stream_depth`) converts
                 the user-facing 1--18 index to the wire value. Default ``"10"``
                 (finest level).
+            turbo: Subscribe to the Turbo venue.
 
         Note:
             Prefer :meth:`O2Client.stream_depth` which validates precision
@@ -525,50 +566,66 @@ class O2WebSocket:
             "action": "subscribe_depth",
             "market_id": market_id,
             "precision": wire_precision,
+            **({"turbo": True} if turbo else {}),
         }
         self._add_subscription(sub)
-        await self._send(sub)
-        queue = self._register_queue("depth")
+        key = _venue_key("depth", turbo, market_id)
+        queue = self._register_queue(key)
         try:
+            await self._send(sub)
             while self._should_run:
                 msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
-                if msg.get("market_id") == market_id:
-                    yield DepthUpdate.from_dict(msg)
+                yield DepthUpdate.from_dict(msg)
         finally:
-            self._unregister_queue("depth", queue)
+            self._unregister_queue(key, queue)
 
-    async def stream_orders(self, identities: list[dict]) -> AsyncIterator[OrderUpdate]:
-        """Subscribe to order updates for the given identities."""
-        sub = {"action": "subscribe_orders", "identities": identities}
+    async def stream_orders(
+        self, identities: list[dict], *, turbo: bool = False
+    ) -> AsyncIterator[OrderUpdate]:
+        """Subscribe to order updates for the given identities and venue."""
+        sub = {
+            "action": "subscribe_orders",
+            "identities": identities,
+            **({"turbo": True} if turbo else {}),
+        }
         self._add_subscription(sub)
-        await self._send(sub)
-        queue = self._register_queue("orders")
+        key = _venue_key("orders", turbo)
+        queue = self._register_queue(key)
         try:
+            await self._send(sub)
             while self._should_run:
                 msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
                 yield OrderUpdate.from_dict(msg)
         finally:
-            self._unregister_queue("orders", queue)
+            self._unregister_queue(key, queue)
 
-    async def stream_trades(self, market_id: str) -> AsyncIterator[TradeUpdate]:
-        """Subscribe to trade updates for the given market."""
-        sub = {"action": "subscribe_trades", "market_id": market_id}
+    async def stream_trades(
+        self, market_id: str, *, turbo: bool = False
+    ) -> AsyncIterator[TradeUpdate]:
+        """Subscribe to trade updates for the given market and venue."""
+        sub = {
+            "action": "subscribe_trades",
+            "market_id": market_id,
+            **({"turbo": True} if turbo else {}),
+        }
         self._add_subscription(sub)
-        await self._send(sub)
-        queue = self._register_queue("trades")
+        key = _venue_key("trades", turbo, market_id)
+        queue = self._register_queue(key)
         try:
+            await self._send(sub)
             while self._should_run:
                 msg = await self._wait_for_message(queue)
                 if msg is None:
                     return
-                if msg.get("market_id") == market_id:
-                    yield TradeUpdate.from_dict(msg)
+                if isinstance(msg, StreamResyncRequired):
+                    raise msg
+                yield TradeUpdate.from_dict(msg)
         finally:
-            self._unregister_queue("trades", queue)
+            self._unregister_queue(key, queue)
 
     async def stream_balances(self, identities: list[dict]) -> AsyncIterator[BalanceUpdate]:
         """Subscribe to balance updates for the given identities."""
@@ -604,27 +661,29 @@ class O2WebSocket:
     # Unsubscribe methods
     # ------------------------------------------------------------------
 
-    async def unsubscribe_depth(self, market_id: str) -> None:
-        await self._send({"action": "unsubscribe_depth", "market_id": market_id})
-        self._subscriptions = [
-            s
-            for s in self._subscriptions
-            if not (s.get("action") == "subscribe_depth" and s.get("market_id") == market_id)
-        ]
+    async def unsubscribe_depth(self, market_id: str, *, turbo: bool = False) -> None:
+        self._remove_market_subscription("subscribe_depth", turbo, market_id)
+        await self._send(
+            {
+                "action": "unsubscribe_depth",
+                "market_id": market_id,
+                **({"turbo": True} if turbo else {}),
+            }
+        )
 
-    async def unsubscribe_orders(self) -> None:
-        await self._send({"action": "unsubscribe_orders"})
-        self._subscriptions = [
-            s for s in self._subscriptions if s.get("action") != "subscribe_orders"
-        ]
+    async def unsubscribe_orders(self, *, turbo: bool = False) -> None:
+        self._remove_market_subscription("subscribe_orders", turbo)
+        await self._send({"action": "unsubscribe_orders", **({"turbo": True} if turbo else {})})
 
-    async def unsubscribe_trades(self, market_id: str) -> None:
-        await self._send({"action": "unsubscribe_trades", "market_id": market_id})
-        self._subscriptions = [
-            s
-            for s in self._subscriptions
-            if not (s.get("action") == "subscribe_trades" and s.get("market_id") == market_id)
-        ]
+    async def unsubscribe_trades(self, market_id: str, *, turbo: bool = False) -> None:
+        self._remove_market_subscription("subscribe_trades", turbo, market_id)
+        await self._send(
+            {
+                "action": "unsubscribe_trades",
+                "market_id": market_id,
+                **({"turbo": True} if turbo else {}),
+            }
+        )
 
     async def unsubscribe_balances(self, identities: list[dict]) -> None:
         await self._send({"action": "unsubscribe_balances", "identities": identities})

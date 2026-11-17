@@ -135,6 +135,32 @@ await client.batch_actions([group], collect_orders=True)
 This is an explicit action; placing a shared order does not execute it
 automatically. Availability depends on the market, order, and account.
 
+## Direct Turbo sidecar trading
+
+Discover the sidecar and include its contract when creating a trading session.
+Pass the returned market to order, batch, market-data, and streaming methods.
+
+```python
+sidecar = await client.get_market("fETH/fUSDC", turbo=True)
+session = await client.create_session(owner, [sidecar])
+depth = await client.get_depth(sidecar)
+order = await client.create_order(
+    sidecar, OrderSide.BUY, "2000", "0.01", OrderType.POST_ONLY, session=session
+)
+```
+
+To use both venues in a session, authorize the canonical and Turbo markets
+together. Pass each selected market to `actions_for(market)` to build mixed
+batches. Use the sidecar market for individual cancels, bulk cancellation,
+and settlement. Use `stream_orders(account, turbo=True)` for Turbo order
+updates. When a Turbo trades stream raises `StreamResyncRequired`, refresh
+trade data and start a new stream.
+
+Pair strings and bare market IDs select the canonical venue. Orders supplied
+with a `Market` now use catalog precision and order limits. Refresh any
+stored `Market` whose contract ID no longer matches the catalog before
+submitting another order.
+
 ## Network Configuration
 
 Default network configs:

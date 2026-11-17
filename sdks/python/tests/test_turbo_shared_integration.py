@@ -13,10 +13,7 @@ import warnings
 
 import pytest
 
-from o2_sdk import ChainInt, Network, O2Client, O2Error, OrderSide, OrderType
-from o2_sdk.crypto import raw_sign
-from o2_sdk.encoding import action_to_call, build_actions_signing_bytes
-from o2_sdk.models import CancelOrderAction, CreateOrderAction, Id, Market, SettleBalanceAction
+from o2_sdk import ChainInt, Market, Network, O2Client, O2Error, OrderSide, OrderType, TurboMarket
 
 pytestmark = pytest.mark.integration
 
@@ -46,11 +43,11 @@ async def _depth(client: O2Client, market_id: str, *, turbo: bool = False, view:
     return await client.api._request("GET", "/v1/depth", params=params)
 
 
-async def _indexed_order(client: O2Client, market_id: str, order_id: str):
+async def _indexed_order(client: O2Client, market: str | Market, order_id: str):
     last_error = None
     for _ in range(INDEXER_ATTEMPTS):
         try:
-            return await client.api.get_order(market_id, order_id)
+            return await client.get_order(market, order_id)
         except O2Error as error:
             last_error = error
             await asyncio.sleep(1)
@@ -59,9 +56,9 @@ async def _indexed_order(client: O2Client, market_id: str, order_id: str):
 
 async def _cancel_if_open(client: O2Client, session, market, order_id: str) -> None:
     try:
-        order = await _indexed_order(client, str(market.market_id), order_id)
+        order = await _indexed_order(client, market, order_id)
         if order.is_open:
-            await client.cancel_order(market=market.pair, order_id=order_id, session=session)
+            await client.cancel_order(market=market, order_id=order_id, session=session)
     except Exception as error:
         warnings.warn(f"Could not cancel test order {order_id}: {error}", stacklevel=2)
 
@@ -85,17 +82,17 @@ async def turbo_context():
         market = next((item for item in markets if item.pair == pair), None)
         assert market is not None, f"Testnet market {pair} is unavailable"
 
-        sidecars = await client.api._request("GET", "/v1/markets", params={"turbo": "true"})
         sidecar = next(
             (
                 item
-                for item in sidecars.get("markets", [])
-                if _same_id(item["market_id"], market.market_id)
+                for item in await client.get_markets(turbo=True)
+                if item.market_id == market.market_id
             ),
             None,
         )
         if sidecar is None:
             pytest.skip(f"{pair} has no active Turbo sidecar")
+        assert isinstance(sidecar, TurboMarket)
 
         session = None
 
@@ -133,61 +130,6 @@ async def _place_shared_order(
     if order_type is OrderType.POST_ONLY:
         assert len(result.orders) == 1
     return result.orders[0]
-
-
-async def _submit_turbo_action(client, session, sidecar, actions, *, collect_orders=False):
-    """Test-only signed action directed to the sidecar, not a public SDK API."""
-    wire = [action.to_dict() for action in actions]
-    calls = [action_to_call(action, sidecar) for action in wire]
-    nonce = await client._get_nonce(session.trade_account_id)
-    signature = raw_sign(session.session_private_key, build_actions_signing_bytes(nonce, calls))
-    request = {
-        "actions": [
-            {
-                "market_id": sidecar["market_id"],
-                "turbo": True,
-                "actions": wire,
-            }
-        ],
-        "signature": {"Secp256k1": "0x" + signature.hex()},
-        "nonce": str(nonce),
-        "trade_account_id": session.trade_account_id,
-        "session_id": session.session_id.to_dict(),
-        "collect_orders": collect_orders,
-    }
-    try:
-        result = await client.api.submit_actions(session.owner_address, request)
-    except O2Error:
-        await client.refresh_nonce(session)
-        raise
-    client._nonce_cache[session.trade_account_id] = nonce + 1
-    session.nonce = nonce + 1
-    return result
-
-
-async def _cancel_turbo_if_open(client, session, sidecar, order_id):
-    try:
-        for _ in range(INDEXER_ATTEMPTS):
-            try:
-                response = await client.api._request(
-                    "GET",
-                    "/v1/order",
-                    params={
-                        "market_id": sidecar["market_id"],
-                        "turbo": "true",
-                        "order_id": order_id,
-                    },
-                )
-                if not response.get("order", response).get("close", False):
-                    await _submit_turbo_action(
-                        client, session, sidecar, [CancelOrderAction(order_id=Id(order_id))]
-                    )
-                return
-            except O2Error:
-                await asyncio.sleep(1)
-        warnings.warn(f"Could not confirm state of Turbo test order {order_id}", stacklevel=2)
-    except Exception as error:
-        warnings.warn(f"Could not cancel Turbo test order {order_id}: {error}", stacklevel=2)
 
 
 async def test_shared_post_only_order_rests_on_testnet(turbo_context):
@@ -284,43 +226,25 @@ async def test_shared_order_executes_resting_turbo_liquidity(turbo_context, shar
         other_side = OrderSide.SELL if side == OrderSide.BUY else OrderSide.BUY
 
         # Session authorization and signature both name the sidecar contract.
-        counterparty_session = await counterparty.create_session(
-            wallet, [Market.from_dict(sidecar)], expiry_days=1
-        )
-        seeded = await _submit_turbo_action(
-            counterparty,
-            counterparty_session,
+        counterparty_session = await counterparty.create_session(wallet, [sidecar], expiry_days=1)
+        seeded = await counterparty.create_order(
             sidecar,
-            [
-                SettleBalanceAction(to=Id(counterparty_session.trade_account_id)),
-                CreateOrderAction(
-                    side=other_side,
-                    price=str(price),
-                    quantity=str(quantity),
-                    order_type=OrderType.SPOT,
-                ),
-            ],
+            other_side,
+            ChainInt(price),
+            ChainInt(quantity),
+            OrderType.SPOT,
             collect_orders=True,
+            session=counterparty_session,
         )
         assert seeded.tx_id and seeded.orders and len(seeded.orders) == 1
         turbo_order_id = str(seeded.orders[0].order_id)
 
         for _ in range(INDEXER_ATTEMPTS):
             try:
-                indexed = await counterparty.api._request(
-                    "GET",
-                    "/v1/order",
-                    params={
-                        "market_id": market_id,
-                        "turbo": "true",
-                        "order_id": turbo_order_id,
-                    },
-                )
+                indexed = await counterparty.get_order(sidecar, turbo_order_id)
                 demand = await _depth(client, market_id, turbo=True)
                 levels = demand["orders"]["sells" if other_side == OrderSide.SELL else "buys"]
-                if not indexed.get("order", indexed).get("close", False) and any(
-                    int(level["price"]) == price for level in levels
-                ):
+                if indexed.is_open and any(int(level["price"]) == price for level in levels):
                     break
             except O2Error:
                 pass
@@ -374,18 +298,11 @@ async def test_shared_order_executes_resting_turbo_liquidity(turbo_context, shar
         for _ in range(INDEXER_ATTEMPTS):
             try:
                 after = await client.api.get_order(market_id, source_id)
-                turbo = await counterparty.api._request(
-                    "GET",
-                    "/v1/order",
-                    params={"market_id": market_id, "turbo": "true", "order_id": turbo_order_id},
-                )
+                turbo = await counterparty.get_order(sidecar, turbo_order_id)
             except O2Error:
                 await asyncio.sleep(1)
                 continue
-            if (
-                int(after.quantity_fill) > previous_fill
-                and int(turbo.get("order", turbo).get("quantity_fill", 0)) > 0
-            ):
+            if int(after.quantity_fill) > previous_fill and int(turbo.quantity_fill) > 0:
                 break
             await asyncio.sleep(1)
         else:
@@ -394,5 +311,5 @@ async def test_shared_order_executes_resting_turbo_liquidity(turbo_context, shar
         if source_id is not None:
             await _cancel_if_open(client, session, market, source_id)
         if turbo_order_id is not None and counterparty_session is not None:
-            await _cancel_turbo_if_open(counterparty, counterparty_session, sidecar, turbo_order_id)
+            await _cancel_if_open(counterparty, counterparty_session, sidecar, turbo_order_id)
         await counterparty.close()
