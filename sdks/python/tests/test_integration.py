@@ -1404,8 +1404,14 @@ async def test_parallel_nonce_out_of_window_recovers_without_duplicating():
         assert manager.resync_generation > generation_before, (
             "the out-of-window rejection should have driven exactly one resync"
         )
-        after_count = await _open_order_count(client, market, session)
-        assert after_count == before_count + 1, (
+        # The transaction can succeed before the open-orders index catches up.
+        expected_count = before_count + 1
+        for _ in range(20):
+            after_count = await _open_order_count(client, market, session)
+            if after_count >= expected_count:
+                break
+            await asyncio.sleep(1)
+        assert after_count == expected_count, (
             f"expected exactly one new order after recovery, went {before_count} -> {after_count}"
         )
     finally:
