@@ -1,4 +1,36 @@
 # Changelog
+## 0.6.0 (2026-11-18)
+
+### Breaking Changes
+
+- Resolve supplied trading markets by both IDs. Use
+catalog precision and order limits for sizing and validation.
+
+* fix(python): clarify Turbo refresh shutdown
+
+* test(python): make cancellation await explicit
+
+* test(python): wait for nonce recovery indexing
+
+#### Add direct Turbo sidecar discovery, session authorization, trading, market data,
+
+and streams to the Python SDK.
+
+Supplied trading markets must match both the market ID and contract ID in the
+selected venue's catalog. Orders now use the catalog's precision and order
+limits. Refresh stored market objects when their contract changes.
+
+### Features
+
+- add turbo shared orders support (#78)
+- support shared Spot orders (#80)
+- simplify EVM digest signing (#82)
+- add shared spot support for ts and rust sdks (#81)
+- add Turbo sidecar routing (#86)
+- Allow shared Spot orders through `create_shared_order(..., OrderType.SPOT)`. Existing calls remain shared PostOnly orders.
+- Add shared PostOnly orders and explicit Turbo order execution across the Python, TypeScript, and Rust SDKs. Existing order placement remains unchanged.
+- Add root-level EVM digest signing helpers that return submit-ready `r || s || v` signatures for Fast Bridge deposits.
+
 ## 0.5.0 (2026-09-16)
 
 ### Breaking Changes
