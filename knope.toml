@@ -4,12 +4,12 @@ changelog = "sdks/python/CHANGELOG.md"
 scopes = ["python"]
 
 [packages.sdk-typescript]
-versioned_files = ["sdks/typescript/package.json"]
+versioned_files = ["sdks/typescript/package.json", "sdks/typescript/package-lock.json"]
 changelog = "sdks/typescript/CHANGELOG.md"
 scopes = ["typescript"]
 
 [packages.sdk-rust]
-versioned_files = ["sdks/rust/Cargo.toml"]
+versioned_files = ["sdks/rust/Cargo.toml", "sdks/rust/Cargo.lock"]
 changelog = "sdks/rust/CHANGELOG.md"
 scopes = ["rust"]
 
