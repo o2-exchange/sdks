@@ -10,6 +10,10 @@ import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator, Sequence
+from contextlib import suppress
+from copy import deepcopy
+from dataclasses import dataclass
+from typing import TypedDict
 
 from .api import O2Api
 from .config import Network, NetworkConfig, get_config
@@ -70,6 +74,7 @@ from .models import (
     SettleBalanceRequestAction,
     Trade,
     TradeUpdate,
+    TurboMarket,
     WithdrawResponse,
 )
 from .nonce import (
@@ -90,6 +95,22 @@ logger = logging.getLogger("o2_sdk.client")
 # the owner's sequential nonce to advance (nothing else reports the proxy target).
 UPGRADE_POLL_ATTEMPTS = 40
 UPGRADE_POLL_INTERVAL_SECS = 3.0
+TURBO_MARKETS_CACHE_TTL_SECS = 60.0
+
+
+class _VenueOptions(TypedDict, total=False):
+    turbo: bool
+
+
+def _venue_options(market: Market) -> _VenueOptions:
+    return {"turbo": True} if isinstance(market, TurboMarket) else {}
+
+
+@dataclass
+class _ResolvedMarketActions(MarketActions):
+    """Typed actions paired with the catalog entry used to prepare them."""
+
+    market: Market
 
 
 class MarketActionsBuilder:
@@ -204,11 +225,21 @@ class O2Client:
         )
         self._ws: O2WebSocket | None = None
         self._markets_cache: MarketsResponse | None = None
+        self._turbo_markets_cache: MarketsResponse | None = None
+        self._turbo_markets_updated_at = 0.0
+        self._turbo_markets_refresh: asyncio.Task[MarketsResponse] | None = None
         self._nonce_cache: dict[str, int] = {}
         self._session: SessionInfo | None = None
 
     async def close(self) -> None:
         """Close all connections."""
+        refresh = self._turbo_markets_refresh
+        if refresh is not None:
+            refresh.cancel()
+            with suppress(asyncio.CancelledError):
+                _ = await refresh  # Let the refresh release its HTTP request first.
+            self._turbo_markets_refresh = None
+        self._turbo_markets_cache = None
         await self.api.close()
         if self._ws:
             await self._ws.disconnect()
@@ -655,6 +686,8 @@ class O2Client:
             market = (
                 m_name if isinstance(m_name, Market) else self._resolve_market(markets_resp, m_name)
             )
+            if isinstance(market, TurboMarket):
+                market = await self._resolve_trading_market(market)
             if market.contract_id not in contract_ids:
                 contract_ids.append(market.contract_id)
 
@@ -798,7 +831,7 @@ class O2Client:
         )
 
         session = self._require_session(session)
-        market_obj = await self._resolve_market_like_async(market)
+        market_obj = await self._resolve_trading_market(market)
 
         # Scale price and quantity
         scaled_price = market_obj.scale_price(price)
@@ -848,7 +881,11 @@ class O2Client:
         )
 
         return await self.batch_actions(
-            actions=[MarketActions(market_id=market_obj.market_id, actions=typed_actions)],
+            actions=[
+                _ResolvedMarketActions(
+                    market_id=market_obj.market_id, actions=typed_actions, market=market_obj
+                )
+            ],
             collect_orders=collect_orders,
             session=session,
         )
@@ -863,19 +900,20 @@ class O2Client:
         """Cancel an order."""
         session = self._require_session(session)
         logger.info("Cancelling order %s", order_id)
-        if market_id is None:
+        cancel_actions: list[Action] = [CancelOrderAction(order_id=Id(str(order_id)))]
+        group: MarketActions
+        if market_id is not None:
+            if isinstance(market, TurboMarket):
+                raise ValueError("Pass the Turbo market without market_id")
+            group = MarketActions(market_id=market_id, actions=cancel_actions)
+        else:
             if market is None:
                 raise ValueError("Either market or market_id must be provided")
-            market_obj = await self._resolve_market_like_async(market)
-            market_id = market_obj.market_id
-
-        actions = [
-            MarketActions(
-                market_id=market_id,
-                actions=[CancelOrderAction(order_id=Id(str(order_id)))],
+            market_obj = await self._resolve_trading_market(market)
+            group = _ResolvedMarketActions(
+                market_id=market_obj.market_id, actions=cancel_actions, market=market_obj
             )
-        ]
-        return await self.batch_actions(actions=actions, session=session)
+        return await self.batch_actions(actions=[group], session=session)
 
     async def cancel_all_orders(
         self, market: str | Market, session: SessionInfo | None = None
@@ -887,7 +925,7 @@ class O2Client:
         """
         session = self._require_session(session)
         logger.info("Cancelling all open orders for market=%s", market)
-        market_obj = await self._resolve_market_like_async(market)
+        market_obj = await self._resolve_trading_market(market)
 
         orders_resp = await self.api.get_orders(
             market_id=market_obj.market_id,
@@ -895,6 +933,7 @@ class O2Client:
             direction="desc",
             count=200,
             is_open=True,
+            **_venue_options(market_obj),
         )
 
         if not orders_resp.orders:
@@ -906,7 +945,11 @@ class O2Client:
         for i in range(0, len(orders_resp.orders), 5):
             chunk = orders_resp.orders[i : i + 5]
             cancel_actions: list[Action] = [CancelOrderAction(order_id=o.order_id) for o in chunk]
-            actions = [MarketActions(market_id=market_obj.market_id, actions=cancel_actions)]
+            actions = [
+                _ResolvedMarketActions(
+                    market_id=market_obj.market_id, actions=cancel_actions, market=market_obj
+                )
+            ]
             resp = await self.batch_actions(actions=actions, session=session)
             results.append(resp)
 
@@ -917,12 +960,13 @@ class O2Client:
     ) -> ActionsResponse:
         """Settle balance for a market."""
         session = self._require_session(session)
-        market_obj = await self._resolve_market_like_async(market)
+        market_obj = await self._resolve_trading_market(market)
 
         actions = [
-            MarketActions(
+            _ResolvedMarketActions(
                 market_id=market_obj.market_id,
                 actions=[SettleBalanceAction(to=session.trade_account_id)],
+                market=market_obj,
             )
         ]
         return await self.batch_actions(actions=actions, session=session)
@@ -955,8 +999,8 @@ class O2Client:
 
         markets_resp = await self._get_markets_cached()
 
-        # Convert typed/high-level actions to wire dicts once
-        actions_dicts = await self._normalize_market_actions(session, actions)
+        # Prepare the wire groups and pin the market used to encode each one.
+        resolved_groups = await self._normalize_market_actions(session, actions, markets_resp)
 
         if session.session_private_key is None:
             raise O2Error(message="Session must have a private key")
@@ -965,11 +1009,22 @@ class O2Client:
 
         # Convert actions to calls (shared by both nonce tracks)
         calls: list[dict] = []
-        for market_group in actions_dicts:
-            m_id = market_group["market_id"]
-            market_info = self._get_market_info_by_id(markets_resp, m_id)
+        actions_dicts: list[dict] = []
+        for market, market_group in resolved_groups:
+            if isinstance(market, TurboMarket):
+                market_group["turbo"] = True
+            else:
+                market_group.pop("turbo", None)
+            market_info = {
+                "contract_id": market.contract_id,
+                "market_id": market.market_id,
+                "base": {"asset": market.base.asset, "decimals": market.base.decimals},
+                "quote": {"asset": market.quote.asset, "decimals": market.quote.decimals},
+                "accounts_registry_id": markets_resp.accounts_registry_id,
+            }
             for action in market_group["actions"]:
                 calls.append(action_to_call(action, market_info))
+            actions_dicts.append(market_group)
 
         # --- Parallel nonce track -------------------------------------------
         # Each submission draws a fresh window slot, so many can be in flight at
@@ -1054,14 +1109,21 @@ class O2Client:
         self,
         session: SessionInfo,
         actions: Sequence[MarketActions | MarketActionGroup],
-    ) -> list[dict]:
-        normalized: list[dict] = []
+        canonical: MarketsResponse,
+    ) -> list[tuple[Market, dict]]:
+        normalized: list[tuple[Market, dict]] = []
         for group in actions:
             if isinstance(group, MarketActions):
-                normalized.append(group.to_dict())
+                wire_actions = group.to_dict()
+                market = (
+                    group.market
+                    if isinstance(group, _ResolvedMarketActions)
+                    else self._get_market_by_id(canonical, wire_actions["market_id"])
+                )
+                normalized.append((market, wire_actions))
                 continue
 
-            market = await self._resolve_market_like_async(group.market)
+            market = await self._resolve_trading_market(group.market, canonical)
             resolved_actions: list[Action] = []
             for action in group.actions:
                 try:
@@ -1127,9 +1189,8 @@ class O2Client:
                 except ValueError as e:
                     raise O2Error(message=str(e)) from e
 
-            normalized.append(
-                MarketActions(market_id=market.market_id, actions=resolved_actions).to_dict()
-            )
+            wire_group = MarketActions(market_id=market.market_id, actions=resolved_actions)
+            normalized.append((market, wire_group.to_dict()))
         return normalized
 
     def _require_session(self, session: SessionInfo | None = None) -> SessionInfo:
@@ -1148,15 +1209,15 @@ class O2Client:
     # Market data
     # -----------------------------------------------------------------------
 
-    async def get_markets(self) -> list[Market]:
-        """Get all available markets."""
-        resp = await self._get_markets_cached()
-        return resp.markets
+    async def get_markets(self, *, turbo: bool = False) -> list[Market]:
+        """Get the canonical market catalog or its Turbo sidecars."""
+        resp = await self._get_turbo_markets_cached() if turbo else await self._get_markets_cached()
+        return deepcopy(resp.markets)
 
-    async def get_market(self, symbol_pair: str) -> Market:
-        """Get a specific market by pair symbol (e.g., "FUEL/USDC")."""
-        resp = await self._get_markets_cached()
-        return self._resolve_market(resp, symbol_pair)
+    async def get_market(self, symbol_pair: str, *, turbo: bool = False) -> Market:
+        """Get a market by pair, market ID, or contract ID from the selected venue."""
+        resp = await self._get_turbo_markets_cached() if turbo else await self._get_markets_cached()
+        return deepcopy(self._resolve_market(resp, symbol_pair))
 
     async def get_depth(
         self,
@@ -1182,7 +1243,9 @@ class O2Client:
         _validate_depth_precision(precision)
         precision = 10 ** int(precision)
         market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_depth(market_obj.market_id, precision, limit=limit)
+        return await self.api.get_depth(
+            market_obj.market_id, precision, limit=limit, **_venue_options(market_obj)
+        )
 
     async def get_trades(
         self,
@@ -1229,12 +1292,14 @@ class O2Client:
                 count=count,
                 start_timestamp=start_timestamp,
                 start_trade_id=validated_tid,
+                **_venue_options(market_obj),
             )
         return await self.api.get_trades(
             market_obj.market_id,
             count=count,
             start_timestamp=start_timestamp,
             start_trade_id=validated_tid,
+            **_venue_options(market_obj),
         )
 
     async def get_bars(
@@ -1253,12 +1318,14 @@ class O2Client:
             to_ts: End timestamp in **milliseconds** (not seconds).
         """
         market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_bars(market_obj.market_id, from_ts, to_ts, resolution)
+        return await self.api.get_bars(
+            market_obj.market_id, from_ts, to_ts, resolution, **_venue_options(market_obj)
+        )
 
     async def get_ticker(self, market: str | Market) -> dict:
         """Get real-time ticker for a market."""
         market_obj = await self._resolve_market_like_async(market)
-        resp = await self.api.get_market_ticker(market_obj.market_id)
+        resp = await self.api.get_market_ticker(market_obj.market_id, **_venue_options(market_obj))
         return resp.data
 
     # -----------------------------------------------------------------------
@@ -1349,6 +1416,7 @@ class O2Client:
             is_open=is_open,
             start_timestamp=start_timestamp,
             start_order_id=validated_oid,
+            **_venue_options(market_obj),
         )
         return resp.orders
 
@@ -1357,7 +1425,9 @@ class O2Client:
         if isinstance(order_id, str) and not isinstance(order_id, Id):
             order_id = Id(order_id)
         market_obj = await self._resolve_market_like_async(market)
-        return await self.api.get_order(market_obj.market_id, order_id)
+        return await self.api.get_order(
+            market_obj.market_id, order_id, **_venue_options(market_obj)
+        )
 
     # -----------------------------------------------------------------------
     # WebSocket streaming
@@ -1416,22 +1486,27 @@ class O2Client:
         wire_precision = str(10 ** int(precision))
         market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
-        async for update in ws.stream_depth(market_obj.market_id, wire_precision):
+        async for update in ws.stream_depth(
+            market_obj.market_id, wire_precision, **_venue_options(market_obj)
+        ):
             yield update
 
-    async def stream_orders(self, account: AccountInfo | str) -> AsyncIterator[OrderUpdate]:
-        """Stream order updates for an account."""
+    async def stream_orders(
+        self, account: AccountInfo | str, *, turbo: bool = False
+    ) -> AsyncIterator[OrderUpdate]:
+        """Stream order updates for an account on the selected venue."""
         trade_account_id = account if isinstance(account, str) else account.trade_account_id
         ws = await self._ensure_ws()
         identities = [{"ContractId": trade_account_id}]
-        async for update in ws.stream_orders(identities):
+        stream = ws.stream_orders(identities, turbo=True) if turbo else ws.stream_orders(identities)
+        async for update in stream:
             yield update
 
     async def stream_trades(self, market: str | Market) -> AsyncIterator[TradeUpdate]:
         """Stream trade updates for a market."""
         market_obj = await self._resolve_market_like_async(market)
         ws = await self._ensure_ws()
-        async for update in ws.stream_trades(market_obj.market_id):
+        async for update in ws.stream_trades(market_obj.market_id, **_venue_options(market_obj)):
             yield update
 
     async def stream_balances(self, account: AccountInfo | str) -> AsyncIterator[BalanceUpdate]:
@@ -1716,6 +1791,36 @@ class O2Client:
             self._markets_cache = await self.api.get_markets()
         return self._markets_cache
 
+    async def _get_turbo_markets_cached(self) -> MarketsResponse:
+        cached = self._turbo_markets_cache
+        if (
+            cached is not None
+            and time.monotonic() - self._turbo_markets_updated_at < TURBO_MARKETS_CACHE_TTL_SECS
+        ):
+            return cached
+        refresh = self._turbo_markets_refresh
+        if refresh is None:
+            refresh = asyncio.create_task(self._refresh_turbo_markets())
+            refresh.add_done_callback(self._log_turbo_refresh_failure)
+            self._turbo_markets_refresh = refresh
+        if cached is not None:
+            return cached
+        return await asyncio.shield(refresh)
+
+    async def _refresh_turbo_markets(self) -> MarketsResponse:
+        try:
+            result = await self.api.get_markets(turbo=True)
+            self._turbo_markets_cache = result
+            self._turbo_markets_updated_at = time.monotonic()
+            return result
+        finally:
+            self._turbo_markets_refresh = None
+
+    @staticmethod
+    def _log_turbo_refresh_failure(refresh: asyncio.Task[MarketsResponse]) -> None:
+        if not refresh.cancelled() and (error := refresh.exception()) is not None:
+            logger.debug("Turbo market catalog refresh failed: %s", error)
+
     def _resolve_market(self, markets_resp: MarketsResponse, name_or_id: str) -> Market:
         """Resolve a market by pair name or hex ID."""
         for m in markets_resp.markets:
@@ -1734,17 +1839,28 @@ class O2Client:
             return market
         return await self._resolve_market_async(market)
 
-    def _get_market_info_by_id(self, markets_resp: MarketsResponse, market_id: str) -> dict:
-        """Get market info dict needed by action_to_call."""
-        for m in markets_resp.markets:
-            if m.market_id == market_id:
-                return {
-                    "contract_id": m.contract_id,
-                    "market_id": m.market_id,
-                    "base": {"asset": m.base.asset, "decimals": m.base.decimals},
-                    "quote": {"asset": m.quote.asset, "decimals": m.quote.decimals},
-                    "accounts_registry_id": markets_resp.accounts_registry_id,
-                }
+    async def _resolve_trading_market(
+        self, market: str | Market, canonical: MarketsResponse | None = None
+    ) -> Market:
+        if isinstance(market, TurboMarket):
+            catalog = await self._get_turbo_markets_cached()
+        else:
+            catalog = canonical or await self._get_markets_cached()
+        if isinstance(market, str):
+            return self._resolve_market(catalog, market)
+        for selected in catalog.markets:
+            if (
+                selected.market_id == market.market_id
+                and selected.contract_id == market.contract_id
+            ):
+                return selected
+        raise O2Error(message="Trading market unavailable; refresh before submitting")
+
+    @staticmethod
+    def _get_market_by_id(markets_resp: MarketsResponse, market_id: str) -> Market:
+        for market in markets_resp.markets:
+            if market.market_id == market_id:
+                return market
         raise O2Error(message=f"Market ID not found: {market_id}")
 
     def _resolve_asset(self, markets_resp: MarketsResponse, symbol_or_id: str) -> tuple[str, int]:

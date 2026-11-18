@@ -14,7 +14,7 @@ from typing import Any
 import aiohttp
 
 from .config import NetworkConfig
-from .errors import O2Error, RateLimitExceeded, raise_for_error
+from .errors import O2Error, RateLimitExceeded, TurboDiscoveryUnavailable, raise_for_error
 from .models import (
     AccountCreateResponse,
     AccountInfo,
@@ -37,6 +37,25 @@ from .models import (
 )
 
 logger = logging.getLogger("o2_sdk.api")
+
+
+def _assert_market_venue(data: Any, turbo: bool) -> None:
+    rows = data if isinstance(data, list) else [data]
+    for row in rows:
+        is_turbo = isinstance(row, dict) and row.get("turbo") is True
+        if is_turbo != turbo:
+            raise O2Error(message="The API did not return the requested trading market")
+
+
+def _market_stats_row(data: Any, market_id: str, kind: str) -> dict[str, Any]:
+    # The live endpoints return a list even when a market ID is supplied.
+    if isinstance(data, list):
+        if not data:
+            raise O2Error(message=f"No {kind} returned for market {market_id}")
+        data = data[0]
+    if not isinstance(data, dict):
+        raise O2Error(message=f"Invalid {kind} response for market {market_id}")
+    return {"market_id": market_id, **data}
 
 
 class O2Api:
@@ -212,36 +231,59 @@ class O2Api:
     # Market Data
     # -----------------------------------------------------------------------
 
-    async def get_markets(self) -> MarketsResponse:
-        data = await self._request("GET", "/v1/markets")
+    async def _request_market_data(
+        self,
+        path: str,
+        params: dict[str, Any],
+        *,
+        turbo: bool,
+        allow_bare_list: bool = False,
+    ) -> Any:
+        if turbo:
+            params["turbo"] = "true"
+        data = await self._request("GET", path, params=params)
+        if not (allow_bare_list and isinstance(data, list)):
+            _assert_market_venue(data, turbo)
+        return data
+
+    async def get_markets(self, *, turbo: bool = False) -> MarketsResponse:
+        """Fetch the canonical or Turbo market catalog."""
+        if turbo:
+            data = await self._request("GET", "/v1/markets", params={"turbo": "true"})
+            if any(
+                market.get("turbo") is not True or not market.get("canonical_contract_id")
+                for market in data.get("markets", [])
+            ):
+                raise TurboDiscoveryUnavailable()
+        else:
+            data = await self._request("GET", "/v1/markets")
+            _assert_market_venue(data.get("markets", []), turbo=False)
         return MarketsResponse.from_dict(data)
 
-    async def get_market_summary(self, market_id: str) -> MarketSummary:
-        data = await self._request("GET", "/v1/markets/summary", params={"market_id": market_id})
-        return MarketSummary.from_dict(data)
+    async def get_market_summary(self, market_id: str, *, turbo: bool = False) -> MarketSummary:
+        data = await self._request_market_data(
+            "/v1/markets/summary", {"market_id": market_id}, turbo=turbo
+        )
+        return MarketSummary.from_dict(_market_stats_row(data, market_id, "summary"))
 
-    async def get_market_ticker(self, market_id: str) -> MarketTicker:
-        data = await self._request("GET", "/v1/markets/ticker", params={"market_id": market_id})
-        # The live endpoint returns a one-item list even when market_id is
-        # supplied. Accept the historical object shape as well.
-        if isinstance(data, list):
-            if not data:
-                raise O2Error(message=f"No ticker returned for market {market_id}")
-            data = data[0]
-        if not isinstance(data, dict):
-            raise O2Error(message=f"Invalid ticker response for market {market_id}")
-        return MarketTicker.from_dict({"market_id": market_id, **data})
+    async def get_market_ticker(self, market_id: str, *, turbo: bool = False) -> MarketTicker:
+        data = await self._request_market_data(
+            "/v1/markets/ticker", {"market_id": market_id}, turbo=turbo
+        )
+        return MarketTicker.from_dict(_market_stats_row(data, market_id, "ticker"))
 
     async def get_depth(
         self,
         market_id: str,
         precision: int = 10,
         limit: int | None = None,
+        *,
+        turbo: bool = False,
     ) -> DepthSnapshot:
         params: dict[str, Any] = {"market_id": market_id, "precision": precision}
         if limit is not None:
             params["limit"] = limit
-        data = await self._request("GET", "/v1/depth", params=params)
+        data = await self._request_market_data("/v1/depth", params, turbo=turbo)
         snapshot = DepthSnapshot.from_dict(data)
         # Client-side truncation: even if the backend doesn't support the
         # limit parameter yet, we honour it here so callers always get the
@@ -262,6 +304,8 @@ class O2Api:
         start_timestamp: int | None = None,
         start_trade_id: str | None = None,
         contract: str | None = None,
+        *,
+        turbo: bool = False,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -274,7 +318,9 @@ class O2Api:
             params["start_trade_id"] = start_trade_id
         if contract is not None:
             params["contract"] = contract
-        data = await self._request("GET", "/v1/trades", params=params)
+        data = await self._request_market_data(
+            "/v1/trades", params, turbo=turbo, allow_bare_list=True
+        )
         if isinstance(data, list):
             return [Trade.from_dict(t) for t in data]
         return [Trade.from_dict(t) for t in data.get("trades", [])]
@@ -287,6 +333,8 @@ class O2Api:
         count: int = 50,
         start_timestamp: int | None = None,
         start_trade_id: str | None = None,
+        *,
+        turbo: bool = False,
     ) -> list[Trade]:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -298,7 +346,9 @@ class O2Api:
             params["start_timestamp"] = start_timestamp
         if start_trade_id is not None:
             params["start_trade_id"] = start_trade_id
-        data = await self._request("GET", "/v1/trades_by_account", params=params)
+        data = await self._request_market_data(
+            "/v1/trades_by_account", params, turbo=turbo, allow_bare_list=True
+        )
         if isinstance(data, list):
             return [Trade.from_dict(t) for t in data]
         return [Trade.from_dict(t) for t in data.get("trades", [])]
@@ -332,6 +382,8 @@ class O2Api:
         from_ts: int,
         to_ts: int,
         resolution: str = "1h",
+        *,
+        turbo: bool = False,
     ) -> list[Bar]:
         """Fetch OHLCV candle bars.
 
@@ -343,6 +395,7 @@ class O2Api:
                 ``1s``, ``1m``, ``2m``, ``3m``, ``5m``, ``15m``, ``30m``,
                 ``1h``, ``2h``, ``4h``, ``6h``, ``8h``, ``12h``,
                 ``1d``, ``3d``, ``1w``, ``1M``, ``3M``.
+            turbo: Read from the Turbo venue.
 
         Raises:
             ValueError: If *resolution* is not one of the valid values.
@@ -358,7 +411,9 @@ class O2Api:
             "to": to_ts,
             "resolution": resolution,
         }
-        data = await self._request("GET", "/v1/bars", params=params)
+        data = await self._request_market_data(
+            "/v1/bars", params, turbo=turbo, allow_bare_list=True
+        )
         if isinstance(data, list):
             return [Bar.from_dict(b) for b in data]
         return [Bar.from_dict(b) for b in data.get("bars", [])]
@@ -446,6 +501,8 @@ class O2Api:
         is_open: bool | None = None,
         start_timestamp: int | None = None,
         start_order_id: str | None = None,
+        *,
+        turbo: bool = False,
     ) -> OrdersResponse:
         params: dict[str, Any] = {
             "market_id": market_id,
@@ -462,12 +519,12 @@ class O2Api:
             params["start_timestamp"] = start_timestamp
         if start_order_id is not None:
             params["start_order_id"] = start_order_id
-        data = await self._request("GET", "/v1/orders", params=params)
+        data = await self._request_market_data("/v1/orders", params, turbo=turbo)
         return OrdersResponse.from_dict(data)
 
-    async def get_order(self, market_id: str, order_id: str) -> Order:
-        data = await self._request(
-            "GET", "/v1/order", params={"market_id": market_id, "order_id": order_id}
+    async def get_order(self, market_id: str, order_id: str, *, turbo: bool = False) -> Order:
+        data = await self._request_market_data(
+            "/v1/order", {"market_id": market_id, "order_id": order_id}, turbo=turbo
         )
         # API wraps order in an "order" key
         order_data = data.get("order", data) if isinstance(data, dict) else data

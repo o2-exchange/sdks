@@ -7,6 +7,7 @@ import pytest
 from o2_sdk import (
     ActionsResponse,
     AddressIdentity,
+    CancelOrderAction,
     ChainInt,
     ContractIdentity,
     Market,
@@ -613,6 +614,7 @@ async def test_withdraw_supports_contract_identity(monkeypatch: pytest.MonkeyPat
 async def test_cancel_order_accepts_id(monkeypatch: pytest.MonkeyPatch):
     client = O2Client()
     market = _test_market()
+    client._markets_cache = _test_markets_response(market)
     session = _test_session()
 
     captured: dict = {}
@@ -630,7 +632,7 @@ async def test_cancel_order_accepts_id(monkeypatch: pytest.MonkeyPatch):
 
     await client.cancel_order(order_id=market.market_id, market=market, session=session)
     action = captured["actions"][0].actions[0]
-    assert isinstance(action, type(captured["actions"][0].actions[0]))
+    assert isinstance(action, CancelOrderAction)
     assert action.order_id == market.market_id
 
 

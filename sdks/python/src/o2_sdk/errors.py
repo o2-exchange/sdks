@@ -66,6 +66,13 @@ class GeoRestricted(O2Error):
     pass
 
 
+class TurboDiscoveryUnavailable(O2Error):
+    """The deployment did not return a Turbo market catalog."""
+
+    def __init__(self) -> None:
+        super().__init__(message="The API did not return a Turbo market catalog")
+
+
 # Market errors (2xxx)
 class MarketNotFound(O2Error):
     """2000: Market does not exist."""
@@ -159,6 +166,13 @@ class SubscriptionError(O2Error):
     """6002: General subscription error."""
 
     pass
+
+
+class StreamResyncRequired(O2Error):
+    """A Turbo trade stream needs a fresh snapshot before it can resume."""
+
+    def __init__(self) -> None:
+        super().__init__(message="Refresh Turbo trade data and start a new stream")
 
 
 # Validation errors (7xxx)
