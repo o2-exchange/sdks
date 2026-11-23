@@ -46,12 +46,13 @@ asyncio.run(main())
 | `load_evm_wallet(pk_hex)` | `private_key_hex: str` | `EvmWallet` | Load EVM wallet |
 | `setup_account(wallet)` | `wallet: Signer` | `AccountInfo` | Idempotent account setup (create+fund+whitelist) |
 | `upgrade_account(owner, wait=True)` | `owner: Signer, wait: bool` | `str \| None` | Point the account proxy at the current implementation (unconditional; waits for the owner nonce to advance) |
-| `create_session(owner, markets, expiry_days=30, nonce_strategy="sequential", nonce_session_id=0)` | `owner: Signer, markets: list[str \| Market], expiry_days: int, nonce_strategy: "sequential" \| "parallel", nonce_session_id: int` | `SessionInfo` | Create trading session |
+| `create_session(owner, markets, expiry_days=30, nonce_strategy="sequential", nonce_session_id=0, *, extra_contract_ids=())` | `owner: Signer, markets: list[str \| Market], expiry_days: int, nonce_strategy: "sequential" \| "parallel", nonce_session_id: int` | `SessionInfo` | Create trading session |
 | `ensure_parallel_session(owner, markets, ...)` | `owner: Signer, markets: list[str \| Market], expiry_days=30, nonce_session_id=0, auto_upgrade=True` | `SessionInfo` | Parallel session + capability probe + upgrade if needed (the startup path) |
 | `probe_parallel_support(session, market)` | `session: SessionInfo, market: str \| Market` | `bool` | Submit a benign `settle_balance` to find out whether parallel nonces work |
 | `set_session(session)` | `session: SessionInfo` | `None` | Restore a saved session onto the client |
 | `clear_session()` | - | `None` | Clear the active session |
 | `session` | - | `SessionInfo \| None` | Property: the currently active session |
+| `buy_eval_account(tier_id, asset_id, amount, session=None)` | `int, str, int, SessionInfo \| None` | `ActionsResponse` | Purchase eval using exact base units; authorize shop with `create_session(..., extra_contract_ids=[shop_id])` |
 | `create_order(market, side, price, quantity, ..., session=None)` | see below | `ActionsResponse` | Place an order |
 | `cancel_order(order_id, market=None, market_id=None, session=None)` | - | `ActionsResponse` | Cancel an order |
 | `cancel_all_orders(market, session=None)` | - | `list[ActionsResponse]` | Cancel all open orders (batches of 5) |
@@ -415,3 +416,11 @@ because both rehash. Fuel uses compact 64-byte signatures via
 message via `str(error)`, and `details`. Native aiohttp/asyncio transport errors
 propagate. Malformed transaction/proof parsing raises `ValueError`. Do not use
 numeric O2 trading error codes to handle proxy responses.
+
+## Evaluation Accounts
+
+See [the evaluation guide](docs/guides/evaluations.rst). `Network.EVAL` uses Fuel
+testnet and has no faucet. Buy on mainnet (testnet for testing), discover
+`eval_shop_id` via `api.get_markets()`, and include it in `extra_contract_ids`
+when creating a session. Purchases omit `market_id`. Reconcile ambiguous failures
+before repurchasing. Full Turbo trading/state helpers remain TypeScript-only.

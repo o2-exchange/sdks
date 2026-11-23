@@ -28,3 +28,6 @@ pub mod error_handling {}
 
 #[doc = include_str!("../docs/guides/external-signers.md")]
 pub mod external_signers {}
+
+#[doc = include_str!("../docs/guides/evaluations.md")]
+pub mod evaluations {}

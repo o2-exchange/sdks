@@ -284,6 +284,12 @@ Market models
    .. attribute:: markets
       :type: list[Market]
 
+   .. attribute:: eval_shop_id
+      :type: Id | None
+
+      Evaluation shop contract when purchases are available. Missing and null
+      values from older APIs become ``None``.
+
    .. property:: chain_id_int
       :type: int
 

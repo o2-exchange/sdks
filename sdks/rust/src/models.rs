@@ -1007,6 +1007,8 @@ impl Market {
 /// Top-level response from GET /v1/markets.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MarketsResponse {
+    /// Evaluation shop contract, when purchases are available.
+    pub eval_shop_id: Option<ContractId>,
     pub books_registry_id: ContractId,
     pub books_whitelist_id: Option<ContractId>,
     pub books_blacklist_id: Option<ContractId>,
@@ -1575,7 +1577,8 @@ pub enum ActionItem {
 /// A market-grouped set of actions.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct MarketActions {
-    pub market_id: MarketId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub market_id: Option<MarketId>,
     pub actions: Vec<serde_json::Value>,
 }
 

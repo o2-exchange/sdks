@@ -39,6 +39,12 @@ The TypeScript SDK additionally ships **Turbo (margin) trading** — `long()` /
 composed into one signed batch. See the
 [Turbo guide](sdks/typescript/docs/guides/turbo.md).
 
+All three SDKs support evaluation purchases and eval network configuration.
+See the [Python](sdks/python/docs/guides/evaluations.rst),
+[Rust](sdks/rust/docs/guides/evaluations.md), or
+[TypeScript](sdks/typescript/docs/guides/evaluations.md) evaluation guide.
+Full evaluation trading and Turbo account state helpers are currently TypeScript-only.
+
 ## 🌐 Network and Funding Model
 
 - **Testnet/Devnet** — `setup_account()` creates the trading account, applies whitelist rules, and attempts faucet minting.

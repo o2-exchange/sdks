@@ -12,6 +12,12 @@ Networks
 
    Enum of available O2 Exchange networks.
 
+   .. attribute:: EVAL
+      :value: "eval"
+
+      Evaluation API on Fuel testnet, without a faucet. Purchases use mainnet
+      or testnet separately. See :doc:`../guides/evaluations`.
+
    .. attribute:: TESTNET
       :value: "testnet"
 
@@ -71,7 +77,7 @@ Network configuration
    .. attribute:: faucet_url
       :type: str | None
 
-      Faucet URL for test token minting. ``None`` for mainnet.
+      Faucet URL for test token minting. ``None`` for mainnet and eval.
 
    .. code-block:: python
 
@@ -97,6 +103,10 @@ Built-in endpoints
      - REST API
      - WebSocket
      - Faucet
+   * - Eval
+     - ``https://api.eval.o2.app``
+     - ``wss://api.eval.o2.app/v1/ws``
+     - No
    * - Testnet
      - ``https://api.testnet.o2.app``
      - ``wss://api.testnet.o2.app/v1/ws``

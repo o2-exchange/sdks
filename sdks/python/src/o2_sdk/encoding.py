@@ -13,6 +13,7 @@ Implements the exact byte layouts from the O2 integration guide:
 
 from __future__ import annotations
 
+import re
 import struct
 
 GAS_MAX = 18446744073709551615  # u64::MAX
@@ -21,6 +22,24 @@ GAS_MAX = 18446744073709551615  # u64::MAX
 def u64_be(value: int) -> bytes:
     """Encode an integer as 8 bytes big-endian (u64)."""
     return struct.pack(">Q", value)
+
+
+def build_eval_purchase_call(shop_id: str, tier_id: int, asset_id: str, amount: int) -> dict:
+    """Build buy_account(u64), forwarding payment in exact token base units."""
+    for name, value in (("shop_id", shop_id), ("asset_id", asset_id)):
+        if not re.fullmatch(r"0x[0-9a-fA-F]{64}", value):
+            raise ValueError(f"{name} must be a 32-byte hex ID")
+    for name, quantity in (("tier_id", tier_id), ("amount", amount)):
+        if type(quantity) is not int or not 0 <= quantity <= GAS_MAX:
+            raise ValueError(f"{name} must be an unsigned 64-bit integer")
+    return {
+        "contract_id": bytes.fromhex(shop_id[2:]),
+        "function_selector": function_selector("buy_account"),
+        "call_data": u64_be(tier_id),
+        "amount": amount,
+        "asset_id": bytes.fromhex(asset_id[2:]),
+        "gas": GAS_MAX,
+    }
 
 
 def function_selector(name: str) -> bytes:

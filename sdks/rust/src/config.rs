@@ -2,6 +2,7 @@
 /// Supported O2 Exchange networks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Network {
+    Eval,
     Testnet,
     Devnet,
     Mainnet,
@@ -20,6 +21,13 @@ pub struct NetworkConfig {
 impl NetworkConfig {
     pub fn from_network(network: Network) -> Self {
         match network {
+            Network::Eval => Self {
+                api_base: "https://api.eval.o2.app".into(),
+                ws_url: "wss://api.eval.o2.app/v1/ws".into(),
+                fuel_rpc: "https://testnet.fuel.network/v1/graphql".into(),
+                faucet_url: None,
+                whitelist_required: false,
+            },
             Network::Testnet => Self {
                 api_base: "https://api.testnet.o2.app".into(),
                 ws_url: "wss://api.testnet.o2.app/v1/ws".into(),

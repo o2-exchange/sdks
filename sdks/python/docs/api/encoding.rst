@@ -226,3 +226,17 @@ Signing payload construction
        ``call_data``.
    :rtype: dict
    :raises ValueError: If the action type is unknown.
+
+
+Evaluation purchase encoding
+----------------------------
+
+.. function:: build_eval_purchase_call(shop_id, tier_id, asset_id, amount)
+
+   Build the shop's ``buy_account(u64)`` contract call. ``shop_id`` and
+   ``asset_id`` must be full 32-byte hex IDs. ``tier_id`` and ``amount`` must be
+   unsigned 64-bit integers. ``amount`` is forwarded in exact token base units.
+
+   :returns: Call dictionary for :func:`build_actions_signing_bytes`.
+   :rtype: dict
+   :raises ValueError: If an ID or integer is invalid.

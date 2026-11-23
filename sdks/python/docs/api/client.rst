@@ -146,7 +146,7 @@ Account lifecycle
 Session management
 ------------------
 
-.. method:: O2Client.create_session(owner, markets, expiry_days=30)
+.. method:: O2Client.create_session(owner, markets, expiry_days=30, nonce_strategy="sequential", nonce_session_id=0, *, extra_contract_ids=())
    :async:
 
    Create a new trading session.
@@ -160,6 +160,9 @@ Session management
    :param markets: List of market pairs/IDs or
        :class:`~o2_sdk.models.Market` objects.
    :type markets: list[str | Market]
+   :param extra_contract_ids: Additional approved contracts, such as the eval shop.
+       Use an empty markets list for a purchase-only session.
+   :type extra_contract_ids: Sequence[str]
    :param expiry_days: Session expiry in days (default 30).
    :type expiry_days: int
    :returns: Session info with the session key, account ID, and authorized
@@ -700,3 +703,28 @@ Nonce management
    :type session: :class:`~o2_sdk.models.SessionInfo`
    :returns: The refreshed nonce.
    :rtype: int
+
+
+Evaluation purchases
+--------------------
+
+.. method:: O2Client.buy_eval_account(tier_id, asset_id, amount, session=None)
+   :async:
+
+   Purchase an evaluation using the trading account's balance. Include the
+   discovered ``eval_shop_id`` in ``extra_contract_ids`` when creating a session.
+
+   :param tier_id: Shop tier ID, as an unsigned 64-bit integer.
+   :type tier_id: int
+   :param asset_id: Payment asset's full 32-byte hex ID.
+   :type asset_id: str
+   :param amount: Exact price in token base units, as an unsigned 64-bit integer.
+   :type amount: int
+   :param session: Explicit session override; defaults to the active session.
+   :type session: SessionInfo | None
+   :returns: Standard session action response. Confirm the transaction before
+       expecting the evaluation account to be available.
+   :rtype: :class:`~o2_sdk.models.ActionsResponse`
+
+   See :doc:`../guides/evaluations` for network selection and usage. Reconcile
+   ambiguous failures before submitting another purchase.

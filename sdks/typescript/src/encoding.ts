@@ -387,6 +387,39 @@ function parseOrderTypeJSON(ot: OrderTypeJSON): OrderTypeVariant {
   throw new Error(`Unknown order type: ${JSON.stringify(ot)}`);
 }
 
+/** Build the contract call to buy an evaluation account. */
+export function buildEvalPurchaseCall(
+  shopId: string,
+  tierId: bigint,
+  assetId: string,
+  amount: bigint,
+): ContractCall {
+  for (const [name, id] of [
+    ["shopId", shopId],
+    ["assetId", assetId],
+  ]) {
+    if (!/^0x[0-9a-f]{64}$/i.test(id)) {
+      throw new Error(`${name} must be a 32-byte hex ID`);
+    }
+  }
+  for (const [name, value] of [
+    ["tierId", tierId],
+    ["amount", amount],
+  ] as const) {
+    if (typeof value !== "bigint" || value < 0n || value > 0xffff_ffff_ffff_ffffn) {
+      throw new Error(`${name} must be an unsigned 64-bit bigint`);
+    }
+  }
+  return {
+    contractId: hexToBytes(shopId.toLowerCase()),
+    functionSelector: functionSelector("buy_account"),
+    callData: u64BE(tierId),
+    amount,
+    assetId: hexToBytes(assetId.toLowerCase()),
+    gas: GAS_MAX,
+  };
+}
+
 /**
  * Convert a high-level action + market info to a low-level ContractCall.
  * For RegisterReferer, pass accountsRegistryId as the market's contractId.
