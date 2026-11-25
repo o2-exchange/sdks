@@ -199,6 +199,9 @@ class Market:
     price_window: int
     base: MarketAsset
     quote: MarketAsset
+    # A paper (Turbo Instant Pro) book, listed only by ``get_markets(paper=True)``.
+    # Keyword-only so subclasses can still declare required fields.
+    paper: bool = field(default=False, kw_only=True)
 
     @classmethod
     def from_dict(cls, d: dict) -> Market:
@@ -218,6 +221,7 @@ class Market:
             "price_window": int(d.get("price_window", 0)),
             "base": MarketAsset.from_dict(d["base"]),
             "quote": MarketAsset.from_dict(d["quote"]),
+            "paper": d.get("paper") is True,
         }
 
     @property

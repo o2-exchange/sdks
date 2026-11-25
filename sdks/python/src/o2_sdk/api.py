@@ -246,9 +246,31 @@ class O2Api:
             _assert_market_venue(data, turbo)
         return data
 
-    async def get_markets(self, *, turbo: bool = False) -> MarketsResponse:
-        """Fetch the canonical or Turbo market catalog."""
-        if turbo:
+    async def get_markets(self, *, turbo: bool = False, paper: bool = False) -> MarketsResponse:
+        """Fetch the canonical, Turbo, or paper market catalog.
+
+        Args:
+            turbo: Fetch the Turbo sidecar catalog (``?turbo=true``).
+            paper: Fetch only paper (Turbo Instant Pro) markets
+                (``?paper=true``). Paper books are plain books with no Turbo
+                sidecar, and the default catalog never lists them.
+
+        Raises:
+            ValueError: If both ``turbo`` and ``paper`` are set.
+            O2Error: If ``paper`` is set and the API returns a row not flagged
+                ``paper: true`` (an API without paper support ignores the query
+                and returns the canonical catalog).
+        """
+        if turbo and paper:
+            raise ValueError("Paper markets have no Turbo sidecar; set turbo or paper, not both")
+        if paper:
+            data = await self._request("GET", "/v1/markets", params={"paper": "true"})
+            if any(
+                market.get("paper") is not True or market.get("turbo") is True
+                for market in data.get("markets", [])
+            ):
+                raise O2Error(message="The API did not return the paper market catalog")
+        elif turbo:
             data = await self._request("GET", "/v1/markets", params={"turbo": "true"})
             if any(
                 market.get("turbo") is not True or not market.get("canonical_contract_id")

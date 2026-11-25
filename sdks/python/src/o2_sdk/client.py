@@ -206,6 +206,16 @@ class O2Client:
 
     Orchestrates wallet management, account lifecycle, session management,
     trading operations, market data retrieval, and WebSocket streaming.
+
+    Args:
+        network: Network whose default endpoints to use.
+        custom_config: Endpoint overrides for ``network``.
+        action_timeout_seconds: HTTP timeout for action submissions.
+        paper_markets: Use the paper (Turbo Instant Pro) market catalog
+            (``GET /v1/markets?paper=true``) in place of the canonical one.
+            Every market lookup, session authorization, order, and balance
+            read then resolves against paper books only. Paper books have no
+            Turbo sidecar, so Turbo catalog lookups raise ``ValueError``.
     """
 
     def __init__(
@@ -213,12 +223,15 @@ class O2Client:
         network: Network = Network.TESTNET,
         custom_config: NetworkConfig | None = None,
         action_timeout_seconds: float = 30.0,
+        *,
+        paper_markets: bool = False,
     ):
         if action_timeout_seconds <= 0:
             raise ValueError("action_timeout_seconds must be greater than zero")
         self._config = custom_config or get_config(network)
         self._network = network
         self._action_timeout_seconds = action_timeout_seconds
+        self._paper_markets = paper_markets
         self.api = O2Api(
             self._config,
             action_timeout_seconds=action_timeout_seconds,
@@ -1210,12 +1223,19 @@ class O2Client:
     # -----------------------------------------------------------------------
 
     async def get_markets(self, *, turbo: bool = False) -> list[Market]:
-        """Get the canonical market catalog or its Turbo sidecars."""
+        """Get the canonical market catalog or its Turbo sidecars.
+
+        A client built with ``paper_markets=True`` returns the paper catalog.
+        """
         resp = await self._get_turbo_markets_cached() if turbo else await self._get_markets_cached()
         return deepcopy(resp.markets)
 
     async def get_market(self, symbol_pair: str, *, turbo: bool = False) -> Market:
-        """Get a market by pair, market ID, or contract ID from the selected venue."""
+        """Get a market by pair, market ID, or contract ID from the selected venue.
+
+        A client built with ``paper_markets=True`` resolves against the paper
+        catalog.
+        """
         resp = await self._get_turbo_markets_cached() if turbo else await self._get_markets_cached()
         return deepcopy(self._resolve_market(resp, symbol_pair))
 
@@ -1788,10 +1808,15 @@ class O2Client:
 
     async def _get_markets_cached(self) -> MarketsResponse:
         if self._markets_cache is None:
-            self._markets_cache = await self.api.get_markets()
+            if self._paper_markets:
+                self._markets_cache = await self.api.get_markets(paper=True)
+            else:
+                self._markets_cache = await self.api.get_markets()
         return self._markets_cache
 
     async def _get_turbo_markets_cached(self) -> MarketsResponse:
+        if self._paper_markets:
+            raise ValueError("Paper markets have no Turbo sidecar")
         cached = self._turbo_markets_cache
         if (
             cached is not None
