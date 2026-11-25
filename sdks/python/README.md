@@ -161,6 +161,24 @@ with a `Market` now use catalog precision and order limits. Refresh any
 stored `Market` whose contract ID no longer matches the catalog before
 submitting another order.
 
+## Paper markets
+
+Paper (Turbo Instant Pro) markets are plain books listed only by
+`GET /v1/markets?paper=true`; the default catalog never includes them.
+Build the client with `paper_markets=True` so every market lookup, session,
+order, and balance read resolves against the paper catalog:
+
+```python
+client = O2Client(network=Network.MAINNET, paper_markets=True)
+market = await client.get_market("pETH/fUSDC")  # market.paper is True
+session = await client.create_session(owner, [market])
+```
+
+`O2Api.get_markets(paper=True)` fetches the paper catalog directly and raises
+`O2Error` if the API returns a row not flagged `paper: true`. Paper books have
+no Turbo sidecar, so `get_markets(turbo=True)` and `get_market(..., turbo=True)`
+raise `ValueError` in paper mode.
+
 ## Network Configuration
 
 Default network configs:
