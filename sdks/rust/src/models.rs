@@ -228,6 +228,67 @@ impl IntoMarketSymbol for &String {
     }
 }
 
+/// A market given either by symbol pair (e.g. `"FUEL/USDC"`) or by hex market ID.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarketRef {
+    Symbol(MarketSymbol),
+    Id(MarketId),
+}
+
+/// Converts input into a [`MarketRef`].
+///
+/// Strings containing `/` are parsed as symbol pairs; any other string is
+/// validated as a hex market ID.
+pub trait IntoMarketRef {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error>;
+}
+
+impl IntoMarketRef for MarketId {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        Ok(MarketRef::Id(self))
+    }
+}
+
+impl IntoMarketRef for &MarketId {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        Ok(MarketRef::Id(self.clone()))
+    }
+}
+
+impl IntoMarketRef for MarketSymbol {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        self.into_market_symbol().map(MarketRef::Symbol)
+    }
+}
+
+impl IntoMarketRef for &MarketSymbol {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        self.into_market_symbol().map(MarketRef::Symbol)
+    }
+}
+
+impl IntoMarketRef for &str {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        if self.contains('/') {
+            MarketSymbol::parse(self).map(MarketRef::Symbol)
+        } else {
+            self.into_valid().map(MarketRef::Id)
+        }
+    }
+}
+
+impl IntoMarketRef for String {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        self.as_str().into_market_ref()
+    }
+}
+
+impl IntoMarketRef for &String {
+    fn into_market_ref(self) -> Result<MarketRef, O2Error> {
+        self.as_str().into_market_ref()
+    }
+}
+
 hex_id!(
     /// A hex contract ID.
     ContractId

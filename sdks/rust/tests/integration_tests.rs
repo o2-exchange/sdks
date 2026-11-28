@@ -406,7 +406,7 @@ async fn get_shared_setup() -> &'static SharedSetup {
 
 #[tokio::test]
 async fn test_fetch_markets() {
-    let mut client = O2Client::new(Network::Testnet);
+    let client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
     assert!(!markets.is_empty(), "Should have at least one market");
 
@@ -419,7 +419,7 @@ async fn test_fetch_markets() {
 
 #[tokio::test]
 async fn test_get_depth() {
-    let mut client = O2Client::new(Network::Testnet);
+    let client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
     let market = &markets[0];
 
@@ -435,7 +435,7 @@ async fn test_get_depth() {
 
 #[tokio::test]
 async fn test_get_trades() {
-    let mut client = O2Client::new(Network::Testnet);
+    let client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
     let market = &markets[0];
 
@@ -518,7 +518,7 @@ async fn test_top_up_from_faucet() {
 
 #[tokio::test]
 async fn test_market_resolution_by_pair() {
-    let mut client = O2Client::new(Network::Testnet);
+    let client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
 
     if !markets.is_empty() {
@@ -959,12 +959,12 @@ async fn test_aggregated_endpoints() {
 
 #[tokio::test]
 async fn test_websocket_depth() {
-    let mut client = O2Client::new(Network::Testnet);
+    let client = O2Client::new(Network::Testnet);
     let markets = client.get_markets().await.unwrap();
     assert!(!markets.is_empty(), "Should have at least one market");
 
     let market = &markets[0];
-    let mut stream = client.stream_depth(&market.market_id, 1).await.unwrap();
+    let mut stream = client.stream_depth(market.symbol_pair(), 1).await.unwrap();
 
     let update = tokio::time::timeout(std::time::Duration::from_secs(10), stream.next()).await;
 

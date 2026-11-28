@@ -3,6 +3,7 @@
 /// This is the primary entry point for SDK users. It handles wallet management,
 /// account lifecycle, session management, order placement, and WebSocket streaming.
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use log::debug;
@@ -74,12 +75,14 @@ fn validate_depth_precision(precision: u64) -> Result<(), O2Error> {
     Ok(())
 }
 
+/// Cached markets metadata and the time it was fetched.
+type MarketsCache = Option<(Arc<MarketsResponse>, Instant)>;
+
 /// The high-level O2 Exchange client.
 pub struct O2Client {
     pub api: O2Api,
     pub config: NetworkConfig,
-    markets_cache: Option<MarketsResponse>,
-    markets_cache_at: Option<Instant>,
+    markets_cache: Mutex<MarketsCache>,
     metadata_policy: MetadataPolicy,
     ws: tokio::sync::Mutex<Option<crate::websocket::O2WebSocket>>,
 }
@@ -471,8 +474,7 @@ impl O2Client {
         Self {
             api: O2Api::new(config.clone()),
             config,
-            markets_cache: None,
-            markets_cache_at: None,
+            markets_cache: Mutex::new(None),
             metadata_policy: MetadataPolicy::default(),
             ws: tokio::sync::Mutex::new(None),
         }
@@ -483,8 +485,7 @@ impl O2Client {
         Self {
             api: O2Api::new(config.clone()),
             config,
-            markets_cache: None,
-            markets_cache_at: None,
+            markets_cache: Mutex::new(None),
             metadata_policy: MetadataPolicy::default(),
             ws: tokio::sync::Mutex::new(None),
         }
@@ -533,43 +534,54 @@ impl O2Client {
     pub async fn fetch_markets(&mut self) -> Result<&MarketsResponse, O2Error> {
         debug!("client.fetch_markets");
         let resp = self.api.get_markets().await?;
-        self.markets_cache = Some(resp);
-        self.markets_cache_at = Some(Instant::now());
-        Ok(self.markets_cache.as_ref().unwrap())
+        let cache = self
+            .markets_cache
+            .get_mut()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (resp, _) = cache.insert((Arc::new(resp), Instant::now()));
+        Ok(resp)
     }
 
     /// Get cached markets, fetching if needed.
-    async fn ensure_markets(&mut self) -> Result<&MarketsResponse, O2Error> {
-        if self.should_refresh_markets() {
-            debug!("client.ensure_markets refreshing cache");
-            self.fetch_markets().await?;
+    async fn ensure_markets(&self) -> Result<Arc<MarketsResponse>, O2Error> {
+        if !self.should_refresh_markets() {
+            if let Some((resp, _)) = &*self.lock_markets_cache() {
+                return Ok(Arc::clone(resp));
+            }
         }
-        Ok(self.markets_cache.as_ref().unwrap())
+        debug!("client.ensure_markets refreshing cache");
+        let resp = Arc::new(self.api.get_markets().await?);
+        *self.lock_markets_cache() = Some((Arc::clone(&resp), Instant::now()));
+        Ok(resp)
+    }
+
+    fn lock_markets_cache(&self) -> MutexGuard<'_, MarketsCache> {
+        self.markets_cache
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
     }
 
     fn should_refresh_markets(&self) -> bool {
-        if self.markets_cache.is_none() {
-            return true;
-        }
+        let fetched_at = match &*self.lock_markets_cache() {
+            None => return true,
+            Some((_, fetched_at)) => *fetched_at,
+        };
 
         match self.metadata_policy {
             MetadataPolicy::StrictFresh => true,
-            MetadataPolicy::OptimisticTtl(ttl) => match self.markets_cache_at {
-                None => true,
-                Some(fetched_at) => fetched_at.elapsed() >= ttl,
-            },
+            MetadataPolicy::OptimisticTtl(ttl) => fetched_at.elapsed() >= ttl,
         }
     }
 
     /// Get all markets.
-    pub async fn get_markets(&mut self) -> Result<Vec<Market>, O2Error> {
+    pub async fn get_markets(&self) -> Result<Vec<Market>, O2Error> {
         debug!("client.get_markets");
         let resp = self.ensure_markets().await?;
         Ok(resp.markets.clone())
     }
 
     /// Get a market by symbol pair (e.g., "FUEL/USDC").
-    pub async fn get_market<M>(&mut self, symbol: M) -> Result<Market, O2Error>
+    pub async fn get_market<M>(&self, symbol: M) -> Result<Market, O2Error>
     where
         M: IntoMarketSymbol,
     {
@@ -588,7 +600,7 @@ impl O2Client {
     }
 
     /// Get a market by hex market ID.
-    pub async fn get_market_by_id(&mut self, market_id: &MarketId) -> Result<Market, O2Error> {
+    pub async fn get_market_by_id(&self, market_id: &MarketId) -> Result<Market, O2Error> {
         debug!("client.get_market_by_id market_id={market_id}");
         let resp = self.ensure_markets().await?;
         for market in &resp.markets {
@@ -602,8 +614,19 @@ impl O2Client {
         )))
     }
 
+    /// Resolve a symbol pair or hex market ID to a market ID.
+    ///
+    /// Hex IDs are passed through without a lookup; symbol pairs are resolved
+    /// from the markets cache.
+    async fn resolve_market_id(&self, market: impl IntoMarketRef) -> Result<MarketId, O2Error> {
+        match market.into_market_ref()? {
+            MarketRef::Id(market_id) => Ok(market_id),
+            MarketRef::Symbol(symbol) => Ok(self.get_market(symbol).await?.market_id),
+        }
+    }
+
     /// Get the chain_id from cached markets.
-    async fn get_chain_id(&mut self) -> Result<u64, O2Error> {
+    async fn get_chain_id(&self) -> Result<u64, O2Error> {
         let resp = self.ensure_markets().await?;
         let chain_id_hex = resp.chain_id.as_str();
         let stripped = chain_id_hex.strip_prefix("0x").unwrap_or(chain_id_hex);
@@ -1514,7 +1537,7 @@ impl O2Client {
     /// Stream depth updates over a shared WebSocket connection.
     ///
     /// # Arguments
-    /// * `market_id` - The market ID (hex string).
+    /// * `market` - Market symbol pair (e.g. `"FUEL/USDC"`) or hex market ID.
     /// * `precision` - Price grouping level, from `"1"` (most precise) to `"18"`
     ///   (most grouped). Default `"1"`. At level 1, prices are at or near their
     ///   exact values. Higher levels round prices into larger buckets. Same
@@ -1524,11 +1547,11 @@ impl O2Client {
     /// Returns [`O2Error::InvalidRequest`] if `precision` is outside 1–18.
     pub async fn stream_depth(
         &self,
-        market_id: impl IntoValidId<MarketId>,
+        market: impl IntoMarketRef,
         precision: u64,
     ) -> Result<TypedStream<DepthUpdate>, O2Error> {
         let dp = DepthPrecision::new(precision)?;
-        let market_id = market_id.into_valid()?;
+        let market_id = self.resolve_market_id(market).await?;
         debug!(
             "client.stream_depth market_id={} precision={}",
             market_id,
@@ -1555,11 +1578,13 @@ impl O2Client {
     }
 
     /// Stream trade updates over a shared WebSocket connection.
+    ///
+    /// `market` accepts a symbol pair (e.g. `"FUEL/USDC"`) or a hex market ID.
     pub async fn stream_trades(
         &self,
-        market_id: impl IntoValidId<MarketId>,
+        market: impl IntoMarketRef,
     ) -> Result<TypedStream<TradeUpdate>, O2Error> {
-        let market_id = market_id.into_valid()?;
+        let market_id = self.resolve_market_id(market).await?;
         debug!("client.stream_trades market_id={}", market_id);
         let mut guard = self.ws.lock().await;
         Self::ensure_ws(&mut guard, &self.config.ws_url).await?;
@@ -1614,10 +1639,12 @@ impl O2Client {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
     use crate::{
         config::{Network, NetworkConfig},
+        errors::O2Error,
         models::{
             Action, AssetId, ContractId, Identity, Market, MarketAsset, MarketId, MarketsResponse,
             OrderId, OrderType, Side,
@@ -1728,12 +1755,15 @@ mod tests {
         );
     }
 
+    fn seed_markets_cache(client: &O2Client, resp: MarketsResponse, fetched_at: Instant) {
+        *client.lock_markets_cache() = Some((Arc::new(resp), fetched_at));
+    }
+
     #[test]
     fn metadata_policy_optimistic_ttl_respects_recent_cache() {
         let mut client = O2Client::new(Network::Testnet);
         client.metadata_policy = MetadataPolicy::OptimisticTtl(Duration::from_secs(60));
-        client.markets_cache = Some(dummy_markets_response());
-        client.markets_cache_at = Some(Instant::now());
+        seed_markets_cache(&client, dummy_markets_response(), Instant::now());
         assert!(!client.should_refresh_markets());
     }
 
@@ -1741,8 +1771,11 @@ mod tests {
     fn metadata_policy_optimistic_ttl_refreshes_expired_cache() {
         let mut client = O2Client::new(Network::Testnet);
         client.metadata_policy = MetadataPolicy::OptimisticTtl(Duration::from_millis(10));
-        client.markets_cache = Some(dummy_markets_response());
-        client.markets_cache_at = Some(Instant::now() - Duration::from_secs(1));
+        seed_markets_cache(
+            &client,
+            dummy_markets_response(),
+            Instant::now() - Duration::from_secs(1),
+        );
         assert!(client.should_refresh_markets());
     }
 
@@ -1750,9 +1783,75 @@ mod tests {
     fn metadata_policy_strict_fresh_always_refreshes() {
         let mut client = O2Client::new(Network::Testnet);
         client.metadata_policy = MetadataPolicy::StrictFresh;
-        client.markets_cache = Some(dummy_markets_response());
-        client.markets_cache_at = Some(Instant::now());
+        seed_markets_cache(&client, dummy_markets_response(), Instant::now());
         assert!(client.should_refresh_markets());
+    }
+
+    fn client_with_cached_market(market_id: &str) -> O2Client {
+        let mut client = O2Client::new(Network::Testnet);
+        client.metadata_policy = MetadataPolicy::OptimisticTtl(Duration::from_secs(60));
+        let mut resp = dummy_markets_response();
+        resp.markets.push(dummy_market(market_id));
+        seed_markets_cache(&client, resp, Instant::now());
+        client
+    }
+
+    #[tokio::test]
+    async fn resolve_market_id_resolves_symbol_from_cache() {
+        let client = client_with_cached_market("0xaa");
+        let shared = &client;
+
+        let resolved = shared
+            .resolve_market_id("fETH/fUSDC")
+            .await
+            .expect("symbol should resolve from cache");
+        assert_eq!(resolved, MarketId::new("0xaa"));
+
+        let resolved = shared
+            .resolve_market_id(" fETH / fUSDC ".to_string())
+            .await
+            .expect("symbol should be normalized before lookup");
+        assert_eq!(resolved, MarketId::new("0xaa"));
+    }
+
+    #[tokio::test]
+    async fn resolve_market_id_passes_hex_ids_through() {
+        let client = client_with_cached_market("0xaa");
+
+        let resolved = client
+            .resolve_market_id("0xbb")
+            .await
+            .expect("hex ID should pass through");
+        assert_eq!(resolved, MarketId::new("0xbb"));
+
+        let market_id = MarketId::new("0xcc");
+        let resolved = client
+            .resolve_market_id(&market_id)
+            .await
+            .expect("MarketId should pass through");
+        assert_eq!(resolved, market_id);
+    }
+
+    #[tokio::test]
+    async fn resolve_market_id_rejects_unknown_or_invalid_input() {
+        let client = client_with_cached_market("0xaa");
+
+        let err = client
+            .resolve_market_id("fBTC/fUSDC")
+            .await
+            .expect_err("unknown symbol should fail");
+        assert!(matches!(err, O2Error::MarketNotFound(_)));
+
+        let err = client
+            .resolve_market_id("fETH/")
+            .await
+            .expect_err("malformed symbol should fail");
+        assert!(matches!(err, O2Error::InvalidRequest(_)));
+
+        client
+            .resolve_market_id("not-a-market")
+            .await
+            .expect_err("non-hex, non-symbol input should fail");
     }
 
     #[test]

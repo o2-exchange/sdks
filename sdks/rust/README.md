@@ -216,8 +216,8 @@ Identifier usage:
 | `get_markets()` / `get_market(name)` | Fetch market info |
 | `get_depth(market, precision)` / `get_trades(market, count)` | Order book and trade data |
 | `get_balances(trade_account_id)` / `get_orders(id, market, ...)` | Account data |
-| `stream_depth(market_id, precision)` | Real-time order book stream |
-| `stream_orders(identities)` / `stream_trades(market_id)` | Real-time updates |
+| `stream_depth(market, precision)` | Real-time order book stream (symbol pair or market ID) |
+| `stream_orders(identities)` / `stream_trades(market)` | Real-time updates |
 
 See [AGENTS.md](AGENTS.md) for the complete API reference with all parameters and types.
 
