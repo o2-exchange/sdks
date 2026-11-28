@@ -38,8 +38,7 @@ Stream real-time order book updates:
 ```rust,ignore
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_depth(&market.market_id, 1).await?;
+let mut stream = client.stream_depth("fFUEL/fUSDC", 1).await?;
 
 while let Some(Ok(update)) = stream.next().await {
     // First message is a full snapshot (action = "subscribe_depth")
@@ -104,8 +103,7 @@ Stream all trades for a market:
 ```rust,ignore
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_trades(&market.market_id).await?;
+let mut stream = client.stream_trades("fFUEL/fUSDC").await?;
 
 while let Some(Ok(update)) = stream.next().await {
     for trade in &update.trades {
@@ -224,8 +222,7 @@ For non-snapshot streams, monitor lifecycle events and refresh state on reconnec
 use o2_sdk::WsLifecycleEvent;
 use tokio_stream::StreamExt;
 
-let market = client.get_market("fFUEL/fUSDC").await?;
-let mut stream = client.stream_depth(&market.market_id, 1).await?;
+let mut stream = client.stream_depth("fFUEL/fUSDC", 1).await?;
 let mut lifecycle = client.subscribe_ws_lifecycle().await?;
 
 loop {
